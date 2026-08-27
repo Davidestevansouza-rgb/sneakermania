@@ -2,7 +2,14 @@
   publish = "."
   command = ""
 
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Content-Type = "application/manifest+json"
+    Access-Control-Allow-Origin = "*"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+  force = false
