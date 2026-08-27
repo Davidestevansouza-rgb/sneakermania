@@ -1,4 +1,5 @@
-<!DOCTYPE html>
+findstr /n "src=\"/" index.html
+findstr /n "href=\"/" index.html<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -985,6 +986,65 @@
       navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW no registrado:', e));
     });
   }
+</script>
+<script>
+  (function () {
+    let deferredPrompt = null;
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      // Previene el mini-infobar/auto-prompt
+      e.preventDefault();
+      deferredPrompt = e;
+
+      if (document.getElementById('install-btn')) return;
+
+      const btn = document.createElement('button');
+      btn.id = 'install-btn';
+      btn.textContent = 'Instalar Sistema SeS';
+      // Estilos simples, puedes cambiarlos en CSS si prefieres
+      Object.assign(btn.style, {
+        position: 'fixed',
+        right: '16px',
+        bottom: '16px',
+        zIndex: 9999,
+        padding: '10px 14px',
+        background: '#001A5C',
+        color: '#ffffff',
+        border: 'none',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+        fontSize: '14px'
+      });
+
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const choice = await deferredPrompt.userChoice;
+        console.log('PWA install response:', choice.outcome);
+        deferredPrompt = null;
+        btn.remove();
+      });
+
+      // Oculta el botón si la app ya está instalada
+      window.addEventListener('appinstalled', () => {
+        try { const b = document.getElementById('install-btn'); if (b) b.remove(); } catch (err) {}
+      });
+
+      document.body.appendChild(btn);
+    });
+
+    // Opcional: si quieres mostrar el botón después de X segundos incluso sin beforeinstallprompt,
+    // descomenta y ajusta el siguiente bloque (útil en algunos navegadores desktop):
+    /*
+    setTimeout(() => {
+      if (!document.getElementById('install-btn') && deferredPrompt) {
+        // crea y muestra el botón manualmente (código similar al anterior)
+      }
+    }, 3000);
+    */
+  })();
 </script>
 </body>
 </html>
