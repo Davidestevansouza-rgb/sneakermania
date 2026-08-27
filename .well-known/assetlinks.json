@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.ses.sneakermania",
+      "sha256_cert_fingerprints": ["99:E4:48:C1:EE:00:D6:5F:DB:9D:6B:55:BD:5A:77:95:82:7C:D5:8B:15:F8:6D:04:3F:BE:B6:36:99:CC:ED:12"]
+    }
+  }
+]
