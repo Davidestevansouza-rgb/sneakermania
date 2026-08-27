@@ -1,0 +1,48 @@
+=========================================================
+SNEAKERMANIA - ACTUALIZACION DEL REGISTRO GENERAL DE LOS PARES
+=========================================================
+
+IMPORTANTE - Antes de abrir la aplicacion debes limpiar
+el Service Worker viejo. Si NO haces esto, el navegador
+seguira mostrando la version antigua aunque hayas
+reemplazado todos los archivos.
+
+PASOS OBLIGATORIOS (una sola vez):
+
+1. Reemplaza los archivos del proyecto con este ZIP.
+
+2. Abre la aplicacion en el navegador.
+
+3. Abre las DevTools (tecla F12 o click derecho -> Inspeccionar).
+
+4. Ve a la pestana: Application (o "Aplicacion" en espanol).
+
+5. En el menu izquierdo, busca:
+   - Service Workers -> clic en "Unregister" (Anular registro)
+   - Storage -> clic en "Clear site data" (Borrar datos del sitio)
+
+6. Cierra las DevTools y recarga la pagina con Ctrl+Shift+R
+   (o Cmd+Shift+R en Mac).
+
+7. Vuelve a abrir la aplicacion -> la seccion
+   "Registro General de los Pares" ahora aparecera completa
+   con: numero de orden, cantidad de pares, fotos,
+   observaciones, boton WhatsApp y selector QR/Efectivo.
+
+POR QUE FUE NECESARIO ESTO?
+- El Service Worker (sw.js) cacheaba una version vieja de
+  index.html y styles/fixes.css y la servia aunque
+  reemplazaras los archivos. Al subir el numero de cache
+  de "ses-static-v5" a "ses-static-v6", el SW nuevo borra
+  la cache vieja automaticamente al cargar. Pero la primera
+  vez sigues necesitando hacer el paso 5 para que el SW
+  nuevo tome control y libere al viejo.
+
+CAMBIOS APLICADOS EN ESTE ZIP:
+- index.html: eliminado el selector duplicado "Metodo de
+  pago (elige tocando el icono)" con sus botones adicionales
+  (Transferencia, Tarjeta). Solo queda el selector QR/Efectivo
+  dentro del "Registro General de los Pares".
+- sw.js: cache bumped de "ses-static-v5" a "ses-static-v6"
+  para invalidar cache vieja.
+- Todo lo demas permanece igual.

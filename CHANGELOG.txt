@@ -1,0 +1,14 @@
+CHANGELOG.txt
+ordenes.js: single-item chips shown (paresOrden.length >= 1)
+018_sesion_unica.sql applied by user
+
+
+=== V3 parches correctos (con fixes reales) ===
+ordenes.js   : viewOrdenDetalle oculta QR + campos financieros para Empleado.
+galeria.js   : oculta boton borrar/agregar para Empleado+Supervisor; eliminarFoto valida rol Admin; busqueda tambien por codigo/descripcion de par; lista los pares individuales de la orden seleccionada; Empleado solo ve categorias detalle/suela/laterales/todos_pares.
+inventario.js: Empleado solo puede editar cantidad (resto disabled).
+auth.js      : doLogout limpia el campo de password (no el usuario).
+facturas.js  : el buscador y el concepto ya no incluyen marca/modelo/color/talla (solo servicios y cliente/orden).
+items.js     : FIX critico del boton "Entregado": el modal real es modal-entrega-pares (sin tilde); se llamaba modal-entrega-articulos (con tilde) y por eso no abria.
+agenda.js    : alertas y listado por par individual (no solo por la orden general); etiqueta "Vence en 1/2/3 dias"; beep sonoro al detectar atrasados o pronto a vencer.
+Lista問題 originales: #1, #2, #3 (inventario), #4, #6, #7, #8 (agenda), #9, boton Entregado.

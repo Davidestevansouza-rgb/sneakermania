@@ -1,0 +1,64 @@
+=============================================================
+   ALTA DE CLIENTES - Sistema SeS  (uso privado del dueño)
+=============================================================
+
+¿PARA QUÉ SIRVE?
+Para dar de alta un negocio (cliente) nuevo en segundos.
+Crea automáticamente:
+  - El negocio (tenant)
+  - El usuario administrador del cliente (correo + contraseña)
+  - La configuración inicial (moneda del país, etc.)
+
+Cada cliente entra al MISMO sitio web pero ve SOLO su negocio
+(sus clientes, sus órdenes, su dinero). Están separados y seguros.
+
+
+CÓMO USARLO (en tu PC con Windows)
+-----------------------------------------------------------
+1) Asegúrate de tener Python instalado (el mismo que usas para
+   "python -m http.server"). Si ese comando te funciona, ya lo tienes.
+
+2) Haz doble clic en el archivo:  "Crear Cliente.bat"
+
+3) Te va a preguntar:
+   - Nombre del negocio del cliente
+   - Correo del administrador
+   - Contraseña inicial
+   - País / moneda
+
+4) Al terminar te muestra los datos de acceso. Cópialos y
+   entrégaselos al cliente:
+
+      Sitio web : https://charming-gaufre-2a49f0.netlify.app
+      Usuario   : (el correo que pusiste)
+      Contraseña: (la que pusiste)
+
+
+CÓMO CREAR UN EMPLEADO O SUPERVISOR
+-----------------------------------------------------------
+Los empleados NO pueden crear su propio acceso desde la app
+(por seguridad). Tú los das de alta así:
+
+1) Doble clic en "Crear Empleado.bat"
+2) Elige el negocio (cliente) de la lista
+3) Pon: nombre, correo, contraseña y rol (Empleado o Supervisor)
+4) Entrega los datos de acceso al empleado
+
+El empleado entra al mismo sitio y NO ve finanzas.
+
+
+IMPORTANTE - SEGURIDAD
+-----------------------------------------------------------
+- El archivo "crear_cliente.py" contiene una clave secreta.
+- NO lo subas a internet, NO lo publiques en Netlify, NO lo
+  compartas. Úsalo solo en tu computadora.
+- El sitio web público (Netlify) NO tiene esta clave, por eso
+  es seguro darlo a los clientes.
+
+
+PRECIO SUGERIDO PARA VENDER
+-----------------------------------------------------------
+- Instalación / alta del cliente: cobro único.
+- Mensualidad por uso y soporte.
+(Tú decides los montos según tu mercado.)
+=============================================================

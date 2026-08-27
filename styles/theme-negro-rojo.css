@@ -1,0 +1,149 @@
+/* ============================================================
+   theme-negro-rojo.css — Paleta del sistema: fondo blanco, letras
+   negras, líneas/bordes rojo fosforescente. El menú (sidebar) se
+   deja como ya estaba: negro con letras blancas y borde rojo.
+   Se carga DESPUÉS de main.css y fixes.css.
+   ============================================================ */
+:root{
+  /* Fondos: blanco (como pidió el cliente, para que las letras
+     se puedan leer bien). */
+  --paper:#F5F5F5;
+  --paper-raised:#FFFFFF;
+
+  /* Texto: negro. */
+  --ink:#0A0A0A;
+  --ink-soft:#3A3A3A;
+  --ink-faint:#6B6B6B;
+
+  /* Líneas y bordes: rojo fosforescente. */
+  --line:#FF1E2D;
+
+  /* Acento principal (antes celeste/teal) → rojo. */
+  --teal:#FF1E2D;
+  --teal-deep:#B00000;
+  --teal-tint:#FFE3E4;
+
+  /* Menú lateral: se mantiene negro (sin cambios). */
+  --navy:#000000;
+  --gold:#FF1E2D;
+  --gold-deep:#B00000;
+  --gold-tint:#FFE3E4;
+
+  /* Estados: se mantienen funcionales dentro de la familia
+     negro/rojo/blanco para no perder la distinción entre ellos. */
+  --green:#1E8A3C;
+  --green-tint:#E1F5E4;
+  --red:#D10000;
+  --red-tint:#FFE3E4;
+  --amber:#B4790A;
+  --amber-tint:#FFF0D6;
+
+  --shadow: 0 1px 2px rgba(0,0,0,0.08), 0 10px 26px rgba(0,0,0,0.10);
+}
+
+/* Fondo general de la app */
+body{ background:var(--paper); color:var(--ink); }
+
+/* ---------- MENÚ (sidebar): tal como está — negro, letras blancas, borde rojo fosforescente ---------- */
+.sidebar{
+  background:#000 !important;
+  color:#FFFFFF !important;
+  border-right:2px solid #FF1E2D;
+  box-shadow: 0 0 10px rgba(255,30,45,0.55);
+}
+.side-foot{ border-top:1px solid #FF1E2D; }
+.nav-label{ color:#FF9C9C !important; }
+.nav-item{ color:#FFFFFF !important; }
+.nav-item:hover{ background:rgba(255,30,45,0.22) !important; color:#FFFFFF !important; }
+.nav-item.active{
+  background:#FF1E2D !important; color:#FFFFFF !important;
+  box-shadow: inset 0 0 0 1px #FFFFFF;
+}
+.side-user{ color:#FFFFFF !important; }
+.side-brand .mark, .side-brand .mark-img{
+  background:#FF1E2D !important;
+  box-shadow:0 0 0 2px #000, 0 0 0 3px #FF1E2D !important;
+}
+
+/* ---------- Resto de la interfaz: fondo blanco, letras negras ---------- */
+.combo-list,
+.field input, .field select, .field textarea,
+.role-opt,
+.btn-ghost:hover,
+.topbar,
+.topbar input.search,
+.bell-btn,
+.toolbar input, .toolbar select,
+.modal,
+.drop-zone,
+.gallery-add,
+.mini-order,
+.firma-preview,
+#signature-canvas,
+.menu-btn,
+table.data tr,
+.kpi-card, .panel, .ticket{
+  background:var(--paper-raised) !important;
+  color:var(--ink);
+}
+
+/* ---------- Líneas y bordes: rojo fosforescente, bien visible ---------- */
+.field input, .field select, .field textarea, .role-opt,
+.combo-list, .combo-item, .toolbar input, .toolbar select,
+.topbar input.search, table.data th, table.data td,
+.ticket, .kpi-card, .panel, .drop-zone,
+.gallery-add, .mini-order, .modal, .menu-btn, .bell-btn,
+#signature-canvas, .topbar{
+  border-color:var(--line) !important;
+  box-shadow: 0 0 4px rgba(255,30,45,0.35);
+}
+table.data td{ border-bottom:1px solid var(--line); }
+.ticket::before{ border-top:2px dashed var(--line); }
+hr, .side-foot, .modal-foot{ border-color:var(--line); }
+
+/* Texto secundario en gris oscuro (sigue siendo legible sobre blanco) */
+.field label, .kpi-label, .ticket-shoe, .ticket-meta-row, .modal-close,
+.ia-field-row label, .page-sub, .hint{
+  color:var(--ink-soft) !important;
+}
+
+/* Títulos con un leve resplandor rojo, para que se note el acento
+   fosforescente sin perder legibilidad del texto negro. */
+.kpi-value, .modal-title, .ticket-num, .page-title{
+  color:var(--ink) !important;
+  text-shadow:0 0 3px rgba(255,30,45,0.25);
+}
+.topbar-brand{ color:var(--ink) !important; }
+.topbar-brand .accent{ color:var(--teal) !important; }
+
+/* Botones y acentos en rojo/negro */
+.btn-primary{ background:#000; color:#FFFFFF; border:1px solid #FF1E2D; }
+.btn-primary:hover{ background:#1a0000; }
+.btn-teal{ background:var(--teal); color:#FFFFFF; }
+.btn-teal:hover{ background:var(--teal-deep); }
+.btn-ghost{ color:var(--ink-soft); border:1px solid var(--line); }
+.btn-danger{ background:#FFFFFF; color:#D10000; border:1px solid #D10000; }
+.btn-orden-masiva{ background:var(--panel,#1a1a1a); color:#FFFFFF; border:1.5px solid var(--line); }
+.btn-orden-masiva:hover{ background:#242424; }
+.btn-orden-masiva.active{ background:#fff; color:#000; border-color:#000; }
+.chip-toggle.checked{ background:var(--red-tint,#FFE3E4) !important; border-color:var(--red,#D10000) !important; color:var(--ink) !important; }
+
+/* Chips de estado: familia negro/rojo/blanco, cada uno bien legible */
+.chip{ border:1px solid var(--line); }
+.chip-recibido-y-registrado{ background:#F0F0F0; color:var(--ink); }
+.chip-lavado{ background:var(--teal-tint); color:var(--teal-deep); }
+.chip-secado-y-detallado{ background:var(--gold-tint); color:var(--gold-deep); }
+.chip-pintado-y-personalizado{ background:#F0F0F0; color:var(--ink); }
+.chip-control-de-calidad{ background:var(--gold-tint); color:var(--gold-deep); }
+.chip-biblioteca{ background:#F0F0F0; color:var(--ink); }
+.chip-listo-para-retirar{ background:var(--green-tint); color:var(--green); }
+.chip-finalizado{ background:var(--green-tint); color:var(--green); }
+.chip-entregado, .chip-pagado{ background:var(--green-tint); color:var(--green); }
+.chip-parcial{ background:var(--amber-tint); color:var(--amber); }
+.chip-pendiente{ background:var(--red-tint); color:var(--red); }
+.pri-alta{ background:var(--red-tint); color:var(--red); }
+.pri-media{ background:var(--amber-tint); color:var(--amber); }
+.pri-baja{ background:#F0F0F0; color:var(--ink-soft); }
+
+::-webkit-scrollbar-thumb{ background:#FF1E2D !important; }
+.modal-backdrop{ background:rgba(0,0,0,0.55); }
