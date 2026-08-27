@@ -1,0 +1,13 @@
+node_modules/
+android/
+www/
+supabase/
+ALTA_CLIENTES/
+*.docx
+*.pdf
+*.md
+*.txt
+.env
+.env.example
+.abacus.donotdelete
+.gitignore
