@@ -237,6 +237,31 @@ table.data tr:hover td{background:rgba(47,122,130,0.04);}
 .toolbar input,.toolbar select{padding:8px 10px;border:1px solid var(--line);border-radius:7px;font-size:13px;background:#fff;}
 .toolbar .grow{flex:1;min-width:160px;}
 
+/* ---------- BUSCADOR DE FECHAS (Clientes y Órdenes) ----------
+   Botón junto a "+ Nuevo cliente" / "+ Nueva orden" que despliega un
+   panel flotante con rango "Desde/Hasta". Reutiliza el mismo lenguaje
+   visual que el resto de la app (btn-ghost, .field input, tarjeta con
+   sombra) para que no se sienta como un componente aparte. */
+.date-filter-wrap{position:relative;display:inline-block;}
+.date-filter-btn{position:relative;}
+.date-filter-btn.active{border-color:var(--teal);color:var(--teal-deep);background:var(--teal-tint);}
+.date-filter-dot{
+  display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--teal);
+  margin-left:2px;
+}
+.date-filter-dropdown{
+  display:none;position:absolute;top:100%;right:0;z-index:50;margin-top:6px;
+  background:var(--paper-raised,#fff);border:1px solid var(--line);border-radius:10px;
+  box-shadow:var(--shadow);padding:14px;width:250px;
+}
+.date-filter-dropdown.open{display:block;}
+.date-filter-dropdown .field{margin-bottom:10px;}
+.date-filter-dropdown .field:last-of-type{margin-bottom:12px;}
+.date-filter-actions{display:flex;gap:8px;justify-content:flex-end;}
+@media (max-width:480px){
+  .date-filter-dropdown{right:auto;left:0;width:calc(100vw - 64px);max-width:280px;}
+}
+
 /* ---------- TICKET CARDS (signature element) ---------- */
 .ticket-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;}
 .ticket{
@@ -469,15 +494,6 @@ a.link:hover{text-decoration:underline;}
   .agenda-grid{grid-template-columns:1fr;}
   .section-flex{flex-direction:column;}
   .section-flex > *{min-width:0 !important;width:100%;}
-  table.data thead{display:none;}
-  table.data, table.data tbody, table.data tr{display:block;width:100%;}
-  table.data{white-space:normal;}
-  table.data tr{border:1px solid var(--line);border-radius:10px;margin-bottom:10px;padding:4px 12px;background:#fff;}
-  table.data td{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:9px 0;border-bottom:1px dashed var(--line);text-align:right;white-space:normal;}
-  table.data td:last-child{border-bottom:none;}
-  table.data td[data-label]::before{content:attr(data-label);font-weight:700;color:var(--ink-soft);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;text-align:left;flex-shrink:0;}
-  table.data td[data-label=""]{display:block;text-align:left;padding-top:2px;}
-  table.data td[data-label=""]::before{content:none;}
   .panel[style*="overflow-x:auto"]{overflow-x:auto!important;-webkit-overflow-scrolling:touch;}
   .panel{padding:14px 14px;max-width:100%;box-sizing:border-box;}
   .modal{padding:18px 16px;max-width:100%;width:calc(100% - 0px);}
@@ -490,6 +506,25 @@ a.link:hover{text-decoration:underline;}
   .toolbar > *{min-width:0;}
   select[style*="min-width"], input[style*="min-width"], div[style*="min-width"]{min-width:0 !important;}
   select[style*="min-width"]{width:100%;}
+}
+
+/* ---------- MOBILE: TABLAS (scroll horizontal, sin romper estructura) ----------
+   Antes, en mobile las tablas .data se transformaban en "tarjetas" (thead
+   oculto, cada <td> pasaba a ser una fila etiqueta:valor). Eso cambia por
+   completo la identidad visual respecto del desktop. Ahora la tabla
+   conserva exactamente su estructura de columnas/celdas (igual que en
+   desktop) y, si no entra en el ancho de la pantalla, el panel que la
+   contiene scrollea horizontalmente en vez de reorganizar el contenido. */
+@media (max-width: 880px){
+  .panel:has(table.data){
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+  }
+  table.data{
+    width:max-content;
+    min-width:100%;
+    max-width:none;
+  }
 }
 @media (max-width: 420px){
   .kpi-grid{grid-template-columns:1fr 1fr;}

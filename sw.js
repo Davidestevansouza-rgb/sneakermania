@@ -1,7 +1,10 @@
 /* Service Worker — Sistema SeS (PWA / modo offline)
    Estrategia: stale-while-revalidate SOLO para archivos estáticos del mismo
    origen. Las peticiones a Supabase (API, Auth, Storage) NUNCA se cachean. */
+Updated upstream
 const CACHE = 'ses-static-v9';
+const CACHE = 'ses-static-v16';
+Stashed changes
 const CORE = [
   './',
   './index.html',

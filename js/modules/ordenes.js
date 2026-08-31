@@ -101,6 +101,34 @@ function lineaArticuloMinima(it) {
   return (it.numeroItem || it.codigo) + ' ' + estadoMostradoPar(it);
 }
 
+/** Devuelve la primera "foto general" (categoría todos_pares, la del campo
+ *  "Fotos generales" del Registro General de los Pares) guardada en la
+ *  orden, o null si todavía no tiene ninguna. La usa el envío automático
+ *  de WhatsApp al registrar la orden y el botón "💬 WhatsApp". */
+function primeraFotoGeneralOrden(o) {
+  const fotos = o && o.extra && Array.isArray(o.extra.fotos) ? o.extra.fotos : [];
+  return fotos.find(f => f.categoria === 'todos_pares') || null;
+}
+
+/** Descarga una foto ya subida (por su URL) y la convierte en File, para
+ *  poder adjuntarla junto con el texto en un solo mensaje de WhatsApp
+ *  (ver enviarWhatsAppConFoto en whatsapp-limites.js). Si falla la
+ *  descarga (sin conexión, CORS, etc.) devuelve null y el mensaje se
+ *  envía solo con texto, como antes. */
+async function fotoUrlAFile(foto, nombreArchivo) {
+  if (!foto || !foto.url) return null;
+  try {
+    const secureUrl = await storageManager.resolveImageUrl(foto.url, foto.path);
+    const resp = await fetch(secureUrl);
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
+    return new File([blob], nombreArchivo || 'foto.jpg', { type: blob.type || 'image/jpeg' });
+  } catch (e) {
+    console.error('No se pudo preparar la foto para WhatsApp:', e);
+    return null;
+  }
+}
+
 export function ordenQrText(o) {
   const c = clienteById(o.clienteId) || {};
   const valorFinal = Number(o.precio) - Number(o.descuento || 0);
@@ -260,6 +288,12 @@ const QC_ITEMS = [
 let pagoQrOrdenId = null;
 let pagoEfectivoOrdenId = null;
 let corregirPagoOrdenId = null;
+// Evita que, por demora de red al presionar el botón varias veces, se
+// registre el mismo pago más de una vez (ver confirmarPagoQR/Efectivo y
+// guardarCorreccionPago más abajo).
+let pagoQrEnProceso = false;
+let pagoEfectivoEnProceso = false;
+let corregirPagoEnProceso = false;
 
 /* ---------------- Órdenes ---------------- */
 // Se mantiene el nombre por compatibilidad con quien la importa (app.js),
@@ -315,7 +349,24 @@ export function renderOrdenes() {
   const texto = (document.getElementById('filtro-orden-texto').value || '').toLowerCase();
   document.getElementById('ordenes-sub').textContent = state.ordenes.length + ' órdenes registradas';
 
+  // Buscador de fechas (junto a "+ Nueva orden"): filtra por fecha de
+  // ingreso de la orden usando el rango Desde/Hasta del panel.
+  const fDesde = document.getElementById('orden-fecha-desde');
+  const fHasta = document.getElementById('orden-fecha-hasta');
+  const fechaDesde = fDesde ? fDesde.value : '';
+  const fechaHasta = fHasta ? fHasta.value : '';
+  if (typeof actualizarBotonFiltroFechaOrden === 'function') actualizarBotonFiltroFechaOrden(!!(fechaDesde || fechaHasta));
+
   let list = state.ordenes.slice().sort((a, b) => b.numero - a.numero);
+  if (fechaDesde || fechaHasta) {
+    list = list.filter(o => {
+      if (!o.fechaIngreso) return false;
+      const fecha = o.fechaIngreso.slice(0, 10);
+      if (fechaDesde && fecha < fechaDesde) return false;
+      if (fechaHasta && fecha > fechaHasta) return false;
+      return true;
+    });
+  }
   // El filtro de estado compara contra el estado general de la orden, pero
   // una orden con varios pares puede tener cada par en un paso distinto
   // (ver paresBreakdownHTML abajo); si no se mira también el estado de
@@ -514,6 +565,7 @@ export async function saveOrden(btn) {
   let target;
   let descuentoNuevo = false; // para notificar solo cuando el descuento cambia de verdad
   let esNuevaOrden = false;   // para enviar el WhatsApp automático de registro
+  let fotoGeneralParaWhatsApp = null; // primera "foto general" recién cargada, para ir junto con el mensaje
   try {
     if (id) {
       const o = ordenById(id);
@@ -545,6 +597,7 @@ export async function saveOrden(btn) {
     if (fotosGeneralesPendientes.length) {
       if (!target.extra) target.extra = {};
       if (!target.extra.fotos) target.extra.fotos = [];
+      fotoGeneralParaWhatsApp = fotosGeneralesPendientes[0].file; // se guarda antes de subir/limpiar
       for (const f of fotosGeneralesPendientes) {
         try {
           const fotoData = await storageManager.uploadFoto(f.file, target.id, 'todos_pares');
@@ -572,6 +625,13 @@ export async function saveOrden(btn) {
     closeModal('modal-orden');
     renderOrdenes();
     showToast('Orden guardada');
+    // Envío automático por WhatsApp al registrar una orden nueva: la info
+    // del registro (misma que el QR) y la foto general (si se cargó) van
+    // JUNTAS en un solo mensaje. No bloquea el guardado si falla.
+    if (esNuevaOrden) {
+      const clienteWa = clienteById(target.clienteId);
+      enviarWhatsAppAutomatico(target, 'Hola ' + (clienteWa ? clienteWa.nombre : '') + ' 👟 ¡Registramos tu pedido (orden #' + target.numero + ')!', fotoGeneralParaWhatsApp);
+    }
   } catch (e) {
     console.error(e);
     showToast('Error al guardar la orden');
@@ -1428,7 +1488,7 @@ export function openFormaPagoChooser(id) {
   const waBtn = document.getElementById('forma-pago-whatsapp-btn');
   qrBtn.onclick = () => { closeModal('modal-forma-pago'); openPagoQRModal(id); };
   efBtn.onclick = () => { closeModal('modal-forma-pago'); openPagoEfectivoModal(id); };
-  if (waBtn) waBtn.onclick = () => { enviarWhatsAppOrden(id); showToast('Mensaje de WhatsApp enviado'); };
+  if (waBtn) waBtn.onclick = () => { enviarWhatsAppOrden(id); };
   openModalEl('modal-forma-pago');
 }
 
@@ -1458,7 +1518,7 @@ function renderPagoQRContent(o) {
     '<label class="hint">Monto a cobrar</label>' +
     '<input type="number" id="pago-qr-monto" step="0.01" value="' + montoSugerido.toFixed(2) + '" style="text-align:center;font-size:16px;font-weight:700;margin-bottom:14px;">' +
     '<div class="modal-foot" style="justify-content:center;">' +
-      '<button class="btn btn-teal" onclick="confirmarPagoQR()">✅ Confirmar pago recibido</button>' +
+      '<button class="btn btn-teal" id="pago-qr-confirmar-btn" onclick="confirmarPagoQR()">✅ Confirmar pago recibido</button>' +
       '<button class="btn btn-ghost" onclick="closeModal(\'modal-pago-qr\')">Cancelar</button>' +
     '</div>' +
     '<div class="hint" style="margin-top:10px;">Al confirmar, el pago quedará registrado en la aplicación y se reflejará como debitado de la cuenta del cliente.</div>';
@@ -1476,20 +1536,27 @@ export function refreshPagoQRSiAbierto() {
 }
 
 export async function confirmarPagoQR() {
+  // Protección anti doble-clic / red lenta: si ya hay un guardado en curso
+  // para este pago, ignora los clics adicionales en vez de registrar el
+  // pago dos veces.
+  if (pagoQrEnProceso) return;
   const id = pagoQrOrdenId;
   const o = ordenById(id);
   if (!o) return;
   ensurePagoFields(o);
   const monto = Number(document.getElementById('pago-qr-monto').value) || 0;
   if (monto <= 0) { showToast('Ingresa un monto válido'); return; }
-  const valorFinal = Number(o.precio) - Number(o.descuento || 0);
-  o.pagado = Number(o.pagado || 0) + monto;
-  o.pagadoQR = Number(o.pagadoQR || 0) + monto;
-  o.metodoPago = 'QR';
-  o.fechaPago = todayISO(0);
-  o.estadoPago = o.pagado >= valorFinal ? 'Pagado' : 'Parcial';
-  logActivity('Cobro por QR de ' + fmtMoney(monto) + ' en orden #' + o.numero + ' (debitado de la cuenta del cliente)');
+  pagoQrEnProceso = true;
+  const btn = document.getElementById('pago-qr-confirmar-btn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; }
   try {
+    const valorFinal = Number(o.precio) - Number(o.descuento || 0);
+    o.pagado = Number(o.pagado || 0) + monto;
+    o.pagadoQR = Number(o.pagadoQR || 0) + monto;
+    o.metodoPago = 'QR';
+    o.fechaPago = todayISO(0);
+    o.estadoPago = o.pagado >= valorFinal ? 'Pagado' : 'Parcial';
+    logActivity('Cobro por QR de ' + fmtMoney(monto) + ' en orden #' + o.numero + ' (debitado de la cuenta del cliente)');
     await persist();
     await db.saveOrden(o);
     closeModal('modal-pago-qr');
@@ -1498,7 +1565,13 @@ export async function confirmarPagoQR() {
     if (document.getElementById('tab-finanzas').classList.contains('active') && window.renderFinanzas) window.renderFinanzas();
     if (document.getElementById('tab-dashboard').classList.contains('active') && window.renderDashboard) window.renderDashboard();
     if (document.getElementById('modal-orden-detalle').classList.contains('open')) viewOrdenDetalle(o.id);
-  } catch (e) { console.error(e); showToast('Error al registrar el pago'); }
+  } catch (e) {
+    console.error(e);
+    showToast('Error al registrar el pago');
+  } finally {
+    pagoQrEnProceso = false;
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+  }
 }
 
 /* ---------------- Cobro en efectivo ---------------- */
@@ -1517,27 +1590,32 @@ export function openPagoEfectivoModal(id) {
     '<label class="hint">Monto recibido en efectivo</label>' +
     '<input type="number" id="pago-efectivo-monto" step="0.01" value="' + montoSugerido.toFixed(2) + '" style="width:100%;text-align:center;font-size:16px;font-weight:700;margin-bottom:14px;padding:10px;border:1px solid var(--line);border-radius:8px;">' +
     '<div class="modal-foot" style="justify-content:center;">' +
-      '<button class="btn btn-teal" onclick="confirmarPagoEfectivo()">✅ Confirmar pago recibido</button>' +
+      '<button class="btn btn-teal" id="pago-efectivo-confirmar-btn" onclick="confirmarPagoEfectivo()">✅ Confirmar pago recibido</button>' +
       '<button class="btn btn-ghost" onclick="closeModal(\'modal-pago-efectivo\')">Cancelar</button>' +
     '</div>';
   openModalEl('modal-pago-efectivo');
 }
 
 export async function confirmarPagoEfectivo() {
+  // Misma protección anti doble-registro que confirmarPagoQR.
+  if (pagoEfectivoEnProceso) return;
   const id = pagoEfectivoOrdenId;
   const o = ordenById(id);
   if (!o) return;
   ensurePagoFields(o);
   const monto = Number(document.getElementById('pago-efectivo-monto').value) || 0;
   if (monto <= 0) { showToast('Ingresa un monto válido'); return; }
-  const valorFinal = Number(o.precio) - Number(o.descuento || 0);
-  o.pagado = Number(o.pagado || 0) + monto;
-  o.pagadoEfectivo = Number(o.pagadoEfectivo || 0) + monto;
-  o.metodoPago = 'Efectivo';
-  o.fechaPago = todayISO(0);
-  o.estadoPago = o.pagado >= valorFinal ? 'Pagado' : 'Parcial';
-  logActivity('Cobro en efectivo de ' + fmtMoney(monto) + ' en orden #' + o.numero);
+  pagoEfectivoEnProceso = true;
+  const btn = document.getElementById('pago-efectivo-confirmar-btn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; }
   try {
+    const valorFinal = Number(o.precio) - Number(o.descuento || 0);
+    o.pagado = Number(o.pagado || 0) + monto;
+    o.pagadoEfectivo = Number(o.pagadoEfectivo || 0) + monto;
+    o.metodoPago = 'Efectivo';
+    o.fechaPago = todayISO(0);
+    o.estadoPago = o.pagado >= valorFinal ? 'Pagado' : 'Parcial';
+    logActivity('Cobro en efectivo de ' + fmtMoney(monto) + ' en orden #' + o.numero);
     await persist();
     await db.saveOrden(o);
     closeModal('modal-pago-efectivo');
@@ -1546,7 +1624,13 @@ export async function confirmarPagoEfectivo() {
     if (document.getElementById('tab-finanzas').classList.contains('active') && window.renderFinanzas) window.renderFinanzas();
     if (document.getElementById('tab-dashboard').classList.contains('active') && window.renderDashboard) window.renderDashboard();
     if (document.getElementById('modal-orden-detalle').classList.contains('open')) viewOrdenDetalle(o.id);
-  } catch (e) { console.error(e); showToast('Error al registrar el pago'); }
+  } catch (e) {
+    console.error(e);
+    showToast('Error al registrar el pago');
+  } finally {
+    pagoEfectivoEnProceso = false;
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+  }
 }
 
 /* ---------------- Corregir pago ---------------- */
@@ -1571,28 +1655,32 @@ export function openCorregirPagoModal(id) {
     '<div class="hint" style="margin:8px 0 4px 0;">Esto reemplaza el monto y método registrados anteriormente para esta orden (úsalo para corregir un error, no para sumar un nuevo cobro).</div>' +
     '<div class="modal-foot">' +
       '<button class="btn btn-ghost" onclick="closeModal(\'modal-corregir-pago\')">Cancelar</button>' +
-      '<button class="btn btn-primary" onclick="guardarCorreccionPago()">Guardar corrección</button>' +
+      '<button class="btn btn-primary" id="corregir-pago-guardar-btn" onclick="guardarCorreccionPago()">Guardar corrección</button>' +
     '</div>';
   openModalEl('modal-corregir-pago');
 }
 
 export async function guardarCorreccionPago() {
+  if (corregirPagoEnProceso) return;
   const id = corregirPagoOrdenId;
   const o = ordenById(id);
   if (!o) return;
   ensurePagoFields(o);
   const monto = Number(document.getElementById('corregir-pago-monto').value) || 0;
   const metodo = document.getElementById('corregir-pago-metodo').value;
-  const valorFinal = Number(o.precio) - Number(o.descuento || 0);
-  o.pagado = monto;
-  o.pagadoQR = 0; o.pagadoEfectivo = 0;
-  if (metodo === 'QR') o.pagadoQR = monto;
-  else if (metodo === 'Efectivo') o.pagadoEfectivo = monto;
-  o.metodoPago = metodo;
-  o.fechaPago = todayISO(0);
-  o.estadoPago = monto <= 0 ? 'Pendiente' : (monto >= valorFinal ? 'Pagado' : 'Parcial');
-  logActivity('Corrigió el pago de la orden #' + o.numero + ' a ' + fmtMoney(monto) + ' (' + metodo + ')');
+  corregirPagoEnProceso = true;
+  const btn = document.getElementById('corregir-pago-guardar-btn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; }
   try {
+    const valorFinal = Number(o.precio) - Number(o.descuento || 0);
+    o.pagado = monto;
+    o.pagadoQR = 0; o.pagadoEfectivo = 0;
+    if (metodo === 'QR') o.pagadoQR = monto;
+    else if (metodo === 'Efectivo') o.pagadoEfectivo = monto;
+    o.metodoPago = metodo;
+    o.fechaPago = todayISO(0);
+    o.estadoPago = monto <= 0 ? 'Pendiente' : (monto >= valorFinal ? 'Pagado' : 'Parcial');
+    logActivity('Corrigió el pago de la orden #' + o.numero + ' a ' + fmtMoney(monto) + ' (' + metodo + ')');
     await persist();
     await db.saveOrden(o);
     closeModal('modal-corregir-pago');
@@ -1601,7 +1689,13 @@ export async function guardarCorreccionPago() {
     if (document.getElementById('tab-finanzas').classList.contains('active') && window.renderFinanzas) window.renderFinanzas();
     if (document.getElementById('tab-dashboard').classList.contains('active') && window.renderDashboard) window.renderDashboard();
     if (document.getElementById('modal-orden-detalle').classList.contains('open')) viewOrdenDetalle(o.id);
-  } catch (e) { console.error(e); showToast('Error al corregir el pago'); }
+  } catch (e) {
+    console.error(e);
+    showToast('Error al corregir el pago');
+  } finally {
+    corregirPagoEnProceso = false;
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+  }
 }
 
 /** Un solo botón "Comprobante" abre este selector con las 2 opciones
@@ -1853,6 +1947,9 @@ async function eliminarOrdenPermanente(id) {
   if (!o) return;
   if (!confirm('¿Eliminar DEFINITIVAMENTE la orden #' + o.numero + '?\n\nEsta acción NO se puede deshacer — se perderá para siempre.')) return;
   const backup = state.ordenesEliminadas.slice();
+  // Guardamos también los artículos/pares de esta orden (para poder
+  // restaurarlos en la caché local si el borrado falla en el servidor).
+  const itemsBackup = (state.ordenItems || []).filter(it => it.ordenId === id);
   state.ordenesEliminadas = state.ordenesEliminadas.filter(x => x.id !== id);
   if (window.renderPapeleras) window.renderPapeleras();
   const res = await db.deleteOrden(id);
@@ -1862,12 +1959,27 @@ async function eliminarOrdenPermanente(id) {
     showToast('No se pudo eliminar definitivamente: ' + (res.error.message || 'error del servidor'));
     return;
   }
+  // En el servidor, orden_items tiene ON DELETE CASCADE contra ordenes, así
+  // que ya se borraron ahí. Pero la CACHÉ LOCAL (state.ordenItems) no se
+  // entera sola: si no se limpia acá, esos artículos quedan "huérfanos" en
+  // memoria (y en el caché offline) apuntando a una orden que ya no existe,
+  // y siguen apareciendo en pantallas que leen todos los artículos sin
+  // pasar por la orden — por ejemplo Biblioteca, que seguía mostrándolos
+  // como si estuvieran guardados en un estante aunque la orden ya se había
+  // eliminado. Por eso se filtran acá también.
+  if (itemsBackup.length) {
+    state.ordenItems = (state.ordenItems || []).filter(it => it.ordenId !== id);
+    if (window.renderBiblioteca) window.renderBiblioteca();
+  }
   logActivity('Eliminó definitivamente la orden #' + o.numero);
+  await persist();
   showToast('Orden #' + o.numero + ' eliminada definitivamente');
 }
 
-/** Envía WhatsApp verificando el límite mensual configurado */
-export function enviarWhatsAppOrden(ordenId) {
+/** Envía WhatsApp verificando el límite mensual configurado. Si la orden
+ *  ya tiene una "foto general" cargada (Registro General de los Pares),
+ *  la adjunta junto con el texto en el mismo mensaje. */
+export async function enviarWhatsAppOrden(ordenId) {
   const o = ordenById(ordenId);
   if (!o) return;
   const c = clienteById(o.clienteId);
@@ -1875,9 +1987,12 @@ export function enviarWhatsAppOrden(ordenId) {
   // El mensaje al cliente lleva EXACTAMENTE la misma información del QR de la
   // orden (detalle completo par por par, totales, etc.), sin repetir datos.
   const msg = 'Hola ' + (c.nombre || '') + ' 👟\n\n' + ordenQrText(o) + '\n\n¡Gracias por tu confianza!';
+  const fotoGeneral = primeraFotoGeneralOrden(o);
+  const file = fotoGeneral ? await fotoUrlAFile(fotoGeneral, 'orden-' + o.numero + '.jpg') : null;
 
-  // Verificar límite WhatsApp
-  if (window.enviarWhatsApp) {
+  if (window.enviarWhatsAppConFoto) {
+    window.enviarWhatsAppConFoto(c.whatsapp || '', msg, file);
+  } else if (window.enviarWhatsApp) {
     window.enviarWhatsApp(c.whatsapp || '', msg);
   } else {
     // Fallback si el módulo no está cargado
@@ -1886,18 +2001,22 @@ export function enviarWhatsAppOrden(ordenId) {
   }
 }
 
-/** Envía al cliente un WhatsApp automático con la info del QR de la orden.
- *  Se usa al registrar la orden y al llegar a "Biblioteca" (último paso
- *  del seguimiento en tiempo real, listo para retirar). El encabezado
- *  cambia según el momento (registro vs. listo). */
-function enviarWhatsAppAutomatico(o, encabezado) {
+/** Envía al cliente un WhatsApp automático con la info del QR de la orden
+ *  y, si se le pasa una foto (File), la adjunta junto con el texto en el
+ *  mismo mensaje. Se usa al registrar la orden (con la foto general recién
+ *  cargada) y al llegar a "Biblioteca" (último paso del seguimiento en
+ *  tiempo real, listo para retirar). El encabezado cambia según el
+ *  momento (registro vs. listo). */
+function enviarWhatsAppAutomatico(o, encabezado, fotoFile) {
   try {
     const c = clienteById(o.clienteId);
     if (!c) return;
     const tel = (c.whatsapp || '').replace(/[^0-9]/g, '');
     if (!tel) return; // sin número no hay envío
     const msg = (encabezado ? encabezado + '\n\n' : '') + ordenQrText(o) + '\n\n¡Gracias por tu confianza!';
-    if (window.enviarWhatsApp) {
+    if (window.enviarWhatsAppConFoto) {
+      window.enviarWhatsAppConFoto(tel, msg, fotoFile || null);
+    } else if (window.enviarWhatsApp) {
       window.enviarWhatsApp(tel, msg);
     } else {
       window.open('https://wa.me/' + tel + '?text=' + encodeURIComponent(msg), '_blank');
@@ -1927,10 +2046,32 @@ if (typeof document !== 'undefined') {
   });
 }
 
+/* ---------- Buscador de fechas (Órdenes) ----------
+   Panel flotante junto a "+ Nueva orden" para filtrar la grilla por
+   fecha de ingreso (Desde/Hasta). Mismo patrón que el de Clientes. */
+function toggleFiltroFechaOrden(ev) {
+  window.toggleDropdown('orden-fecha-dropdown', ev, 'date-filter-dropdown');
+}
+function aplicarFiltroFechaOrden() {
+  renderOrdenes();
+  window.closeDropdown('orden-fecha-dropdown');
+}
+function limpiarFiltroFechaOrden() {
+  document.getElementById('orden-fecha-desde').value = '';
+  document.getElementById('orden-fecha-hasta').value = '';
+  renderOrdenes();
+  window.closeDropdown('orden-fecha-dropdown');
+}
+function actualizarBotonFiltroFechaOrden(activo) {
+  const btn = document.getElementById('btn-filtro-fecha-orden');
+  if (btn) btn.classList.toggle('active', activo);
+}
+
 // Exponer funciones llamadas desde onclick del HTML y desde otros módulos.
 Object.assign(window, {
   populateClienteSelect, filtrarClientesComboOrden, seleccionarClienteOrden,
   renderOrdenes, openOrdenModal, saveOrden, advanceEstado, toggleArticulosDropdown,
+  toggleFiltroFechaOrden, aplicarFiltroFechaOrden, limpiarFiltroFechaOrden,
   advanceEstadoYRefrescarDetalle, entregarOrden,
   advanceTimelineStep, openCalidadModal, updateCalidadProgress, saveCalidadChecklist,
   openFirmaModal, clearSignature, saveSignature, viewOrdenDetalle,

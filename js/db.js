@@ -74,7 +74,10 @@ function clienteFromDb(r) {
   return {
     id: r.id, nombre: r.nombre || '', telefono: r.telefono || '',
     whatsapp: r.whatsapp || '', email: r.email || '', direccion: r.direccion || '',
-    rfc: r.rfc || '', observaciones: r.observaciones || '', eliminada: !!r.eliminada
+    rfc: r.rfc || '', observaciones: r.observaciones || '', eliminada: !!r.eliminada,
+    // Fecha de alta del cliente (columna created_at que Supabase agrega
+    // automáticamente a cada tabla) — se usa en el buscador de fechas.
+    creadoEn: r.created_at || null
   };
 }
 
@@ -247,15 +250,20 @@ function registroParToDb(r) {
     id: r.id, tenant_id: tenantId(), empleado: r.empleado, fecha: r.fecha,
     pares: Number(r.pares) || 0, foto_url: urls[0] || null, foto_urls: urls,
     usuario_id: userId(),
-    codigo: r.codigo || null, servicio: r.servicio || null
+    codigo: r.codigo || null, servicio: r.servicio || null, hora: r.hora || null
   };
 }
 function registroParFromDb(r) {
   const urls = Array.isArray(r.foto_urls) && r.foto_urls.length ? r.foto_urls : (r.foto_url ? [r.foto_url] : []);
+  // Respaldo para registros viejos sin "hora" guardada: se toma la hora de
+  // created_at (columna que ya existía en la tabla desde el inicio).
+  const horaRespaldo = (!r.hora && r.created_at)
+    ? new Date(r.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+    : null;
   return {
     id: r.id, empleado: r.empleado, fecha: r.fecha, pares: Number(r.pares) || 0,
     fotoUrls: urls, fotoUrl: urls[0] || '', usuarioId: r.usuario_id || null,
-    codigo: r.codigo || null, servicio: r.servicio || null
+    codigo: r.codigo || null, servicio: r.servicio || null, hora: r.hora || horaRespaldo || null
   };
 }
 export const saveRegistroPar = (r) => pushUpsert('registro_pares', registroParToDb(r));
@@ -276,7 +284,9 @@ function itemToDb(it) {
     estado_calzado: it.estadoCalzado || null, tratamiento_sugerido: it.tratamientoSugerido || null,
     timeline_index: it.timelineIndex || 0,
     timeline_dates: it.timelineDates && typeof it.timelineDates === 'object' ? it.timelineDates : {},
-    control_calidad: it.controlCalidad && typeof it.controlCalidad === 'object' ? it.controlCalidad : {}
+    control_calidad: it.controlCalidad && typeof it.controlCalidad === 'object' ? it.controlCalidad : {},
+    biblioteca: it.biblioteca && typeof it.biblioteca === 'object' ? it.biblioteca : {},
+    registro_servicios: it.registroServicios && typeof it.registroServicios === 'object' ? it.registroServicios : {}
   };
 }
 function itemFromDb(r) {
@@ -292,7 +302,9 @@ function itemFromDb(r) {
     estadoCalzado: r.estado_calzado || '', tratamientoSugerido: r.tratamiento_sugerido || '',
     timelineIndex: r.timeline_index || 0,
     timelineDates: r.timeline_dates && typeof r.timeline_dates === 'object' ? r.timeline_dates : {},
-    controlCalidad: r.control_calidad && typeof r.control_calidad === 'object' ? r.control_calidad : {}
+    controlCalidad: r.control_calidad && typeof r.control_calidad === 'object' ? r.control_calidad : {},
+    biblioteca: r.biblioteca && typeof r.biblioteca === 'object' ? r.biblioteca : {},
+    registroServicios: r.registro_servicios && typeof r.registro_servicios === 'object' ? r.registro_servicios : {}
   };
 }
 export const saveOrdenItem = (it) => pushUpsert('orden_items', itemToDb(it));
@@ -331,6 +343,29 @@ export async function logRemote(accion) {
   }
 }
 
+/** Busca en el registro de actividad (bitácora) dentro de un rango de
+ *  fechas puntual (ej. hasta 2 meses atrás), sin quedar limitado a los
+ *  últimos 100 registros que carga loadAllData(). Devuelve null si no se
+ *  pudo consultar (sin conexión / error), para que quien llama pueda
+ *  avisar sin confundirlo con "no hay resultados". */
+export async function fetchActivityLogRange(desde, hasta) {
+  if (!online() || !supabase || !tenantId()) return null;
+  try {
+    let q = supabase.from('actividad_log').select('*').order('created_at', { ascending: false }).limit(1000);
+    if (desde) q = q.gte('created_at', desde + 'T00:00:00');
+    if (hasta) q = q.lte('created_at', hasta + 'T23:59:59');
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data || []).map(r => ({
+      fecha: r.created_at, accion: r.accion,
+      usuario: (r.datos && r.datos.usuario) || '—'
+    }));
+  } catch (e) {
+    console.error('No se pudo buscar la bitácora por fecha:', e);
+    return null;
+  }
+}
+
 export async function saveConfig(cfg) {
   return pushUpsert('configuracion_tenant', { tenant_id: tenantId(), ...cfg });
 }
@@ -346,7 +381,7 @@ export async function loadAllData() {
       supabase.from('ordenes').select('*'),
       supabase.from('gastos').select('*'),
       supabase.from('inventario').select('*'),
-      supabase.from('actividad_log').select('*').order('created_at', { ascending: false }).limit(60),
+      supabase.from('actividad_log').select('*').order('created_at', { ascending: false }).limit(100),
       supabase.from('configuracion_tenant').select('*').eq('tenant_id', tenantId()).maybeSingle(),
       supabase.from('notificaciones').select('*').order('created_at', { ascending: false }).limit(100),
       supabase.from('facturas').select('*'),

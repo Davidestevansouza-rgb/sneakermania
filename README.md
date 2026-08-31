@@ -135,7 +135,7 @@ sneakermania/
 │   ├── state.js              # Estado en memoria + semilla
 │   ├── auth.js               # Login/logout con Supabase Auth + permisos por rol
 │   ├── db.js                 # Acceso a datos + cola offline
-│   ├── storage.js            # Caché local (localStorage)
+│   ├── storage.js            # Compatibilidad/deprecado; no usa Supabase Storage
 │   ├── ui.js                 # Utilidades de interfaz (toast, bitácora, formato)
 │   ├── logo.js               # Logotipo embebido (data URI)
 │   ├── app.js                # Punto de entrada, navegación e inicialización

@@ -142,7 +142,7 @@ export function exportCSV(kind) {
 function negocio() {
   const c = state.config || {};
   return {
-    nombre: c.nombre_negocio || 'Sistema SeS',
+    nombre: c.nombre_negocio || 'SneakerMania',
     tel: c.whatsapp_negocio || '',
     email: c.email_negocio || ''
   };
@@ -227,7 +227,7 @@ export function exportPDF(kind) {
       y += 26;
     });
     doc.setFontSize(8); doc.setTextColor(120);
-    doc.text('Generado por Sistema SeS · ' + new Date().toLocaleString(), marginX, doc.internal.pageSize.getHeight() - 30);
+    doc.text('Generado por SneakerMania · ' + new Date().toLocaleString(), marginX, doc.internal.pageSize.getHeight() - 30);
     doc.save('ses_resumen.pdf');
   } else {
     const rows = buildRows(kind, r);
@@ -235,7 +235,7 @@ export function exportPDF(kind) {
     const y = pdfHeader(doc, TITULOS[kind] || 'Reporte', sub + '  ·  ' + (rows.length - 1) + ' registro(s)');
     drawTable(doc, rows, y + 6);
     doc.setFontSize(8); doc.setTextColor(120);
-    doc.text('Generado por Sistema SeS · ' + new Date().toLocaleString(), 40, doc.internal.pageSize.getHeight() - 20);
+    doc.text('Generado por SneakerMania · ' + new Date().toLocaleString(), 40, doc.internal.pageSize.getHeight() - 20);
     doc.save('ses_' + kind + '.pdf');
   }
   logActivity('Exportó reporte PDF de ' + kind);

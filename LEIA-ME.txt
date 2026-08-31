@@ -1,0 +1,43 @@
+INTEGRACIÓN CLOUDFLARE R2 — SneakerMania
+==========================================
+
+YA HECHO EN SUPABASE (proyecto "Sistema SeS"):
+- Edge Function "r2-storage" desplegada y activa.
+- 4 secretos configurados: R2_ENDPOINT, R2_ACCESS_KEY_ID,
+  R2_SECRET_ACCESS_KEY, R2_PUBLIC_URL.
+
+ARCHIVO CAMBIADO EN TU PROYECTO: js/storage-manager.js
+(ya actualizado también en deploy_temp/www/js/ y en las copias
+dentro de android/, si las usas para build).
+
+Las fotos ahora se suben a tu bucket de R2 (sneakermania-fotos) en
+vez de a Supabase Storage. La URL pública queda guardada en tus
+tablas de Supabase exactamente igual que antes, así que la galería
+de clientes sigue mostrando las fotos sin que tengas que tocar nada
+más.
+
+Nada de lo demás cambió: el HTML, los otros módulos JS, la base de
+datos y el resto de la lógica del sistema siguen igual. Todas las
+funciones que ya usaba el resto de la app (uploadFoto, uploadFirma,
+deleteFile, listOrdenFiles) se llaman exactamente igual que antes —
+solo cambió lo que pasa "por dentro".
+
+CÓMO PROBAR
+------------
+1. Reemplazá tu js/storage-manager.js por el de este paquete (o
+   aplicá el cambio si ya lo tenés en tu repo).
+2. Abrí la app, entrá a una orden y subí una foto de prueba (o desde
+   Producción, que es el flujo más simple: js/modules/produccion.js).
+3. Si todo salió bien, la foto va a aparecer en la galería igual que
+   siempre. Podés confirmar que quedó en R2 mirando el bucket
+   "sneakermania-fotos" en el dashboard de Cloudflare → Objects.
+4. Si algo falla, avisame y reviso los logs de la Edge Function
+   (Supabase → Edge Functions → r2-storage → Logs) para ver el error
+   exacto.
+
+NOTA DE SEGURIDAD
+-------------------
+Las claves de R2 (Access Key / Secret Key) NO están en el código de
+la app en ningún momento — viven solo como secretos del proyecto en
+Supabase, y las usa la Edge Function del lado del servidor. Nadie
+que abra tu app o el APK puede verlas.

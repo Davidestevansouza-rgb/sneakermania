@@ -10,7 +10,7 @@ import { supabase } from './config.js';
 import { state, setState, seedData, loadCache, puedeVerTab, tabInicial } from './state.js';
 import { showToast, setConnStatus, bindPrimerGestoAudio } from './ui.js';
 import * as db from './db.js';
-import { doLogout } from './auth.js';
+import { doLogout, initBiometricLoginUI } from './auth.js';
 
 // Módulos de features (cada uno se auto-registra en window).
 import { renderDashboard } from './modules/dashboard.js';
@@ -21,6 +21,7 @@ import { populateIaOrderSelect } from './modules/ia.js';
 import { renderGaleria, populateGaleriaSelect } from './modules/galeria.js';
 import { renderProduccion } from './modules/produccion.js';
 import './modules/items.js'; // artículos/precintos: se usa embebido en Detalle de orden
+import { renderBiblioteca } from './modules/biblioteca.js';
 import { renderFinanzas } from './modules/finanzas.js';
 import { initFacturasTab } from './modules/facturas.js';
 import { renderInventario } from './modules/inventario.js';
@@ -52,6 +53,7 @@ export function switchTab(tab) {
   if (tab === 'ordenes') renderOrdenes();
   if (tab === 'galeria') renderGaleria();
   if (tab === 'produccion') renderProduccion();
+  if (tab === 'biblioteca') renderBiblioteca();
   if (tab === 'finanzas') renderFinanzas();
   if (tab === 'facturas') initFacturasTab();
   if (tab === 'inventario') renderInventario();
@@ -199,6 +201,9 @@ window.addEventListener('unhandledrejection', function (ev) {
   }
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('app-shell').style.display = 'none';
+
+  // Muestra el botón de huella/Face ID si este dispositivo ya lo tiene activado.
+  initBiometricLoginUI();
 })();
 
 // Exposición global para los onclick del HTML.

@@ -5,13 +5,30 @@
    La gestión de empleados/usuarios vive en su propia pestaña
    "Empleados" (solo para administradores).
    ============================================================ */
-import { state, tenantId } from '../state.js';
+import { state, tenantId, todayISO } from '../state.js';
 import * as db from '../db.js';
 import { showToast, logActivity } from '../ui.js';
 import { escHtml } from '../sanitize.js';
 import { supabase } from '../config.js';
+import * as storageManager from '../storage-manager.js';
 
 let realtimeConfigChannel = null;
+
+async function dataUrlToBlob(dataUrl) {
+  const res = await fetch(dataUrl);
+  return await res.blob();
+}
+
+/** Sube el logo/QR a Cloudflare R2 (misma vía que usa TODO el resto de la
+ *  app para archivos — ver storage-manager.js y la Edge Function
+ *  'r2-storage'). NO usa Supabase Storage: este proyecto no tiene ese
+ *  bucket configurado, así que subir ahí fallaría (o quedaría fuera de
+ *  lugar con el resto de los archivos, que sí están en R2). */
+async function uploadImageToStorage(dataUrl, filename) {
+  const blob = await dataUrlToBlob(dataUrl);
+  const result = await storageManager.uploadImageFile(blob, 'config', filename);
+  return result.url;
+}
 
 export function renderConfiguracion() {
   // 1) Información de la sesión y rol actual.
@@ -35,12 +52,15 @@ export function renderConfiguracion() {
   const qrPrev = document.getElementById('cfg-qr-preview');
   if (qrPrev) { if (cfg.qr_pago_url) { qrPrev.src = cfg.qr_pago_url; qrPrev.style.display = 'block'; } else { qrPrev.style.display = 'none'; } }
 
-  // Solo el Administrador puede subir logo y QR de pago.
+  // Solo el Administrador puede subir el QR de pago.
+  // La opción de "Logo del negocio" queda oculta para todos los roles
+  // (a pedido: se quitó esta opción de Configuración). El campo sigue
+  // existiendo en el HTML por compatibilidad, pero nunca se muestra.
   const esAdmin = state.session && state.session.role === 'Administrador';
-  ['cfg-logo-field', 'cfg-qr-field'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.style.display = esAdmin ? '' : 'none';
-  });
+  const logoField = document.getElementById('cfg-logo-field');
+  if (logoField) logoField.style.display = 'none';
+  const qrField = document.getElementById('cfg-qr-field');
+  if (qrField) qrField.style.display = esAdmin ? '' : 'none';
 
   // Panel de WhatsApp Límites
   const panelWhatsApp = document.getElementById('panel-whatsapp-limites');
@@ -107,8 +127,14 @@ export async function onLogoFileChange(ev) {
   const small = await shrinkImage(raw, 256);
   const prev = document.getElementById('cfg-logo-preview');
   if (prev) { prev.src = small; prev.style.display = 'block'; }
-  state.config = { ...(state.config || {}), logo_url: small };
-  showToast('Logo cargado. Pulsa "Guardar datos del negocio" para conservarlo.');
+  try {
+    const publicUrl = await uploadImageToStorage(small, 'logo_' + Date.now() + '.png');
+    state.config = { ...(state.config || {}), logo_url: publicUrl };
+    showToast('Logo subido. Pulsa "Guardar datos del negocio" para conservarlo.');
+  } catch (e) {
+    console.error('Error al subir el logo:', e.message || e);
+    showToast('No se pudo subir el logo. La imagen original no se guardó.');
+  }
 }
 
 export async function onQrFileChange(ev) {
@@ -118,8 +144,14 @@ export async function onQrFileChange(ev) {
   const small = await shrinkImage(raw, 512);
   const prev = document.getElementById('cfg-qr-preview');
   if (prev) { prev.src = small; prev.style.display = 'block'; }
-  state.config = { ...(state.config || {}), qr_pago_url: small };
-  showToast('QR cargado. Pulsa "Guardar datos del negocio" para conservarlo.');
+  try {
+    const publicUrl = await uploadImageToStorage(small, 'qr-pago_' + Date.now() + '.png');
+    state.config = { ...(state.config || {}), qr_pago_url: publicUrl };
+    showToast('QR subido. Pulsa "Guardar datos del negocio" para conservarlo.');
+  } catch (e) {
+    console.error('Error al subir el QR:', e.message || e);
+    showToast('No se pudo subir el QR. La imagen original no se guardó.');
+  }
 }
 
 /* Aplica el logo del negocio (si existe) a las imágenes del sistema. */
@@ -132,12 +164,59 @@ export function applyBrandLogo() {
   });
 }
 
-function renderActivityLog() {
+/** Fecha ISO (YYYY-MM-DD) de hace N meses, para el valor por defecto del
+ *  buscador de la bitácora (últimos 2 meses). */
+function fechaMesesAtras(meses) {
+  const d = new Date();
+  d.setMonth(d.getMonth() - meses);
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Pinta una lista de entradas de bitácora ya armada (se reutiliza tanto
+ *  para la vista normal —últimos 100 registros— como para los resultados
+ *  del buscador por fecha). */
+function renderActivityLogList(lista) {
   const cont = document.getElementById('activity-log');
   if (!cont) return;
-  cont.innerHTML = (state.activityLog || []).map(l =>
+  cont.innerHTML = (lista || []).map(l =>
     '<div class="log-item"><span>' + escHtml(l.accion) + ' <strong>(' + escHtml(l.usuario) + ')</strong></span><span>' + escHtml(new Date(l.fecha).toLocaleString('es-MX')) + '</span></div>'
   ).join('') || '<div class="hint">Sin actividad registrada.</div>';
+}
+
+/** Vista normal de la bitácora: los últimos 100 registros ya cargados en
+ *  memoria (ver loadAllData en db.js). */
+function renderActivityLog() {
+  // Prepara también el buscador por fecha con su rango por defecto
+  // (últimos 2 meses) la primera vez que se abre el panel.
+  const desdeEl = document.getElementById('bitacora-desde');
+  const hastaEl = document.getElementById('bitacora-hasta');
+  if (desdeEl && !desdeEl.value) desdeEl.value = fechaMesesAtras(2);
+  if (hastaEl && !hastaEl.value) hastaEl.value = todayISO(0);
+  renderActivityLogList((state.activityLog || []).slice(0, 100));
+}
+
+/** Busca en la bitácora por rango de fechas (hasta 2 meses atrás o el
+ *  rango que el administrador elija), sin quedar atado a los últimos 100
+ *  registros de la vista normal. */
+export async function buscarActividadPorFecha() {
+  const desde = (document.getElementById('bitacora-desde') || {}).value || '';
+  const hasta = (document.getElementById('bitacora-hasta') || {}).value || '';
+  if (!desde && !hasta) { showToast('Elige al menos una fecha para buscar'); return; }
+  const resultados = await db.fetchActivityLogRange(desde, hasta);
+  if (resultados === null) { showToast('No se pudo buscar en este momento (revisa tu conexión)'); return; }
+  renderActivityLogList(resultados);
+  showToast(resultados.length ? resultados.length + ' registro(s) encontrado(s)' : 'Sin actividad en ese rango de fechas');
+}
+
+/** Vuelve a la vista normal de la bitácora (últimos 100 registros) y
+ *  restablece el buscador a su rango por defecto (últimos 2 meses). */
+export function limpiarBusquedaBitacora() {
+  const desdeEl = document.getElementById('bitacora-desde');
+  const hastaEl = document.getElementById('bitacora-hasta');
+  if (desdeEl) desdeEl.value = fechaMesesAtras(2);
+  if (hastaEl) hastaEl.value = todayISO(0);
+  renderActivityLogList((state.activityLog || []).slice(0, 100));
 }
 
 export async function saveConfiguracionNegocio() {
@@ -277,4 +356,4 @@ export function renderPapeleras() {
   ).join('') : '<div class="hint">La papelera de clientes está vacía.</div>';
 }
 
-Object.assign(window, { renderConfiguracion, saveConfiguracionNegocio, recargarBitacora, onLogoFileChange, onQrFileChange, applyBrandLogo, renderPapeleras, startRealtimeConfig, stopRealtimeConfig });
+Object.assign(window, { renderConfiguracion, saveConfiguracionNegocio, recargarBitacora, onLogoFileChange, onQrFileChange, applyBrandLogo, renderPapeleras, startRealtimeConfig, stopRealtimeConfig, buscarActividadPorFecha, limpiarBusquedaBitacora });

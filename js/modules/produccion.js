@@ -14,7 +14,7 @@ import * as db from '../db.js';
 import { showToast, fmtDate, logActivity, lockBtn } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
 import * as storageManager from '../storage-manager.js';
-import { SERVICIO_A_ESTADO_ITEM, sincronizarEstadoOrdenDesdeItems } from './items.js';
+import { SERVICIO_A_ESTADO_ITEM, sincronizarEstadoOrdenDesdeItems, renderItemCardHTML } from './items.js';
 import { SERVICIO_A_GALERIA_CAT, vincularFotoGaleria } from './galeria.js';
 
 const META_DIARIA = 50;
@@ -107,6 +107,7 @@ function renderResumenPares(kpiElId, listaElId, registros, opts) {
         '<div style="padding:6px 4px;">' +
           '<div><strong>' + escHtml(r.empleado) + '</strong>' + (r.codigo ? ' · <span class="mono">' + escHtml(r.codigo) + '</span>' : '') + (r.servicio ? ' · ' + escHtml(r.servicio) : '') + '</div>' +
           '<div class="hint">' + r.pares + ' ' + (Number(r.pares) === 1 ? 'artículo' : 'artículos') + ' · ' + fmtDate(r.fecha) + (fotos.length ? ' · ' + fotos.length + ' foto(s)' : '') + '</div>' +
+          (r.hora ? '<div class="hint">Hora: ' + escHtml(r.hora) + '</div>' : '') +
           (opts.permitirEliminar && state.session && state.session.role === 'Administrador' ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);margin-top:4px;" onclick="eliminarRegistroPar(\'' + r.id + '\')">Eliminar</button>' : '') +
         '</div>' +
       '</div>';
@@ -128,6 +129,29 @@ export function mostrarConteoFotosProduccion() {
   }
 }
 
+/** Se llama con cada tecla que se escribe en "Número de artículo": busca el
+ *  artículo y, si existe, muestra su información (cliente, orden, servicios,
+ *  responsables ya registrados, fechas) en vivo, en el mismo lugar donde
+ *  antes estaba el campo "Cantidad de artículos". Ahora que Producción es
+ *  la única pantalla que ve el Empleado (ya no tiene acceso a Órdenes), es
+ *  la forma en la que puede confirmar que agarró el artículo correcto antes
+ *  de registrar el servicio. */
+export function mostrarInfoArticuloProduccion() {
+  const wrap = document.getElementById('prod-info-articulo-wrap');
+  const cont = document.getElementById('prod-info-articulo');
+  if (!wrap || !cont) return;
+  const codigoInput = document.getElementById('prod-codigo');
+  const codigo = codigoInput ? codigoInput.value.trim().replace(/[#\s]/g, '') : '';
+  if (!codigo) { wrap.style.display = 'none'; cont.innerHTML = ''; return; }
+  const item = (state.ordenItems || []).find(it => (it.codigo || '') === codigo);
+  wrap.style.display = '';
+  if (!item) {
+    cont.innerHTML = '<div class="hint" style="color:var(--red);">No existe el artículo ' + escHtml(codigo) + '. Revisa el número (formato orden-artículo, ej. 12-1).</div>';
+    return;
+  }
+  cont.innerHTML = renderItemCardHTML(item);
+}
+
 export async function registrarPares(btn) {
   // El empleado siempre registra a su propio nombre (aunque manipule el input).
   const empleado = (state.session && state.session.user) || '';
@@ -137,36 +161,33 @@ export async function registrarPares(btn) {
 
   if (!empleado) { showToast('No se pudo identificar al usuario que registra'); return; }
 
-  // --- Modo por NÚMERO DE PAR -------------------------------------------
-  // Si el empleado escribe el número del par que agarró (ej. 12-1), el
-  // registro queda ligado a ese par + servicio, se contabiliza a su nombre
-  // y NO se puede repetir el mismo par para el mismo servicio (si alguien
-  // ya lo lavó, solo queda disponible para detallar, etc.). Un par cuenta
-  // como 1.
+  // --- Registro por NÚMERO DE ARTÍCULO (obligatorio) ---------------------
+  // Ya no existe el modo "cantidad libre": todo registro de Producción
+  // tiene que ir ligado a un artículo real de una orden. Esto evita que
+  // se sumen servicios "sueltos", sin orden detrás, que no se pueden
+  // rastrear ni cobrar. El registro queda ligado a ese par + servicio, se
+  // contabiliza a nombre de quien lo registra, y NO se puede repetir el
+  // mismo par para el mismo servicio (si alguien ya lo lavó, solo queda
+  // disponible para detallar, etc.).
   const codigoInput = document.getElementById('prod-codigo');
   const codigo = codigoInput ? codigoInput.value.trim() : '';
   const servicio = (document.getElementById('prod-servicio') || {}).value || '';
-  let pares;
 
-  if (codigo) {
-    // Normaliza posibles variantes (# o espacios) → "12-1".
-    const codigoNorm = codigo.replace(/[#\s]/g, '');
-    const item = (state.ordenItems || []).find(it => (it.codigo || '') === codigoNorm);
-    if (!item) { showToast('No existe el artículo ' + codigoNorm + '. Revisa el número (formato orden-artículo, ej. 12-1).'); return; }
-    if (!servicio) { showToast('Elige el servicio que le hiciste al artículo'); return; }
-    // Anti-repetición POR SERVICIO: ¿ya hay un registro de este par para
-    // este mismo servicio? (de cualquier empleado)
-    const yaRegistrado = (state.registroPares || []).find(r => (r.codigo || '') === codigoNorm && (r.servicio || '') === servicio);
-    if (yaRegistrado) {
-      showToast('El artículo ' + codigoNorm + ' ya fue registrado para "' + servicio + '"' + (yaRegistrado.empleado ? ' por ' + yaRegistrado.empleado : '') + '. Solo queda disponible para otro servicio.');
-      return;
-    }
-    pares = 1;
-  } else {
-    // --- Modo cantidad libre (compatibilidad con lo anterior) ---
-    pares = Number(document.getElementById('prod-pares').value) || 0;
-    if (!pares || pares <= 0) { showToast('Indica cuántos artículos se registran (o escribe el número de artículo)'); return; }
+  if (!codigo) { showToast('Escribe el número de artículo (ej. 12-1). No se puede registrar un servicio sin una orden.'); return; }
+
+  // Normaliza posibles variantes (# o espacios) → "12-1".
+  const codigoNorm = codigo.replace(/[#\s]/g, '');
+  const item = (state.ordenItems || []).find(it => (it.codigo || '') === codigoNorm);
+  if (!item) { showToast('No existe el artículo ' + codigoNorm + '. Revisa el número (formato orden-artículo, ej. 12-1).'); return; }
+  if (!servicio) { showToast('Elige el servicio que le hiciste al artículo'); return; }
+  // Anti-repetición POR SERVICIO: ¿ya hay un registro de este par para
+  // este mismo servicio? (de cualquier empleado)
+  const yaRegistrado = (state.registroPares || []).find(r => (r.codigo || '') === codigoNorm && (r.servicio || '') === servicio);
+  if (yaRegistrado) {
+    showToast('El artículo ' + codigoNorm + ' ya fue registrado para "' + servicio + '"' + (yaRegistrado.empleado ? ' por ' + yaRegistrado.empleado : '') + '. Solo queda disponible para otro servicio.');
+    return;
   }
+  const pares = 1;
 
   const hoyAntes = todayISO(0);
   const totalAntes = (state.registroPares || []).filter(r => r.fecha === hoyAntes).reduce((s, r) => s + Number(r.pares || 0), 0);
@@ -180,34 +201,57 @@ export async function registrarPares(btn) {
         showToast('Subiendo foto ' + (i + 1) + ' de ' + files.length + '…');
         const file = files[i];
         const ext = (file.name.split('.').pop() || 'jpg');
-        const result = await storageManager.uploadFile(file, 'produccion', 'pares_' + timestamp + '_' + i + '.' + ext);
+        const result = await storageManager.uploadImageFile(file, 'produccion', 'pares_' + timestamp + '_' + i + '.' + ext);
         fotoUrls.push(result.url);
       }
     }
 
-    const registro = { id: crypto.randomUUID(), empleado, fecha, pares, fotoUrls, fotoUrl: fotoUrls[0] || '', usuarioId: (state.session && state.session.userId) || null, codigo: codigo ? codigo.replace(/[#\s]/g, '') : null, servicio: codigo ? servicio : null };
+    const hora = new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+    const registro = { id: crypto.randomUUID(), empleado, fecha, hora, pares, fotoUrls, fotoUrl: fotoUrls[0] || '', usuarioId: (state.session && state.session.userId) || null, codigo: codigoNorm, servicio };
     if (!Array.isArray(state.registroPares)) state.registroPares = [];
     state.registroPares.push(registro);
-    await db.saveRegistroPar(registro);
+    const guardado = await db.saveRegistroPar(registro);
+    // El chequeo de "yaRegistrado" de arriba es solo del lado del cliente,
+    // contra la copia local de los datos: si dos personas registran casi
+    // al mismo tiempo el mismo par para el mismo servicio (o la copia
+    // local todavía no se había actualizado), ambos podían pasar esa
+    // validación. La base de datos tiene un índice único que sí lo
+    // rechaza (ver migración 023); si eso pasa, hay que deshacer el
+    // registro en esta pantalla en vez de mostrarlo como guardado.
+    if (guardado && guardado.error && !guardado.queued) {
+      state.registroPares = state.registroPares.filter(r => r.id !== registro.id);
+      await persist();
+      showToast('El artículo ' + registro.codigo + ' ya fue registrado para "' + servicio + '" (lo hizo otra persona justo antes). Elige otro servicio.');
+      renderProduccion();
+      return;
+    }
 
-    // En modo por número de par: el par queda a nombre de quien lo agarró
-    // (responsable) y su estado de taller (pares individuales) avanza al
-    // que le corresponde al servicio realizado (ver SERVICIO_A_ESTADO_ITEM).
-    // Este vínculo es exclusivo: Producción ↔ pares individuales (it.estado)
-    // ↔ estado de la orden (vía sincronizarEstadoOrdenDesdeItems) — y nada
-    // más. Nunca toca el seguimiento en tiempo real del par (timelineIndex/
-    // timelineDates), que es un flujo completamente aparte, vinculado solo
-    // con el estado de la orden por su propio camino (ver
-    // sincronizarEstadoOrdenDesdeTimelinePares en ordenes.js).
-    if (registro.codigo) {
-      const item = (state.ordenItems || []).find(it => (it.codigo || '') === registro.codigo);
-      if (item) {
-        item.responsable = empleado;
+    // El par siempre queda a nombre de quien lo agarró (responsable) y su
+    // estado de taller (pares individuales) avanza al que le corresponde al
+    // servicio realizado (ver SERVICIO_A_ESTADO_ITEM). Este vínculo es
+    // exclusivo: Producción ↔ pares individuales (it.estado) ↔ estado de la
+    // orden (vía sincronizarEstadoOrdenDesdeItems) — y nada más. Nunca toca
+    // el seguimiento en tiempo real del par (timelineIndex/timelineDates),
+    // que es un flujo completamente aparte, vinculado solo con el estado de
+    // la orden por su propio camino (ver sincronizarEstadoOrdenDesdeTimelinePares
+    // en ordenes.js).
+    {
+      const itemActualizado = (state.ordenItems || []).find(it => (it.codigo || '') === registro.codigo);
+      if (itemActualizado) {
+        itemActualizado.responsable = empleado;
+        // Registro FIJO por servicio: a diferencia de item.responsable (que
+        // se sobrescribe cada vez que se registra un servicio distinto en
+        // este mismo artículo), acá queda uno por servicio y no se pisan
+        // entre sí. Así, en el Detalle de la orden se ve, uno debajo del
+        // otro, quién hizo el Lavado, quién el Secado y detallado y quién
+        // el Pintado y personalizado — cada uno con su propio nombre fijo.
+        if (!itemActualizado.registroServicios || typeof itemActualizado.registroServicios !== 'object') itemActualizado.registroServicios = {};
+        itemActualizado.registroServicios[servicio] = { responsable: empleado, fecha };
         const nuevoEstado = SERVICIO_A_ESTADO_ITEM[servicio];
-        if (nuevoEstado) item.estado = nuevoEstado;
+        if (nuevoEstado) itemActualizado.estado = nuevoEstado;
         try {
-          await db.saveOrdenItem(item);
-          await sincronizarEstadoOrdenDesdeItems(item.ordenId);
+          await db.saveOrdenItem(itemActualizado);
+          await sincronizarEstadoOrdenDesdeItems(itemActualizado.ordenId);
         } catch (e) { console.error('No se pudo actualizar el artículo:', e); }
         // Vincula las fotos que se acaban de subir (del lavador, el
         // detallista o el pintor) a la Galería de la orden del artículo, en
@@ -218,22 +262,22 @@ export async function registrarPares(btn) {
         // orden al buscar por número de artículo individual en la Galería.
         const catGaleria = SERVICIO_A_GALERIA_CAT[servicio];
         if (catGaleria && fotoUrls.length) {
-          try { await vincularFotoGaleria(item.ordenId, catGaleria, fotoUrls, item.id); }
+          try { await vincularFotoGaleria(itemActualizado.ordenId, catGaleria, fotoUrls, itemActualizado.id); }
           catch (e) { console.error('No se pudo vincular las fotos a la Galería:', e); }
         }
         if (window.renderOrdenes) window.renderOrdenes();
       }
     }
 
-    logActivity('Registró ' + (registro.codigo ? 'el artículo ' + registro.codigo + ' (' + servicio + ')' : pares + ' ' + (pares === 1 ? 'artículo' : 'artículos')) + ' — ' + empleado + (fotoUrls.length ? ' (' + fotoUrls.length + ' foto(s))' : ''));
+    logActivity('Registró el artículo ' + registro.codigo + ' (' + servicio + ') — ' + empleado + (fotoUrls.length ? ' (' + fotoUrls.length + ' foto(s))' : ''));
     await persist();
 
     document.getElementById('prod-empleado').value = '';
-    document.getElementById('prod-pares').value = '1';
     if (codigoInput) codigoInput.value = '';
     if (fileInput) fileInput.value = '';
     const conteoEl = document.getElementById('prod-foto-conteo');
     if (conteoEl) conteoEl.textContent = '';
+    mostrarInfoArticuloProduccion(); // limpia el panel de info del artículo ya registrado
 
     renderProduccion();
     showToast('Artículos registrados ✓');
@@ -333,5 +377,5 @@ export function verMesProduccion() {
 
 Object.assign(window, {
   renderProduccion, registrarPares, eliminarRegistroPar,
-  mostrarConteoFotosProduccion, renderHistorialProduccion, verSemanaProduccion, verMesProduccion
+  mostrarConteoFotosProduccion, mostrarInfoArticuloProduccion, renderHistorialProduccion, verSemanaProduccion, verMesProduccion
 });

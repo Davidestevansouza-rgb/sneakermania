@@ -10,7 +10,23 @@ export function renderClientes(filter = '') {
   document.getElementById('clientes-sub').textContent = state.clientes.length + ' clientes registrados';
   const esAdmin = state.session && state.session.role === 'Administrador';
   const f = filter.toLowerCase();
-  const rows = state.clientes.filter(c => !f || c.nombre.toLowerCase().includes(f) || (c.telefono || '').includes(f));
+  // Buscador de fechas (junto a "+ Nuevo cliente"): filtra por fecha de
+  // alta del cliente (creadoEn) usando el rango Desde/Hasta del panel.
+  const fDesde = document.getElementById('cliente-fecha-desde');
+  const fHasta = document.getElementById('cliente-fecha-hasta');
+  const desde = fDesde ? fDesde.value : '';
+  const hasta = fHasta ? fHasta.value : '';
+  let rows = state.clientes.filter(c => !f || c.nombre.toLowerCase().includes(f) || (c.telefono || '').includes(f));
+  if (desde || hasta) {
+    rows = rows.filter(c => {
+      if (!c.creadoEn) return false;
+      const fecha = c.creadoEn.slice(0, 10); // ISO -> "YYYY-MM-DD"
+      if (desde && fecha < desde) return false;
+      if (hasta && fecha > hasta) return false;
+      return true;
+    });
+  }
+  actualizarBotonFiltroFechaCliente(!!(desde || hasta));
   const html = '<thead><tr><th>Nombre</th><th>Teléfono</th><th>WhatsApp</th><th>Dirección</th><th>Servicios</th><th></th></tr></thead><tbody>' +
     rows.map(c => {
       const historial = state.ordenes.filter(o => o.clienteId === c.id).length;
@@ -148,4 +164,28 @@ export function viewClienteHistorial(id) {
   window.renderOrdenes();
 }
 
-Object.assign(window, { renderClientes, openClienteModal, saveCliente, deleteCliente, viewClienteHistorial, restaurarCliente, eliminarClientePermanente });
+/* ---------- Buscador de fechas (Clientes) ----------
+   Panel flotante junto a "+ Nuevo cliente" para filtrar la tabla por
+   fecha de alta del cliente (Desde/Hasta). */
+export function toggleFiltroFechaCliente(ev) {
+  window.toggleDropdown('cliente-fecha-dropdown', ev, 'date-filter-dropdown');
+}
+export function aplicarFiltroFechaCliente() {
+  renderClientes(document.querySelector('#tab-clientes .toolbar input.grow')?.value || '');
+  window.closeDropdown('cliente-fecha-dropdown');
+}
+export function limpiarFiltroFechaCliente() {
+  document.getElementById('cliente-fecha-desde').value = '';
+  document.getElementById('cliente-fecha-hasta').value = '';
+  renderClientes(document.querySelector('#tab-clientes .toolbar input.grow')?.value || '');
+  window.closeDropdown('cliente-fecha-dropdown');
+}
+function actualizarBotonFiltroFechaCliente(activo) {
+  const btn = document.getElementById('btn-filtro-fecha-cliente');
+  if (btn) btn.classList.toggle('active', activo);
+}
+
+Object.assign(window, {
+  renderClientes, openClienteModal, saveCliente, deleteCliente, viewClienteHistorial, restaurarCliente, eliminarClientePermanente,
+  toggleFiltroFechaCliente, aplicarFiltroFechaCliente, limpiarFiltroFechaCliente
+});

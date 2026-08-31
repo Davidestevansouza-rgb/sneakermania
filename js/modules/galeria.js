@@ -10,7 +10,7 @@ import { escHtml, escAttr } from '../sanitize.js';
 import * as storageManager from '../storage-manager.js';
 import { limpiarCombo } from '../combo-search.js';
 
-const GALERIA_CATS_FULL = [['antes', 'Antes'], ['durante', 'Durante'], ['despues', 'Después'], ['detalle', 'Lavado'], ['suela', 'Detallado'], ['laterales', 'Pintado y personalizado'], ['todos_pares', 'Todos los archivos']];
+const GALERIA_CATS_FULL = [['detalle', 'Lavado'], ['suela', 'Detallado'], ['laterales', 'Pintado y personalizado'], ['todos_pares', 'Todos los archivos']];
 // El Empleado solo ve:
 //   - 'Todos los archivos' (foto global de los pares)
 //   - las fotos de Producción que él sube (categoria según SERVICIO_A_GALERIA_CAT).
@@ -370,22 +370,25 @@ let imagenAmpliadaIdx = 0;
  * @param {string} src - Foto a mostrar inicialmente.
  * @param {string[]} [lista] - Todas las fotos del grupo (opcional).
  */
-export function ampliarImagen(src, lista) {
+export async function ampliarImagen(src, lista) {
   imagenAmpliadaLista = Array.isArray(lista) && lista.length ? lista : [src];
   imagenAmpliadaIdx = Math.max(0, imagenAmpliadaLista.indexOf(src));
-  renderImagenAmpliada();
   openModalEl('modal-imagen');
+  await renderImagenAmpliada();
 }
 
-export function imagenAmpliadaNav(delta) {
+export async function imagenAmpliadaNav(delta) {
   if (!imagenAmpliadaLista.length) return;
   imagenAmpliadaIdx = (imagenAmpliadaIdx + delta + imagenAmpliadaLista.length) % imagenAmpliadaLista.length;
-  renderImagenAmpliada();
+  await renderImagenAmpliada();
 }
 
-function renderImagenAmpliada() {
+async function renderImagenAmpliada() {
   const total = imagenAmpliadaLista.length;
-  document.getElementById('imagen-ampliada').src = imagenAmpliadaLista[imagenAmpliadaIdx];
+  const rawSrc = imagenAmpliadaLista[imagenAmpliadaIdx];
+  const secureSrc = await storageManager.resolveImageUrl(rawSrc);
+  const img = document.getElementById('imagen-ampliada');
+  if (img) img.src = secureSrc || rawSrc;
   const titulo = document.getElementById('imagen-ampliada-titulo');
   if (titulo) titulo.textContent = total > 1 ? 'Fotografía (' + (imagenAmpliadaIdx + 1) + ' de ' + total + ')' : 'Fotografía';
   const prev = document.getElementById('imagen-ampliada-prev');

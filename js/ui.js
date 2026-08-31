@@ -181,6 +181,35 @@ if (typeof window !== 'undefined') {
   window.openModalEl = openModalEl;
 }
 
+/* ---------- Dropdown flotante genérico ----------
+   Usado por los buscadores de fecha de Clientes/Órdenes (y reutilizable
+   por cualquier otro panel flotante que se abra/cierre con un botón).
+   Cierra cualquier otro dropdown de la misma clase que haya quedado
+   abierto, y se cierra solo al hacer click afuera. */
+export function toggleDropdown(id, ev, closeClass) {
+  if (ev) ev.stopPropagation();
+  const dd = document.getElementById(id);
+  if (!dd) return;
+  const yaAbierto = dd.classList.contains('open');
+  const selector = '.' + (closeClass || dd.className.split(' ').find(c => c.endsWith('-dropdown')) || 'dropdown') + '.open';
+  document.querySelectorAll(selector).forEach(el => el.classList.remove('open'));
+  if (!yaAbierto) dd.classList.add('open');
+}
+export function closeDropdown(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('open');
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', (ev) => {
+    if (ev.target.closest && ev.target.closest('.date-filter-wrap')) return;
+    document.querySelectorAll('.date-filter-dropdown.open').forEach(el => el.classList.remove('open'));
+  });
+}
+if (typeof window !== 'undefined') {
+  window.toggleDropdown = toggleDropdown;
+  window.closeDropdown = closeDropdown;
+}
+
 /* ---------- Registro de actividad ----------
    Actualiza el log en memoria y lo empuja a Supabase (actividad_log)
    sin bloquear la interfaz. La importación de db.js es dinámica para
@@ -192,7 +221,7 @@ export function logActivity(accion) {
     usuario: state.session ? state.session.user : 'sistema',
     accion
   });
-  state.activityLog = state.activityLog.slice(0, 60);
+  state.activityLog = state.activityLog.slice(0, 100);
   // Empuje remoto (best-effort).
   import('./db.js')
     .then(db => db.logRemote(accion))

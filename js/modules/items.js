@@ -10,7 +10,7 @@
    ============================================================ */
 import { state, persist, todayISO, esEmpleado } from '../state.js';
 import * as db from '../db.js';
-import { showToast, ordenById, logActivity, closeModal, openModalEl, fmtDate } from '../ui.js';
+import { showToast, ordenById, clienteNombre, logActivity, closeModal, openModalEl, fmtDate } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
 import { itemsDeOrden, estadoMostradoPar } from './ordenes.js';
 
@@ -92,8 +92,17 @@ export function renderItemsPanelHTML(ordenId) {
   const items = itemsDeOrden(ordenId);
   if (!items.length) return '<div class="hint">Esta orden no tiene artículos registrados.</div>';
 
-  return (
-    items.map(it => {
+  return items.map(it => renderItemCardHTML(it)).join('');
+}
+
+/** HTML de la tarjeta de UN artículo individual (código, cliente/orden,
+ *  servicios, responsables por servicio, fechas, estado y análisis de IA
+ *  si lo tiene). Es la misma tarjeta que se ve en el Detalle de la orden
+ *  ("Artículos individuales — Taller y Entrega"); se extrajo a su propia
+ *  función para poder reutilizarla tal cual en Producción, donde el
+ *  empleado necesita ver esta misma información apenas escribe el número
+ *  de artículo, sin tener que entrar a Órdenes (pestaña que ya no ve). */
+export function renderItemCardHTML(it) {
       const servicios = Array.isArray(it.tipoServicio) && it.tipoServicio.length ? it.tipoServicio.join(', ') : 'Sin servicio asignado';
       // Datos del análisis de IA guardados en este par (si ya se le
       // hizo un análisis). Se listan uno debajo del otro (no en fila)
@@ -121,6 +130,22 @@ export function renderItemsPanelHTML(ordenId) {
       // solo lectura como chips/QR/filtros, nunca para este panel.)
       const estadoPar = it.estado;
       const orden = ordenById(it.ordenId);
+      // Responsable FIJO por cada servicio ya registrado en este artículo
+      // (ver registrarPares en produccion.js — item.registroServicios).
+      // No se pisan entre sí: si primero lo lavó María y después lo detalló
+      // Pedro, quedan los dos nombres, cada uno en su propia línea.
+      const registroServicios = (it.registroServicios && typeof it.registroServicios === 'object') ? it.registroServicios : {};
+      const ORDEN_SERVICIOS_RESP = ['Lavado', 'Secado y detallado', 'Pintado y personalizado'];
+      const responsablesPorServicioHTML = ORDEN_SERVICIOS_RESP
+        .filter(s => registroServicios[s] && registroServicios[s].responsable)
+        .map(s => '<div class="hint">' + escHtml(s) + ': <strong>' + escHtml(registroServicios[s].responsable) + '</strong>' +
+          (registroServicios[s].fecha ? ' · ' + fmtDate(registroServicios[s].fecha) : '') + '</div>')
+        .join('');
+      // Si aún no se registró ningún servicio en Producción, se muestra el
+      // responsable asignado a mano al crear/editar el artículo (compatibilidad).
+      const responsableFallbackHTML = !responsablesPorServicioHTML
+        ? '<div class="hint">Responsable: ' + escHtml(it.responsable || 'Sin asignar') + '</div>'
+        : '';
       // Pago y Prioridad pertenecen al resumen de la orden y ya se muestran
       // fuera de este bloque. No se repiten dentro de cada par.
       const pagoHTML = '';
@@ -139,11 +164,21 @@ export function renderItemsPanelHTML(ordenId) {
       const fechaEntregaEstHTML = it.fechaEntregaEstimada || orden.fechaEstimada;
       const fechasParHTML = '<div class="hint">Ingreso: ' + fmtDate(fechaIngresoHTML) +
         ' · Entrega estimada: ' + fmtDate(fechaEntregaEstHTML) + '</div>';
+      // Cliente y Nº de orden: no se mostraban acá porque este panel vive
+      // incrustado en el Detalle de la orden (ya se ven arriba, en el
+      // encabezado de esa pantalla). Pero renderItemCardHTML() también se
+      // usa sola en Producción, donde el empleado no tiene esa pantalla de
+      // contexto (ya no ve la pestaña Órdenes) — así que ahí sí hace falta.
+      const clienteOrdenHTML = orden
+        ? '<div class="hint">Orden #' + escHtml(orden.numero) + ' · ' + escHtml(clienteNombre(orden.clienteId)) + '</div>'
+        : '';
       return '<div class="panel" style="margin-bottom:8px;padding:10px;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
           '<div>' +
             '<div><strong class="mono">' + escHtml(it.codigo) + '</strong>' + (it.descripcion ? ' · ' + escHtml(it.descripcion) : '') + '</div>' +
-            '<div class="hint">' + escHtml(servicios) + ' · Responsable: ' + escHtml(it.responsable || 'Sin asignar') + '</div>' +
+            clienteOrdenHTML +
+            '<div class="hint">' + escHtml(servicios) + '</div>' +
+            responsablesPorServicioHTML + responsableFallbackHTML +
             fechasParHTML +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
@@ -152,8 +187,6 @@ export function renderItemsPanelHTML(ordenId) {
         '</div>' +
         iaHTML +
       '</div>';
-    }).join('')
-  );
 }
 
 export async function cambiarEstadoItem(itemId, nuevoEstado) {

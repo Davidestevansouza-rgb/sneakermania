@@ -152,7 +152,7 @@ export async function runIaAnalysis() {
     if (orderId) {
       showToast('Subiendo imagen...', 'info');
       const fotoData = await storageManager.uploadFoto(iaPendingFile, orderId, 'detalle');
-      imageUrl = fotoData.url;
+      imageUrl = await storageManager.resolveImageUrl(fotoData.url, fotoData.path);
     }
 
     const payload = {};

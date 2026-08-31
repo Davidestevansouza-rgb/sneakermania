@@ -82,6 +82,50 @@ export function enviarWhatsApp(numero, mensaje) {
 }
 
 /**
+ * Envía un mensaje WhatsApp CON una foto adjunta, de forma que el texto y
+ * la imagen viajen JUNTOS en el mismo mensaje (usa la API nativa de
+ * compartir del teléfono para elegir WhatsApp). Respeta el mismo límite
+ * mensual que enviarWhatsApp(). Si el dispositivo/navegador no soporta
+ * compartir archivos (p. ej. en computadora), se comporta como
+ * enviarWhatsApp() —solo texto— y además descarga la foto para adjuntarla
+ * a mano, igual que ya hace "Comprobante → Compartir" en Órdenes.
+ */
+export async function enviarWhatsAppConFoto(numero, mensaje, file) {
+  const check = verificarLimiteWhatsApp();
+  if (!check.permitido) {
+    showToast(check.mensaje);
+    return false;
+  }
+
+  try {
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], text: mensaje });
+    } else {
+      if (file) {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(file);
+        a.download = file.name || 'foto.jpg';
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+      }
+      const url = `https://wa.me/${numero.replace(/\D/g, '')}?text=${encodeURIComponent(mensaje + (file ? '\n\n(adjunta la foto que se acaba de descargar)' : ''))}`;
+      window.open(url, '_blank');
+    }
+  } catch (e) {
+    // El usuario cerró el panel de compartir sin elegir nada: no es un error.
+    if (e && e.name === 'AbortError') return false;
+    console.error('Error al compartir por WhatsApp:', e);
+    showToast('No se pudo compartir por WhatsApp');
+    return false;
+  }
+
+  const total = incrementarContador();
+  const limite = Number(state.config?.whatsapp_limite_mensual) || 100;
+  showToast(`Mensaje enviado (${total}/${limite} este mes)`, 'info');
+  return true;
+}
+
+/**
  * Muestra el panel de control de límites WhatsApp en Configuración.
  */
 export function renderWhatsAppLimites() {
@@ -143,6 +187,7 @@ export async function guardarLimiteWhatsApp() {
 Object.assign(window, { 
   verificarLimiteWhatsApp, 
   enviarWhatsApp, 
+  enviarWhatsAppConFoto,
   renderWhatsAppLimites, 
   guardarLimiteWhatsApp 
 });

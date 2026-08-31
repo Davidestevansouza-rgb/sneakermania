@@ -96,7 +96,14 @@ export async function saveEmpleado() {
     if (id) {
       // Edición de un empleado existente (upsert con cola offline).
       const u = { id, nombre, email, rol, activo };
-      await db.saveUser(u);
+      const res = await db.saveUser(u);
+      if (res && res.error && !res.queued) {
+        // Falló en el servidor (error permanente, p. ej. sin permiso):
+        // no se aplica el cambio en la caché local ni se avisa como éxito.
+        console.error(res.error);
+        showToast('No se pudo actualizar el empleado: ' + (res.error.message || 'error del servidor'));
+        return;
+      }
       const cached = empleadosCache.find(x => x.id === id);
       if (cached) Object.assign(cached, u);
       logActivity('Editó al empleado ' + nombre + ' (' + rol + ')');
@@ -128,13 +135,28 @@ export async function toggleEmpleadoActivo(id) {
   if (!u) return;
   const nuevoEstado = !(u.activo !== false);
   if (!confirm((nuevoEstado ? 'Activar' : 'Desactivar') + ' al empleado ' + u.nombre + '?')) return;
+  const estadoAnterior = u.activo;
   u.activo = nuevoEstado;
+  renderEmpleados();
   try {
-    await db.saveUser(u);
+    const res = await db.saveUser(u);
+    if (res && res.error && !res.queued) {
+      // Falló en el servidor (p. ej. sin permiso o RLS): revertir el cambio
+      // en la vista en vez de mostrarlo como si se hubiera guardado.
+      u.activo = estadoAnterior;
+      renderEmpleados();
+      console.error(res.error);
+      showToast('No se pudo ' + (nuevoEstado ? 'activar' : 'desactivar') + ' al empleado: ' + (res.error.message || 'error del servidor'));
+      return;
+    }
     logActivity((nuevoEstado ? 'Activó' : 'Desactivó') + ' al empleado ' + u.nombre);
-    showToast('Empleado ' + (nuevoEstado ? 'activado' : 'desactivado'));
+    showToast('Empleado ' + (nuevoEstado ? 'activado' : 'desactivado') + (res && res.queued ? ' (se sincronizará cuando vuelva la conexión)' : ''));
+  } catch (e) {
+    u.activo = estadoAnterior;
     renderEmpleados();
-  } catch (e) { console.error(e); showToast('Error al cambiar el estado del empleado'); }
+    console.error(e);
+    showToast('Error al cambiar el estado del empleado');
+  }
 }
 
 Object.assign(window, { renderEmpleados, openEmpleadoModal, saveEmpleado, toggleEmpleadoActivo });

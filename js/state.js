@@ -174,12 +174,13 @@ export function esEmpleado() { return rolActual() === 'Empleado'; }
  * Pestañas visibles por rol.
  *  - Administrador: todo (null).
  *  - Supervisor: todo EXCEPTO finanzas, configuración, empleados y reportes.
- *  - Empleado: solo producción y órdenes (esta última en modo lectura).
+ *  - Empleado: solo producción (ahí ve la info de la orden del artículo que
+ *    registra); Órdenes queda solo para Administrador y Supervisor.
  */
 export const TABS_POR_ROL = {
   Administrador: null,
-  Supervisor: ['dashboard', 'clientes', 'ordenes', 'ia', 'galeria', 'produccion', 'facturas', 'inventario', 'agenda', 'notificaciones'],
-  Empleado: ['produccion', 'ordenes', 'galeria', 'agenda', 'inventario']
+  Supervisor: ['dashboard', 'clientes', 'ordenes', 'ia', 'galeria', 'produccion', 'biblioteca', 'facturas', 'inventario', 'agenda', 'notificaciones'],
+  Empleado: ['produccion', 'galeria', 'agenda', 'inventario']
 };
 
 /** ¿El rol actual puede ver esta pestaña? */

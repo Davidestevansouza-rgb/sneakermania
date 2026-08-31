@@ -221,7 +221,7 @@ export async function activarNotificacionesPush() {
  */
 export function testPushNotification() {
   enviarNotificacionPush(
-    '🔔 Sistema SeS',
+    '🔔 SneakerMania',
     'Las notificaciones están funcionando correctamente en este dispositivo.'
   );
 }

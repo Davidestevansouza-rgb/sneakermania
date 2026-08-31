@@ -1,6 +1,6 @@
 {
-  "name": "Sistema SeS — Lavandería de Calzado",
-  "short_name": "Sistema SeS",
+  "name": "SneakerMania — Lavandería de Calzado",
+  "short_name": "SneakerMania",
   "description": "Gestión de lavandería y restauración de calzado",
   "start_url": "./index.html",
   "scope": "./",
