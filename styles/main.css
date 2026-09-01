@@ -321,12 +321,28 @@ table.data tr:hover td{background:rgba(47,122,130,0.04);}
 .articulo-row-head .co-desc-input,
 .articulo-row-head .item-desc-input{flex:1;min-width:0;padding:7px 9px;border:1px solid var(--line);border-radius:6px;}
 .articulo-row-fields{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:8px;}
+/* Las filas del formulario de órdenes (#orden-items-list) tienen una
+   columna extra de "Precio", por eso usan 4 columnas. El modal fusionado
+   "Nuevo cliente + orden" mantiene 3 (no lleva precio por artículo). */
+#orden-items-list .articulo-row-fields{grid-template-columns:1.4fr 1fr 1fr 0.9fr;}
 .articulo-row-fields > div{min-width:0;}
 .articulo-row-fields select,
 .articulo-row-fields input{width:100%;padding:7px 8px;border:1px solid var(--line);border-radius:6px;}
 @media(max-width:620px){
   .articulo-row-fields{grid-template-columns:1fr;}
+  #orden-items-list .articulo-row-fields{grid-template-columns:1fr 1fr;}
 }
+/* Total sumado de los precios de los artículos del pedido (Precinto
+   Numerado). Se muestra al pie de la lista y se actualiza en vivo. */
+.articulos-total{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-top:10px;padding:10px 14px;border-radius:10px;
+  border:1px solid var(--red,#D10000);
+  background:var(--red-tint,#FFE3E4);
+}
+.articulos-total-label{font-weight:600;color:var(--ink);}
+.articulos-total-monto{font-weight:800;font-size:18px;color:var(--red,#D10000);}
+.item-precio-input{font-weight:600;}
 
 /* ---------- MODAL ---------- */
 /* Mientras hay un modal abierto, el body queda fijo: sin esto, el fondo

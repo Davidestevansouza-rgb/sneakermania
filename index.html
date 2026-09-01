@@ -849,6 +849,10 @@
       <div class="field full">
         <label>Artículos de este pedido (Precinto Numerado) *</label>
         <div id="orden-items-list" class="articulos-list"></div>
+        <div id="orden-items-total" class="articulos-total" style="display:none;">
+          <span class="articulos-total-label">Total de los artículos</span>
+          <span id="orden-items-total-monto" class="articulos-total-monto mono">$0.00</span>
+        </div>
         <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="agregarFilaItemOrden()">+ Agregar artículo</button>
         <div class="hint">Registrar cada artículo acá es opcional al crear la orden — puedes hacerlo ahora o más tarde, editando la orden, con el código que le corresponde (ej: 130-1, 130-2). Si completas un artículo, sí necesita descripción y al menos un tipo de servicio.</div>
       </div>

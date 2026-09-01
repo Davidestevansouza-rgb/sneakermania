@@ -342,6 +342,35 @@ export function seleccionarClienteOrden(clienteId) {
   if (searchEl) searchEl.value = c ? (c.nombre || '') : '';
 }
 
+/** Normaliza cualquier valor de fecha a "YYYY-MM-DD" (solo la parte de
+ *  fecha, sin hora ni zona horaria). Acepta:
+ *   - una fecha ISO simple: "2026-09-01"
+ *   - un timestamp ISO: "2026-09-01T05:00:00.000Z"
+ *   - un objeto Date
+ *  Devuelve '' si el valor no es interpretable como fecha. Se usa para que
+ *  el filtro por rango de fechas de las órdenes compare peras con peras. */
+function soloFechaISO(v) {
+  if (!v) return '';
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return '';
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(v).trim();
+  // Si ya empieza por YYYY-MM-DD, tomamos esos 10 caracteres tal cual (evita
+  // desplazamientos de día por zona horaria al parsear como Date).
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${day}`;
+}
+
 export function renderOrdenes() {
   const estado = document.getElementById('filtro-estado').value;
   const prioridad = document.getElementById('filtro-prioridad').value;
@@ -359,11 +388,19 @@ export function renderOrdenes() {
 
   let list = state.ordenes.slice().sort((a, b) => b.numero - a.numero);
   if (fechaDesde || fechaHasta) {
+    // Comparar SOLO la parte de fecha (YYYY-MM-DD), sin la hora. La fecha de
+    // ingreso puede venir como fecha simple ("2026-09-01"), como timestamp
+    // ("2026-09-01T05:00:00.000Z") o incluso como Date; soloFechaISO()
+    // normaliza cualquiera de esos casos a "YYYY-MM-DD" para que la
+    // comparación de rango funcione siempre (antes, un timestamp o un
+    // formato distinto podía dejar la lista vacía).
+    const desde = soloFechaISO(fechaDesde);
+    const hasta = soloFechaISO(fechaHasta);
     list = list.filter(o => {
-      if (!o.fechaIngreso) return false;
-      const fecha = o.fechaIngreso.slice(0, 10);
-      if (fechaDesde && fecha < fechaDesde) return false;
-      if (fechaHasta && fecha > fechaHasta) return false;
+      const fecha = soloFechaISO(o.fechaIngreso);
+      if (!fecha) return false;
+      if (desde && fecha < desde) return false;
+      if (hasta && fecha > hasta) return false;
       return true;
     });
   }
@@ -484,6 +521,7 @@ export async function openOrdenModal(id) {
   document.getElementById('orden-cliente-search').value = clienteActual ? (clienteActual.nombre || '') : '';
   document.getElementById('orden-cliente').value = o.clienteId || '';
   document.getElementById('orden-items-list').innerHTML = '';
+  recalcularTotalArticulos();
   // Reinicia "Orden Masiva" al abrir el modal: sin esto, el modo quedaba
   // prendido visualmente si se había usado en una orden anterior aunque
   // ya no aplicara a la que se está por crear/editar ahora.
@@ -1251,6 +1289,7 @@ function agregarFilaItemOrden(item, opts) {
   const responsablePar = item ? (item.responsable || '') : '';
   const fechaIngresoPar = item ? (item.fechaIngreso || '') : todayISO(0);
   const fechaEntregaPar = item ? (item.fechaEntregaEstimada || '') : todayISO(3);
+  const precioPar = item && item.precio != null ? Number(item.precio) || 0 : 0;
   const entregado = item ? !!item.entregado : false;
   const empleados = getEmpleadosCache();
 
@@ -1292,8 +1331,60 @@ function agregarFilaItemOrden(item, opts) {
         '<label class="hint" style="display:block;margin-bottom:2px;">Fecha de entrega</label>' +
         '<input type="date" class="item-fecha-entrega-input" value="' + escAttr(fechaEntregaPar) + '" ' + (entregado ? 'disabled' : '') + '>' +
       '</div>' +
+      '<div>' +
+        '<label class="hint" style="display:block;margin-bottom:2px;">Precio</label>' +
+        '<input type="number" class="item-precio-input" min="0" step="0.01" placeholder="0.00" value="' + escAttr(precioPar || '') + '" ' + (entregado ? 'disabled' : '') + ' oninput="onCambioPrecioItem(this)">' +
+      '</div>' +
     '</div>';
   cont.appendChild(row);
+  recalcularTotalArticulos();
+}
+
+/* ---------------- Precio por artículo + total del pedido ----------------
+   Cada artículo del "Precinto Numerado" tiene un precio editable. El total
+   se muestra al pie de la lista y se recalcula en vivo. Al cambiar el
+   precio de un artículo YA guardado, se persiste en Supabase (columna
+   precio de orden_items) con un pequeño retardo para no disparar una
+   escritura por cada tecla. */
+const _precioSaveTimers = {};
+
+/** Recalcula y muestra el total sumando el precio de todas las filas. */
+function recalcularTotalArticulos() {
+  const cont = document.getElementById('orden-items-list');
+  const totalWrap = document.getElementById('orden-items-total');
+  const totalMonto = document.getElementById('orden-items-total-monto');
+  if (!cont || !totalMonto) return;
+  const inputs = cont.querySelectorAll('.item-precio-input');
+  let total = 0;
+  inputs.forEach(inp => { total += Number(inp.value) || 0; });
+  totalMonto.textContent = fmtMoney(total);
+  if (totalWrap) totalWrap.style.display = inputs.length ? 'flex' : 'none';
+}
+
+/** Se llama al editar el precio de un artículo. Actualiza el total en vivo
+ *  y, si el artículo ya existe en la base, guarda el nuevo precio en
+ *  Supabase (con debounce). Los artículos nuevos (sin id todavía) guardan
+ *  su precio al guardar la orden, en sincronizarItemsDesdeFormulario. */
+function onCambioPrecioItem(input) {
+  recalcularTotalArticulos();
+  const row = input.closest('.orden-item-row');
+  if (!row) return;
+  const itemId = row.dataset.itemId;
+  if (!itemId) return; // artículo nuevo: se persiste al guardar la orden
+  const item = (state.ordenItems || []).find(it => it.id === itemId);
+  if (!item) return;
+  const nuevoPrecio = Number(input.value) || 0;
+  if ((Number(item.precio) || 0) === nuevoPrecio) return;
+  item.precio = nuevoPrecio;
+  clearTimeout(_precioSaveTimers[itemId]);
+  _precioSaveTimers[itemId] = setTimeout(async () => {
+    try {
+      await persist();
+      await db.saveOrdenItem(item); // UPDATE orden_items SET precio=... WHERE id=...
+    } catch (e) {
+      console.error('No se pudo guardar el precio del artículo:', e);
+    }
+  }, 500);
 }
 
 /** Quita una fila del formulario (no borra nada de la base todavía —
@@ -1301,6 +1392,7 @@ function agregarFilaItemOrden(item, opts) {
 function quitarFilaItemOrden(btn) {
   const row = btn.closest('.orden-item-row');
   if (row) row.remove();
+  recalcularTotalArticulos();
 }
 
 /** Ajusta el número escrito en "Cantidad de artículos" (solo queda guardado
@@ -1355,6 +1447,7 @@ function quitarFilasMasivas() {
   document.querySelectorAll('#orden-items-list .orden-item-row[data-masivo="1"]').forEach(row => {
     if (!row.dataset.itemId) row.remove();
   });
+  recalcularTotalArticulos();
 }
 
 /** Genera (o regenera) las filas de pares numerados según la cantidad
@@ -1433,18 +1526,20 @@ async function sincronizarItemsDesdeFormulario(o) {
     const responsable = responsableInput ? responsableInput.value : '';
     const fechaIngreso = fila.querySelector('.item-fecha-ingreso-input')?.value || '';
     const fechaEntregaEstimada = fila.querySelector('.item-fecha-entrega-input')?.value || '';
+    const precio = Number(fila.querySelector('.item-precio-input')?.value) || 0;
 
     if (itemId) {
       const item = existentes.find(it => it.id === itemId);
       if (!item) continue;
       idsVistos.add(item.id);
       const cambioServicio = JSON.stringify(item.tipoServicio || []) !== JSON.stringify(tipoServicio);
-      if (item.descripcion !== descripcion || cambioServicio || item.responsable !== responsable || item.fechaIngreso !== fechaIngreso || item.fechaEntregaEstimada !== fechaEntregaEstimada) {
+      if (item.descripcion !== descripcion || cambioServicio || item.responsable !== responsable || item.fechaIngreso !== fechaIngreso || item.fechaEntregaEstimada !== fechaEntregaEstimada || (Number(item.precio) || 0) !== precio) {
         item.descripcion = descripcion;
         item.tipoServicio = tipoServicio;
         item.responsable = responsable;
         item.fechaIngreso = fechaIngreso;
         item.fechaEntregaEstimada = fechaEntregaEstimada;
+        item.precio = precio;
         await db.saveOrdenItem(item);
       }
     } else {
@@ -1452,7 +1547,7 @@ async function sincronizarItemsDesdeFormulario(o) {
       const nuevo = {
         id: crypto.randomUUID(), ordenId: o.id, numeroItem,
         codigo: o.numero + '-' + numeroItem, descripcion, tipoServicio, responsable,
-        fechaIngreso, fechaEntregaEstimada,
+        fechaIngreso, fechaEntregaEstimada, precio,
         estado: 'Recibido y registrado', entregado: false, fechaEntrega: null
       };
       state.ordenItems.push(nuevo);
@@ -2080,6 +2175,7 @@ Object.assign(window, {
   openCorregirPagoModal, guardarCorreccionPago, printTicket,
   downloadOrdenQR, shareComprobante, enviarWhatsAppOrden, deleteOrden,
   agregarFilaItemOrden, quitarFilaItemOrden, toggleOrdenMasiva,
+  onCambioPrecioItem,
   sincronizarCantidadPares,
   agregarFotosGeneralesOrden, quitarFotoGeneralPendiente,
   restaurarOrden, eliminarOrdenPermanente,
