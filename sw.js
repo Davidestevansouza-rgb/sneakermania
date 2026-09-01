@@ -1,10 +1,7 @@
 /* Service Worker — Sistema SeS (PWA / modo offline)
    Estrategia: stale-while-revalidate SOLO para archivos estáticos del mismo
    origen. Las peticiones a Supabase (API, Auth, Storage) NUNCA se cachean. */
-Updated upstream
-const CACHE = 'ses-static-v9';
-const CACHE = 'ses-static-v16';
-Stashed changes
+const CACHE = 'ses-static-v17';
 const CORE = [
   './',
   './index.html',
@@ -38,7 +35,15 @@ self.addEventListener('fetch', (e) => {
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(req);
       const network = fetch(req).then((res) => {
-        if (res && res.status === 200 && res.type === 'basic') cache.put(req, res.clone());
+        // Clonar SIEMPRE la respuesta ANTES de consumir/devolver su body.
+        // Un Response body solo puede leerse una vez: si se guarda en cache la
+        // respuesta original y luego se devuelve (o viceversa) se produce el
+        // error "Failed to execute 'clone' on 'Response': Response body is
+        // already used". Por eso clonamos primero y guardamos el clon.
+        if (res && res.status === 200 && res.type === 'basic') {
+          const resToCache = res.clone();
+          cache.put(req, resToCache).catch(() => {});
+        }
         return res;
       }).catch(() => cached);
       return cached || network;
