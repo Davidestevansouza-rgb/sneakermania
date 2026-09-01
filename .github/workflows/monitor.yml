@@ -1,0 +1,37 @@
+name: SneakerMania Monitor
+
+on:
+  schedule:
+    # 11:00 UTC = 8:00 AM hora Bolivia (America/La_Paz, UTC-4)
+    - cron: '0 11 * * *'
+    # Reporte semanal: lunes a las 11:00 UTC
+    - cron: '0 11 * * 1'
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    name: Monitoreo Automático
+    runs-on: ubuntu-latest
+    steps:
+      - name: Monitor diario
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-monitor-secret: sneakermania-monitor-2024" \
+            "https://ypgyfgbftfvouobmsync.supabase.co/functions/v1/monitor-alertas" \
+            -d '{"r2UsedGB": 0.001}')
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          echo "Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then exit 1; fi
+          
+      - name: Reporte semanal (lunes)
+        if: github.event.schedule == '0 11 * * 1'
+        run: |
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-monitor-secret: sneakermania-monitor-2024" \
+            "https://ypgyfgbftfvouobmsync.supabase.co/functions/v1/monitor-alertas" \
+            -d '{"tipo": "semanal", "r2UsedGB": 0.001}'
