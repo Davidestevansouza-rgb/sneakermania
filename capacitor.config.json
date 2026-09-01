@@ -1,5 +1,12 @@
-﻿{
+{
   "appId": "com.souza.sneakermania",
   "appName": "SneakerMania",
-  "webDir": "www"
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true,
+    "webContentsDebuggingEnabled": false
+  }
 }

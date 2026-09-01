@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SneakerMania</string>
+    <string name="title_activity_main">SneakerMania</string>
+    <string name="package_name">com.souza.sneakermania</string>
+    <string name="custom_url_scheme">com.souza.sneakermania</string>
+</resources>

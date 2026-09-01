@@ -1,5 +1,16 @@
 node_modules/
-android/
-www/
 .env
 .abacus.donotdelete
+
+# Android: ignorar archivos de build pero trackear el proyecto fuente
+android/build/
+android/.gradle/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/capacitor-android/build/
+android/**/*.iml
+android/local.properties
+android/.idea/
+
+# www/ se genera desde los archivos fuente — se incluye solo para Capacitor sync
+# (no ignorar — Capacitor necesita leerla)
