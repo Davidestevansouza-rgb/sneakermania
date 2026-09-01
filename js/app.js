@@ -55,7 +55,7 @@ export function switchTab(tab) {
   if (tab === 'produccion') renderProduccion();
   if (tab === 'biblioteca') renderBiblioteca();
   if (tab === 'finanzas') renderFinanzas();
-  if (tab === 'facturas') initFacturasTab();
+  if (tab === 'facturas') initFacturasTab(); // Facturas oculto temporalmente
   if (tab === 'inventario') renderInventario();
   if (tab === 'agenda') renderAgenda();
   if (tab === 'reportes') renderReportes();

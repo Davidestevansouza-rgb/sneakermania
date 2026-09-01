@@ -10,7 +10,10 @@ import { supabase } from './config.js';
 import { state, tenantId } from './state.js';
 
 const SIGNED_URL_CACHE = new Map();
-const SIGNED_URL_TTL_MS = 8 * 60 * 1000;
+// TTL del cache de URLs firmadas: se subió de 8 a 50 minutos para evitar pedir
+// una URL nueva al Edge Function en cada visita. Las URLs se piden firmadas por
+// 3000 s (50 min), así el cache y la URL caducan a la par.
+const SIGNED_URL_TTL_MS = 50 * 60 * 1000; // era 8 min, ahora 50 min
 
 function extraerPathR2(url) {
   if (!url || typeof url !== 'string') return null;
@@ -34,7 +37,7 @@ export async function resolveImageUrl(url, path = null) {
   if (cached && cached.expiresAt > Date.now()) return cached.url;
   try {
     const { data, error } = await supabase.functions.invoke('r2-storage', {
-      body: { action: 'signed-url', path: objectPath, expires: 600 }
+      body: { action: 'signed-url', path: objectPath, expires: 3000 }
     });
     if (!error && data?.url) {
       SIGNED_URL_CACHE.set(objectPath, { url: data.url, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
@@ -48,13 +51,42 @@ export async function resolveImageUrl(url, path = null) {
 
 export async function resolveImageUrls(fotos) {
   if (!Array.isArray(fotos)) return [];
+  // Todas las firmas se piden EN PARALELO (Promise.all), no una tras otra, para
+  // que la galería de una orden cargue de golpe y no foto por foto.
   return Promise.all(fotos.map(async f => ({ ...f, resolvedUrl: await resolveImageUrl(f.url, f.path) })));
+}
+
+/**
+ * Resuelve un lote de URLs firmadas en paralelo (alias explícito de
+ * resolveImageUrls para dejar claro en el código que es un prefetch en batch).
+ * Devuelve las fotos con su `resolvedUrl` ya lista.
+ * @param {Array<{url:string, path?:string}>} fotos
+ */
+export async function resolveImageUrlsBatch(fotos) {
+  return resolveImageUrls(fotos);
+}
+
+/**
+ * Prefetch en BACKGROUND (sin await, no bloquea la UI): calienta el cache de
+ * URLs firmadas de un conjunto de fotos (p. ej. todas las de una orden) para
+ * que cuando el usuario las mire ya estén firmadas y aparezcan al instante.
+ * Es seguro llamarlo varias veces: las que ya estén en cache no repiten pedido.
+ * @param {Array<{url:string, path?:string}>} fotos
+ */
+export function prefetchImageUrls(fotos) {
+  if (!Array.isArray(fotos) || !fotos.length) return;
+  // No await a propósito: corre en segundo plano.
+  Promise.all(fotos.map(f => resolveImageUrl(f && f.url, f && f.path).catch(() => null)))
+    .catch(() => {});
 }
 
 export async function secureImageUrlsInDom(root = document) {
   if (!root) return;
   const imgs = root.querySelectorAll ? root.querySelectorAll('img[src]') : [];
   await Promise.all(Array.from(imgs).map(async img => {
+    // Carga diferida: el navegador solo descarga la imagen cuando está por
+    // entrar en pantalla. Acelera la carga inicial de listados con muchas fotos.
+    if (!img.hasAttribute('loading')) img.setAttribute('loading', 'lazy');
     const src = img.getAttribute('src');
     const signed = await resolveImageUrl(src);
     if (signed && signed !== src) img.setAttribute('src', signed);

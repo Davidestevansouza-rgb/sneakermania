@@ -1161,6 +1161,13 @@ export async function saveSignature() {
 export function viewOrdenDetalle(id, preselectItemId) {
   const o = ordenById(id);
   const cliente = clienteById(o.clienteId);
+  // Prefetch inteligente: al abrir el detalle disparamos en BACKGROUND (sin
+  // await, no bloquea la UI) la firma de TODAS las fotos de la orden, para que
+  // cuando el usuario las mire ya estén en cache y aparezcan al instante.
+  try {
+    const fotosOrden = o && o.extra && Array.isArray(o.extra.fotos) ? o.extra.fotos : [];
+    if (fotosOrden.length && storageManager.prefetchImageUrls) storageManager.prefetchImageUrls(fotosOrden);
+  } catch (_) { /* el prefetch es best-effort: nunca debe romper el detalle */ }
   const valorFinal = Number(o.precio) - Number(o.descuento || 0);
   const qrData = encodeURIComponent('ORDEN-' + o.numero);
   const waMsg = encodeURIComponent('Hola ' + cliente.nombre + ', tu artículo ' + o.marca + ' ' + o.modelo + ' (orden #' + o.numero + ') está en estado: ' + o.estado + '. ¡Gracias por tu confianza!');
