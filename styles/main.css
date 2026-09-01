@@ -325,6 +325,10 @@ table.data tr:hover td{background:rgba(47,122,130,0.04);}
    columna extra de "Precio", por eso usan 4 columnas. El modal fusionado
    "Nuevo cliente + orden" mantiene 3 (no lleva precio por artículo). */
 #orden-items-list .articulo-row-fields{grid-template-columns:1.4fr 1fr 1fr 0.9fr;}
+/* La lista de artículos del pedido (Precinto Numerado) fluye en línea dentro
+   del formulario: sin alto fijo ni scroll propio. El modal completo crece y
+   scrollea (ver .modal), evitando una "ventanita" con scroll dentro de otra. */
+#orden-items-list{max-height:none;overflow:visible;}
 .articulo-row-fields > div{min-width:0;}
 .articulo-row-fields select,
 .articulo-row-fields input{width:100%;padding:7px 8px;border:1px solid var(--line);border-radius:6px;}

@@ -1,7 +1,7 @@
 /* Service Worker — Sistema SeS (PWA / modo offline)
    Estrategia: stale-while-revalidate SOLO para archivos estáticos del mismo
    origen. Las peticiones a Supabase (API, Auth, Storage) NUNCA se cachean. */
-const CACHE = 'ses-static-v17';
+const CACHE = 'ses-static-v19';
 const CORE = [
   './',
   './index.html',
@@ -19,6 +19,10 @@ self.addEventListener('activate', (e) => {
     caches.keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
+      // Avisar a todas las pestañas abiertas que hay un SW nuevo activo para
+      // que se recarguen solas y tomen la versión más reciente de la app.
+      .then(() => self.clients.matchAll({ type: 'window' })
+        .then((clientsArr) => clientsArr.forEach((c) => c.postMessage({ type: 'SW_UPDATED' }))))
   );
 });
 

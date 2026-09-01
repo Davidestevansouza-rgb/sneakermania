@@ -35,7 +35,10 @@ export function setRepRange(preset) {
   const hasta = document.getElementById('rep-hasta');
   if (!desde || !hasta) return;
   const now = new Date();
-  const iso = dt => dt.toISOString().slice(0, 10);
+  // Formatear en fecha LOCAL (no UTC). Usar toISOString() aquí provocaba un
+  // desfase de un día en zonas detrás de UTC (ej. La Paz, UTC-4): por la noche
+  // "hoy" saltaba al día siguiente. Construimos YYYY-MM-DD con la fecha local.
+  const iso = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
   if (preset === 'hoy') {
     desde.value = iso(now); hasta.value = iso(now);
   } else if (preset === 'mes') {
