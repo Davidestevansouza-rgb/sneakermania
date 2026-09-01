@@ -1055,7 +1055,7 @@
   /* Registro del Service Worker (PWA / modo offline) */
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW no registrado:', e));
+      navigator.serviceWorker.register('sw.js?v=18').catch((e) => console.warn('SW no registrado:', e));
     });
   }
 </script>
