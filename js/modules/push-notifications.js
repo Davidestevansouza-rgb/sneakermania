@@ -236,8 +236,38 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+/**
+ * Si el usuario es Supervisor, suscribe automáticamente al push
+ * (sin pedir confirmación) cuando todavía no tiene suscripción activa.
+ * Se llama desde auth.js → onAuthenticated() para que los supervisores
+ * reciban alertas sin tener que ir a Configuración.
+ */
+export async function autoSuscribirSiEsSupervisor() {
+  try {
+    if (!state || !state.session || state.session.rol !== 'Supervisor') return;
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
+    // Ya tiene permiso concedido → solo asegurar la suscripción en BD
+    if (Notification.permission === 'granted') {
+      await subscribeToPush();
+      return;
+    }
+    // Permiso aún no solicitado → pedirlo silenciosamente
+    if (Notification.permission === 'default') {
+      const perm = await Notification.requestPermission();
+      if (perm === 'granted') {
+        await subscribeToPush();
+        localStorage.setItem('ses-push-endpoint-ok', '1');
+      }
+    }
+    // Si está 'denied' no hacer nada para no molestar
+  } catch (e) {
+    console.warn('autoSuscribirSiEsSupervisor:', e);
+  }
+}
+
 Object.assign(window, { 
   activarNotificacionesPush, 
   testPushNotification,
-  renderPushPanel
+  renderPushPanel,
+  autoSuscribirSiEsSupervisor
 });

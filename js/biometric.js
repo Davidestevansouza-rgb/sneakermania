@@ -10,6 +10,8 @@
    ============================================================ */
 
 const CRED_ID_KEY = 'sm_biometric_cred_id';
+// Sesión guardada SOLO para biometría (separada del PIN para que no se borre en logout).
+const BIOMETRIC_SESSION_KEY = 'sm_biometric_session';
 
 function b64encode(buf) {
   return btoa(String.fromCharCode(...new Uint8Array(buf)));
@@ -31,6 +33,27 @@ export function hasBiometric() {
 /** Borra el registro biométrico de este dispositivo. */
 export function clearBiometric() {
   localStorage.removeItem(CRED_ID_KEY);
+  localStorage.removeItem(BIOMETRIC_SESSION_KEY);
+}
+
+/**
+ * Guarda el refresh_token de la sesión para uso biométrico.
+ * Se guarda por separado del PIN para que NO se borre en logout.
+ * Solo se borra cuando el usuario desactiva la biometría explícitamente.
+ */
+export function saveBiometricSession(session) {
+  try {
+    if (!session || !session.refresh_token) return;
+    localStorage.setItem(BIOMETRIC_SESSION_KEY, JSON.stringify({
+      refresh_token: session.refresh_token,
+      user_id: session.user?.id || null
+    }));
+  } catch (e) { /* noop */ }
+}
+
+/** Devuelve los datos de sesión biométrica guardados, o null si no hay. */
+export function getBiometricSession() {
+  try { return JSON.parse(localStorage.getItem(BIOMETRIC_SESSION_KEY) || 'null'); } catch { return null; }
 }
 
 /** ¿El navegador/dispositivo soporta huella o Face ID (autenticador de plataforma)? */
@@ -113,4 +136,4 @@ export function ofrecerActivarBiometria(onAceptar) {
   });
 }
 
-Object.assign(window, { biometricDisponible, registrarBiometria, verificarBiometria, hasBiometric, clearBiometric });
+Object.assign(window, { biometricDisponible, registrarBiometria, verificarBiometria, hasBiometric, clearBiometric, saveBiometricSession, getBiometricSession });

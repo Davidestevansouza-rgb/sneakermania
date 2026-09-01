@@ -138,19 +138,19 @@ function wireConnectivity() {
 }
 
 /* ============================================================
-   CIERRE AUTOMÁTICO DE SESIÓN POR INACTIVIDAD (20 minutos)
+   CIERRE AUTOMÁTICO DE SESIÓN POR INACTIVIDAD (30 minutos)
    ============================================================ */
-const INACTIVIDAD_MS = 20 * 60 * 1000; // 20 minutos
+const INACTIVIDAD_MS = 30 * 60 * 1000; // 30 minutos
 let inactivityTimer = null;
 
 function resetInactivityTimer() {
   // Solo cuenta si hay una sesión activa (la app está visible).
   if (!(state && state.session && state.session.loggedIn)) return;
   if (inactivityTimer) clearTimeout(inactivityTimer);
-  inactivityTimer = setTimeout(async () => {
+  inactivityTimer = setTimeout(async () => { // 30 minutos
     if (state && state.session && state.session.loggedIn) {
       try { await doLogout(); } catch (e) { console.error(e); }
-      showToast('Sesión cerrada automáticamente por inactividad (20 min).');
+      showToast('Sesión cerrada automáticamente por inactividad (30 min).');
     }
   }, INACTIVIDAD_MS);
 }

@@ -18,7 +18,54 @@ import { startRealtimeConfig, stopRealtimeConfig } from './modules/configuracion
 import { promptCreatePin, promptEnterPin, hasPin, saveSessionForPin, getSavedSession, clearPin } from './pin.js';
 
 // IMPORTACIONES NUEVAS (huella / Face ID)
-import { biometricDisponible, registrarBiometria, verificarBiometria, hasBiometric, clearBiometric, ofrecerActivarBiometria } from './biometric.js';
+import { biometricDisponible, registrarBiometria, verificarBiometria, hasBiometric, clearBiometric, ofrecerActivarBiometria, saveBiometricSession, getBiometricSession } from './biometric.js';
+
+// ─── SESIÓN ÚNICA ────────────────────────────────────────────────────────────
+// Token aleatorio que identifica ESTE dispositivo. Se registra en Supabase
+// al iniciar sesión (función establecer_sesion). Cada ~20s se valida contra
+// la base de datos: si otro dispositivo tomó la sesión, este cierra solo.
+const SESSION_TOKEN_KEY = 'ses-session-token';
+let _sessionValidationInterval = null;
+
+function _generateSessionToken() {
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function _registrarSesionUnica(userId) {
+  try {
+    const token = _generateSessionToken();
+    localStorage.setItem(SESSION_TOKEN_KEY, token);
+    await supabase.rpc('establecer_sesion', { p_user_id: userId, p_token: token });
+    _iniciarValidacionSesion(userId, token);
+  } catch (e) { /* noop: no bloquear el login si la sesión única falla */ }
+}
+
+function _iniciarValidacionSesion(userId, token) {
+  if (_sessionValidationInterval) clearInterval(_sessionValidationInterval);
+  _sessionValidationInterval = setInterval(async () => {
+    if (!state.session?.loggedIn) return;
+    try {
+      const { data, error } = await supabase.rpc('valida_sesion', { p_user_id: userId, p_token: token });
+      if (!error && data === false) {
+        clearInterval(_sessionValidationInterval);
+        _sessionValidationInterval = null;
+        showToast('⚠️ Tu sesión fue iniciada en otro dispositivo. Esta sesión se cerrará.', 'error');
+        setTimeout(() => doLogout(), 2500);
+      }
+    } catch (e) { /* noop */ }
+  }, 20000);
+}
+
+async function _cerrarSesionUnica(userId) {
+  try {
+    if (_sessionValidationInterval) { clearInterval(_sessionValidationInterval); _sessionValidationInterval = null; }
+    localStorage.removeItem(SESSION_TOKEN_KEY);
+    if (userId) await supabase.rpc('cerrar_sesion', { p_user_id: userId });
+  } catch (e) { /* noop */ }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Rol seleccionado en la UI (solo estático).
 let selectedRole = 'Administrador';
@@ -53,27 +100,30 @@ export async function doLogin() {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
     if (error) throw error;
 
-    // --- NUEVO: guardar sesión para rehidratación y uso con PIN ---
+    // Guardar sesión para rehidratación, PIN y biometría
     try {
       if (data && data.session) {
         localStorage.setItem('supabase_session', JSON.stringify(data.session));
         saveSessionForPin(data.session);
+        // Si ya hay biometría registrada, actualizar el refresh_token guardado
+        if (hasBiometric()) saveBiometricSession(data.session);
       }
     } catch (e) { /* noop */ }
 
     await onAuthenticated(data.user);
 
-    // Si el dispositivo aún no tiene PIN, no forzamos la creación automáticamente.
-    // Si quieres que el modal aparezca tras el primer login, descomenta la siguiente línea:
-    // try { if (!hasPin()) await promptCreatePin(); } catch(e){}
+    // Sesión única: registrar este dispositivo en Supabase
+    try { await _registrarSesionUnica(data.user.id); } catch (e) { /* noop */ }
 
-    // --- NUEVO: ofrecer activar huella/Face ID en este dispositivo ---
+    // Ofrecer activar huella/Face ID si no está activada
     try {
       if (!hasBiometric() && await biometricDisponible()) {
         ofrecerActivarBiometria(async () => {
           try {
             await registrarBiometria(state.session.user, state.session.userId);
-            showToast('Huella/Face ID activada en este dispositivo.');
+            // Guardar sesión biométrica tras registro exitoso
+            if (data && data.session) saveBiometricSession(data.session);
+            showToast('Huella/Face ID activada en este dispositivo. ✓');
           } catch (e) {
             console.error('No se pudo registrar la huella/Face ID:', e);
             showToast('No se pudo activar la huella/Face ID en este dispositivo.');
@@ -99,9 +149,13 @@ export async function doLoginBiometric() {
   const errorEl = document.getElementById('login-error');
   if (errorEl) errorEl.style.display = 'none';
 
-  const saved = getSavedSession();
-  if (!saved || !hasBiometric()) {
-    showToast('No hay una sesión guardada en este dispositivo. Ingresa con tu contraseña.');
+  // Usar la sesión biométrica (guardada por separado, no se borra en logout)
+  const bioSession = getBiometricSession();
+  if (!bioSession || !hasBiometric()) {
+    // Mostrar el error y ocultar el botón biométrico para que el usuario use contraseña
+    if (errorEl) { errorEl.textContent = 'No hay una sesión guardada en este dispositivo. Ingresa con tu contraseña.'; errorEl.style.display = 'block'; }
+    const btn = document.getElementById('btn-login-biometric');
+    if (btn) btn.style.display = 'none';
     return;
   }
   if (!supabase) {
@@ -116,20 +170,31 @@ export async function doLoginBiometric() {
   }
 
   try {
-    const { data, error } = await supabase.auth.setSession(saved);
+    // Usar refreshSession con el refresh_token guardado — NO setSession con tokens viejos.
+    // Esto funciona aunque el usuario haya cerrado sesión antes (el signOut local
+    // no revoca el refresh_token del servidor si se usa scope:'local').
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token: bioSession.refresh_token });
     if (error) throw error;
 
     try {
       if (data && data.session) {
         localStorage.setItem('supabase_session', JSON.stringify(data.session));
         saveSessionForPin(data.session);
+        saveBiometricSession(data.session); // Actualizar el refresh_token guardado
       }
     } catch (e) { /* noop */ }
 
-    await onAuthenticated(data.user || saved.user);
+    await onAuthenticated(data.user);
+
+    // Sesión única: registrar este dispositivo en Supabase
+    try { await _registrarSesionUnica(data.user.id); } catch (e) { /* noop */ }
+
   } catch (e) {
     console.error('Error restaurando sesión con huella/Face ID:', e);
     if (errorEl) { errorEl.textContent = 'Tu sesión guardada expiró. Ingresa con tu contraseña.'; errorEl.style.display = 'block'; }
+    // Ocultar el botón biométrico para que el usuario use contraseña
+    const btn = document.getElementById('btn-login-biometric');
+    if (btn) btn.style.display = 'none';
   }
 }
 
@@ -142,7 +207,8 @@ export async function initBiometricLoginUI() {
   if (!btn) return;
   try {
     const disponible = await biometricDisponible();
-    const puedeUsar = disponible && hasBiometric() && !!getSavedSession();
+    // Usar la sesión biométrica (no la del PIN, que se borra en logout)
+    const puedeUsar = disponible && hasBiometric() && !!getBiometricSession();
     btn.style.display = puedeUsar ? 'flex' : 'none';
   } catch (e) {
     btn.style.display = 'none';
@@ -240,8 +306,18 @@ export async function onAuthenticated(authUser) {
     app.switchTab(inicial);
   }
 
-  // Inicia el temporizador de cierre por inactividad (20 min).
+  // Inicia el temporizador de cierre por inactividad (30 min).
   if (window.resetInactivityTimer) window.resetInactivityTimer();
+
+  // Notificaciones push automáticas para el rol Supervisor
+  if (state.session.role === 'Supervisor') {
+    try {
+      const pushMod = await import('./modules/push-notifications.js');
+      if (typeof pushMod.autoSuscribirSiEsSupervisor === 'function') {
+        pushMod.autoSuscribirSiEsSupervisor().catch(() => {});
+      }
+    } catch (e) { /* noop */ }
+  }
 
   // Intenta sincronizar operaciones pendientes.
   db.flushQueue().then(r => setConnStatus(db.online() ? 'online' : 'offline', r.pending));
@@ -259,9 +335,29 @@ export async function doLogout() {
   stopRealtimeAgenda();
   stopRealtimeConfig();
 
-  try { if (supabase) await supabase.auth.signOut(); } catch (e) { /* noop */ }
+  // Cerrar sesión única en Supabase
+  const userId = state.session?.userId || null;
+  await _cerrarSesionUnica(userId);
+
+  try {
+    if (supabase) {
+      if (hasBiometric()) {
+        // Si hay biometría: guardar el refresh_token ANTES del logout local
+        // (para que el próximo login biométrico funcione sin contraseña)
+        try {
+          const { data: { session: currSess } } = await supabase.auth.getSession();
+          if (currSess) saveBiometricSession(currSess);
+        } catch (e) { /* noop */ }
+        // signOut local: no revoca el refresh_token en el servidor
+        await supabase.auth.signOut({ scope: 'local' });
+      } else {
+        await supabase.auth.signOut();
+      }
+    }
+  } catch (e) { /* noop */ }
   try { localStorage.removeItem('supabase_session'); } catch (e) {}
   try { clearPin(); } catch (e) {}
+  // NOTA: NO llamamos clearBiometric() aquí para preservar la sesión biométrica
 
   if (state) state.session = { loggedIn: false, role: null, user: null };
   // Limpiar SIEMPRE el campo de contraseña al salir (el usuario puede quedarse
