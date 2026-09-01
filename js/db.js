@@ -250,7 +250,8 @@ function registroParToDb(r) {
     id: r.id, tenant_id: tenantId(), empleado: r.empleado, fecha: r.fecha,
     pares: Number(r.pares) || 0, foto_url: urls[0] || null, foto_urls: urls,
     usuario_id: userId(),
-    codigo: r.codigo || null, servicio: r.servicio || null, hora: r.hora || null
+    codigo: r.codigo || null, servicio: r.servicio || null, hora: r.hora || null,
+    observacion: r.observacion || null
   };
 }
 function registroParFromDb(r) {
@@ -263,7 +264,8 @@ function registroParFromDb(r) {
   return {
     id: r.id, empleado: r.empleado, fecha: r.fecha, pares: Number(r.pares) || 0,
     fotoUrls: urls, fotoUrl: urls[0] || '', usuarioId: r.usuario_id || null,
-    codigo: r.codigo || null, servicio: r.servicio || null, hora: r.hora || horaRespaldo || null
+    codigo: r.codigo || null, servicio: r.servicio || null, hora: r.hora || horaRespaldo || null,
+    observacion: r.observacion || null
   };
 }
 export const saveRegistroPar = (r) => pushUpsert('registro_pares', registroParToDb(r));

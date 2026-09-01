@@ -331,9 +331,9 @@
             <div class="form-grid">
               <div class="field"><label>Usuario que registra *</label><input id="prod-empleado" placeholder="Nombre del usuario" readonly></div>
               <div class="field"><label>Fecha</label><input type="date" id="prod-fecha"></div>
-              <div class="field"><label>Número de artículo (ej. 12-1) *</label><input id="prod-codigo" placeholder="Nº de orden-artículo que agarraste" oninput="this.value=this.value.trim(); mostrarInfoArticuloProduccion()"></div>
+              <div class="field"><label>Número de artículo (ej. 12-1) *</label><input id="prod-codigo" placeholder="Nº de orden-artículo que agarraste" oninput="this.value=this.value.trim(); mostrarInfoArticuloProduccion(); revisarRegistroExistente()"></div>
               <div class="field"><label>Servicio *</label>
-                <select id="prod-servicio">
+                <select id="prod-servicio" onchange="revisarRegistroExistente()">
                   <option value="Lavado">Lavado</option>
                   <option value="Secado y detallado">Secado y detallado</option>
                   <option value="Pintado y personalizado">Pintado y personalizado</option>
@@ -343,9 +343,14 @@
                 <label>Información de la orden</label>
                 <div id="prod-info-articulo"></div>
               </div>
+              <div class="field full">
+                <label>Observación del artículo (opcional)</label>
+                <textarea id="prod-observacion" rows="2" placeholder="Anota algo del artículo (antes de registrar, o si ya lo registraste y notaste algo después)"></textarea>
+                <div class="hint" id="prod-observacion-hint"></div>
+              </div>
               <div class="field full"><label>Fotos (opcional, puedes elegir varias — hasta 100)</label><input type="file" id="prod-foto" accept="image/*" multiple onchange="mostrarConteoFotosProduccion()"><div class="hint" id="prod-foto-conteo"></div></div>
             </div>
-            <div class="hint" style="margin-bottom:8px;">Escribe el <strong>número del artículo</strong> que agarraste (ej. <span class="mono">12-1</span>) y elige tu servicio: queda a tu nombre y se contabiliza a ti. No se puede registrar un servicio sin indicar un artículo/orden válido, ni repetir el mismo servicio dos veces para el mismo artículo (si ya lo lavaron, solo queda disponible para detallar, etc.).</div>
+            <div class="hint" style="margin-bottom:8px;">Escribe el <strong>número del artículo</strong> que agarraste (ej. <span class="mono">12-1</span>) y elige tu servicio: queda a tu nombre y se contabiliza a ti. No se puede registrar un servicio sin indicar un artículo/orden válido, ni repetir el mismo servicio dos veces para el mismo artículo (si ya lo lavaron, solo queda disponible para detallar, etc.) — pero si ese artículo y servicio ya estaban registrados y solo escribes una <strong>observación</strong>, esa nota se integra al registro que ya existe (no se crea uno nuevo ni se vuelve a contar).</div>
             <button class="btn btn-primary" onclick="registrarPares(this)">+ Registrar</button>
           </div>
 

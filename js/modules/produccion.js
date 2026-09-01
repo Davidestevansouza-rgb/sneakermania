@@ -108,6 +108,7 @@ function renderResumenPares(kpiElId, listaElId, registros, opts) {
           '<div><strong>' + escHtml(r.empleado) + '</strong>' + (r.codigo ? ' · <span class="mono">' + escHtml(r.codigo) + '</span>' : '') + (r.servicio ? ' · ' + escHtml(r.servicio) : '') + '</div>' +
           '<div class="hint">' + r.pares + ' ' + (Number(r.pares) === 1 ? 'artículo' : 'artículos') + ' · ' + fmtDate(r.fecha) + (fotos.length ? ' · ' + fotos.length + ' foto(s)' : '') + '</div>' +
           (r.hora ? '<div class="hint">Hora: ' + escHtml(r.hora) + '</div>' : '') +
+          (r.observacion ? '<div class="hint" style="white-space:pre-line;">📝 ' + escHtml(r.observacion) + '</div>' : '') +
           (opts.permitirEliminar && state.session && state.session.role === 'Administrador' ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);margin-top:4px;" onclick="eliminarRegistroPar(\'' + r.id + '\')">Eliminar</button>' : '') +
         '</div>' +
       '</div>';
@@ -127,6 +128,98 @@ export function mostrarConteoFotosProduccion() {
   } else {
     conteoEl.textContent = n ? n + ' foto(s) seleccionada(s)' : '';
   }
+}
+
+/** Formatea una nota de observación con fecha/hora y quién la escribió, para
+ *  que al integrar varias notas en un mismo registro quede claro cuál es
+ *  cuál (y quién la agregó) en vez de perder ese rastro al concatenar. */
+function formatearNotaObservacion(texto, empleado) {
+  const marca = new Date().toLocaleString('es-MX', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return '[' + marca + ' · ' + (empleado || '') + '] ' + texto;
+}
+
+/** Al escribir el número de artículo (o cambiar el servicio) en el formulario
+ *  de Producción, revisa si ese artículo YA fue registrado para ese mismo
+ *  servicio. Si ya existe, precarga en el campo de Observación la nota que
+ *  ya estaba guardada (para que se vea lo que ya se anotó) y avisa que
+ *  cualquier observación que se escriba ahora se va a INTEGRAR a ese mismo
+ *  registro (no se crea uno nuevo). Si no existe, deja el campo libre para
+ *  una observación nueva del registro que se está por crear. */
+export function revisarRegistroExistente() {
+  const codigoInput = document.getElementById('prod-codigo');
+  const servicioSel = document.getElementById('prod-servicio');
+  const obsInput = document.getElementById('prod-observacion');
+  const hintEl = document.getElementById('prod-observacion-hint');
+  if (!codigoInput || !obsInput) return;
+  const codigoNorm = codigoInput.value.trim().replace(/[#\s]/g, '');
+  const servicio = servicioSel ? servicioSel.value : '';
+
+  if (!codigoNorm) {
+    if (obsInput.dataset.registroId) { obsInput.value = ''; }
+    delete obsInput.dataset.registroId;
+    delete obsInput.dataset.original;
+    if (hintEl) hintEl.textContent = '';
+    return;
+  }
+
+  const existente = (state.registroPares || []).find(r => (r.codigo || '') === codigoNorm && (r.servicio || '') === servicio);
+  if (existente) {
+    obsInput.value = existente.observacion || '';
+    obsInput.dataset.registroId = existente.id;
+    obsInput.dataset.original = existente.observacion || '';
+    if (hintEl) hintEl.textContent = 'El artículo ' + codigoNorm + ' ya fue registrado para "' + servicio + '"' + (existente.empleado ? ' por ' + existente.empleado : '') + '. Si escribes algo aquí, se integra a este registro (no se crea uno nuevo).';
+  } else {
+    // No borres lo que la persona ya venía escribiendo si todavía no había
+    // un registro previo cargado; solo limpia si veníamos de mostrar la
+    // observación de OTRO registro existente.
+    if (obsInput.dataset.registroId) obsInput.value = '';
+    delete obsInput.dataset.registroId;
+    delete obsInput.dataset.original;
+    if (hintEl) hintEl.textContent = '';
+  }
+}
+
+/** Integra una nueva observación a un registro de Producción YA EXISTENTE
+ *  (mismo artículo + mismo servicio), en vez de crear un registro nuevo:
+ *  la nota se agrega debajo de las que ya hubiera (si las hay), con fecha,
+ *  hora y quién la escribió, y se guarda como una actualización del mismo
+ *  registro (mismo id). No vuelve a sumar al conteo de artículos ni crea
+ *  fotos/eventos duplicados. */
+async function integrarObservacionEnRegistro(registroExistente, notaNueva, btn) {
+  const empleado = (state.session && state.session.user) || '';
+  const restore = lockBtn(btn, 'Guardando observación…');
+  const backupObservacion = registroExistente.observacion || '';
+  try {
+    const nota = formatearNotaObservacion(notaNueva, empleado);
+    const observacionIntegrada = backupObservacion ? (backupObservacion + '\n' + nota) : nota;
+    const idx = (state.registroPares || []).findIndex(r => r.id === registroExistente.id);
+    if (idx < 0) { showToast('No se encontró el registro a actualizar'); return; }
+
+    state.registroPares[idx] = Object.assign({}, state.registroPares[idx], { observacion: observacionIntegrada });
+    const res = await db.saveRegistroPar(state.registroPares[idx]);
+    if (res && res.error && !res.queued) {
+      state.registroPares[idx] = Object.assign({}, state.registroPares[idx], { observacion: backupObservacion });
+      showToast('No se pudo guardar la observación: ' + (res.error.message || 'error del servidor'));
+      return;
+    }
+
+    logActivity('Agregó una observación al artículo ' + (registroExistente.codigo || '') + ' (' + (registroExistente.servicio || '') + ') — ' + empleado);
+    await persist();
+
+    const obsInput = document.getElementById('prod-observacion');
+    if (obsInput) { obsInput.value = ''; delete obsInput.dataset.registroId; delete obsInput.dataset.original; }
+    const codigoInput = document.getElementById('prod-codigo');
+    if (codigoInput) codigoInput.value = '';
+    const hintEl = document.getElementById('prod-observacion-hint');
+    if (hintEl) hintEl.textContent = '';
+    mostrarInfoArticuloProduccion();
+
+    renderProduccion();
+    showToast('Observación agregada ✓');
+  } catch (e) {
+    console.error('Error al integrar la observación:', e);
+    showToast('No se pudo guardar la observación: ' + (e.message || 'error desconocido'));
+  } finally { restore(); }
 }
 
 /** Se llama con cada tecla que se escribe en "Número de artículo": busca el
@@ -172,6 +265,8 @@ export async function registrarPares(btn) {
   const codigoInput = document.getElementById('prod-codigo');
   const codigo = codigoInput ? codigoInput.value.trim() : '';
   const servicio = (document.getElementById('prod-servicio') || {}).value || '';
+  const obsInput = document.getElementById('prod-observacion');
+  const observacionTexto = obsInput ? obsInput.value.trim() : '';
 
   if (!codigo) { showToast('Escribe el número de artículo (ej. 12-1). No se puede registrar un servicio sin una orden.'); return; }
 
@@ -184,7 +279,26 @@ export async function registrarPares(btn) {
   // este mismo servicio? (de cualquier empleado)
   const yaRegistrado = (state.registroPares || []).find(r => (r.codigo || '') === codigoNorm && (r.servicio || '') === servicio);
   if (yaRegistrado) {
-    showToast('El artículo ' + codigoNorm + ' ya fue registrado para "' + servicio + '"' + (yaRegistrado.empleado ? ' por ' + yaRegistrado.empleado : '') + '. Solo queda disponible para otro servicio.');
+    // El artículo+servicio ya estaba registrado: no se crea un registro
+    // nuevo ni se vuelve a contar. Si la persona escribió algo NUEVO en
+    // Observación, esa nota se INTEGRA (se agrega) al registro que ya
+    // existe — es la única edición permitida sobre un registro ya creado.
+    // Como el campo se precarga con la observación anterior (ver
+    // revisarRegistroExistente), acá se compara contra ese texto original
+    // para no volver a guardar la misma nota de nuevo si la persona no le
+    // agregó nada.
+    const observacionOriginal = obsInput && obsInput.dataset ? (obsInput.dataset.original || '') : '';
+    let notaNueva = observacionTexto;
+    if (observacionOriginal && notaNueva.startsWith(observacionOriginal)) {
+      notaNueva = notaNueva.slice(observacionOriginal.length).trim();
+    } else if (observacionOriginal && notaNueva === observacionOriginal) {
+      notaNueva = '';
+    }
+    if (!notaNueva) {
+      showToast('El artículo ' + codigoNorm + ' ya fue registrado para "' + servicio + '"' + (yaRegistrado.empleado ? ' por ' + yaRegistrado.empleado : '') + '. Escribe una observación NUEVA si notaste algo con el artículo, o elige otro servicio.');
+      return;
+    }
+    await integrarObservacionEnRegistro(yaRegistrado, notaNueva, btn);
     return;
   }
   const pares = 1;
@@ -207,7 +321,8 @@ export async function registrarPares(btn) {
     }
 
     const hora = new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
-    const registro = { id: crypto.randomUUID(), empleado, fecha, hora, pares, fotoUrls, fotoUrl: fotoUrls[0] || '', usuarioId: (state.session && state.session.userId) || null, codigo: codigoNorm, servicio };
+    const observacionInicial = observacionTexto ? formatearNotaObservacion(observacionTexto, empleado) : null;
+    const registro = { id: crypto.randomUUID(), empleado, fecha, hora, pares, fotoUrls, fotoUrl: fotoUrls[0] || '', usuarioId: (state.session && state.session.userId) || null, codigo: codigoNorm, servicio, observacion: observacionInicial };
     if (!Array.isArray(state.registroPares)) state.registroPares = [];
     state.registroPares.push(registro);
     const guardado = await db.saveRegistroPar(registro);
@@ -275,6 +390,9 @@ export async function registrarPares(btn) {
     document.getElementById('prod-empleado').value = '';
     if (codigoInput) codigoInput.value = '';
     if (fileInput) fileInput.value = '';
+    if (obsInput) { obsInput.value = ''; delete obsInput.dataset.registroId; delete obsInput.dataset.original; }
+    const hintEl = document.getElementById('prod-observacion-hint');
+    if (hintEl) hintEl.textContent = '';
     const conteoEl = document.getElementById('prod-foto-conteo');
     if (conteoEl) conteoEl.textContent = '';
     mostrarInfoArticuloProduccion(); // limpia el panel de info del artículo ya registrado
@@ -377,5 +495,6 @@ export function verMesProduccion() {
 
 Object.assign(window, {
   renderProduccion, registrarPares, eliminarRegistroPar,
-  mostrarConteoFotosProduccion, mostrarInfoArticuloProduccion, renderHistorialProduccion, verSemanaProduccion, verMesProduccion
+  mostrarConteoFotosProduccion, mostrarInfoArticuloProduccion, renderHistorialProduccion, verSemanaProduccion, verMesProduccion,
+  revisarRegistroExistente
 });
