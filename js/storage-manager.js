@@ -177,7 +177,7 @@ export async function uploadFirma(base64Data, ordenId, tipo) {
  *        degradar demasiado el detalle aunque no se llegue al peso objetivo
  * @returns {Promise<Blob>}
  */
-async function comprimirImagen(file, ladoMax = 1200, pesoObjetivoKB = 200, calidadMinima = 0.5) {
+export async function comprimirImagen(file, ladoMax = 1200, pesoObjetivoKB = 200, calidadMinima = 0.5) {
   try {
     const bitmap = await createImageBitmap(file);
     const { width, height } = bitmap;

@@ -147,31 +147,37 @@ export async function runIaAnalysis() {
   try {
     const orderId = document.getElementById('ia-orden-target').value;
     const itemId = document.getElementById('ia-item-target').value;
-    let imageUrl = null;
 
-    if (orderId) {
-      showToast('Subiendo imagen...', 'info');
-      const fotoData = await storageManager.uploadFoto(iaPendingFile, orderId, 'detalle');
-      imageUrl = await storageManager.resolveImageUrl(fotoData.url, fotoData.path);
+    // 1) Comprimir la imagen en el cliente (reduce peso a subir/analizar).
+    //    Si la compresión fallara, se usa el archivo original.
+    let archivoParaIa = iaPendingFile;
+    try {
+      archivoParaIa = await storageManager.comprimirImagen(iaPendingFile);
+    } catch (_) {
+      archivoParaIa = iaPendingFile;
     }
 
-    const payload = {};
-    if (imageUrl) {
-      payload.imageUrl = imageUrl;
-    } else {
-      const base64 = await fileToBase64(iaPendingFile);
-      const mediaType = iaPendingFile.type || 'image/jpeg';
-      payload.imageBase64 = `data:${mediaType};base64,${base64}`;
-    }
+    // 2) Enviar SIEMPRE la imagen como base64 directo — sin esperar la
+    //    subida a storage ni la re-descarga en el servidor (eso era lo lento).
+    const base64 = await fileToBase64(archivoParaIa);
+    const mediaType = archivoParaIa.type || 'image/jpeg';
+    const payload = { imageBase64: `data:${mediaType};base64,${base64}` };
 
     // Contexto: si el par elegido ya tenía marca/modelo cargados de un
     // análisis anterior, se envían como pista.
     if (orderId) {
-      const item = itemId ? itemsDeOrden(orderId).find(it => it.id === itemId) : null;
-      if (item && item.marca) payload.marca = item.marca;
-      if (item && item.modelo) payload.modelo = item.modelo;
+      const itemCtx = itemId ? itemsDeOrden(orderId).find(it => it.id === itemId) : null;
+      if (itemCtx && itemCtx.marca) payload.marca = itemCtx.marca;
+      if (itemCtx && itemCtx.modelo) payload.modelo = itemCtx.modelo;
     }
 
+    // 3) Subir la foto a storage EN SEGUNDO PLANO (no bloquea el análisis).
+    if (orderId) {
+      storageManager.uploadFoto(iaPendingFile, orderId, 'detalle')
+        .catch(err => console.warn('No se pudo guardar la foto en storage (análisis no afectado):', err));
+    }
+
+    // 4) Analizar directo con la IA.
     showToast('Analizando con IA...', 'info');
     const { data, error } = await supabase.functions.invoke('analyze-shoe', {
       body: payload
