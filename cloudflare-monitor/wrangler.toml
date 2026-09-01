@@ -1,0 +1,17 @@
+name = "sneakermania-monitor"
+main = "worker.js"
+compatibility_date = "2024-09-01"
+
+# Cron: 11:00 UTC = 8:00 AM hora Bolivia (America/La_Paz, UTC-4)
+[triggers]
+crons = ["0 11 * * *"]
+
+# Binding al bucket R2 con las fotos de la app
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "sneakermania-fotos"
+
+# Variables de entorno (RESEND_API_KEY se configura como secret con:
+#   npx wrangler secret put RESEND_API_KEY)
+[vars]
+# (Ninguna variable pública; RESEND_API_KEY va como secret)
