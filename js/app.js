@@ -81,9 +81,19 @@ export function closeMobileMenu() {
    BÚSQUEDA GLOBAL
    ============================================================ */
 export function handleGlobalSearch(q) {
-  if (!q) return;
+  const filtroTexto = document.getElementById('filtro-orden-texto');
+  // Al BORRAR el texto del buscador (queda vacío) hay que limpiar el filtro
+  // de texto de las órdenes y volver a renderizar para mostrar TODAS las
+  // órdenes de nuevo (respetando los demás filtros activos: estado,
+  // prioridad, pago, fecha). Antes se hacía `if (!q) return;`, lo que dejaba
+  // el filtro anterior pegado y la lista quedaba vacía o incompleta.
+  if (!q) {
+    if (filtroTexto) filtroTexto.value = '';
+    renderOrdenes();
+    return;
+  }
   switchTab('ordenes');
-  document.getElementById('filtro-orden-texto').value = q;
+  if (filtroTexto) filtroTexto.value = q;
   renderOrdenes();
 }
 
