@@ -421,6 +421,24 @@ export function renderOrdenes() {
     });
   }
 
+  // CONTEO DE ARTÍCULOS: total de artículos individuales (precintos numerados)
+  // registrados en las órdenes que quedaron tras aplicar los filtros. Cuando
+  // hay un filtro de fecha activo, muestra cuántos artículos se registraron en
+  // ese día/rango; si no, cuenta todos. El conteo suma los pares reales de
+  // cada orden (itemsDeOrden), no las órdenes.
+  const totalArticulos = list.reduce((acc, o) => acc + itemsDeOrden(o.id).length, 0);
+  const subEl = document.getElementById('ordenes-sub');
+  if (subEl) {
+    if (fechaDesde || fechaHasta) {
+      const rango = (fechaDesde && fechaHasta && fechaDesde === fechaHasta)
+        ? soloFechaISO(fechaDesde)
+        : [soloFechaISO(fechaDesde) || '…', soloFechaISO(fechaHasta) || '…'].join(' → ');
+      subEl.textContent = list.length + ' órdenes · ' + totalArticulos + ' artículos registrados (' + rango + ')';
+    } else {
+      subEl.textContent = state.ordenes.length + ' órdenes · ' + totalArticulos + ' artículos registrados';
+    }
+  }
+
   document.getElementById('ordenes-grid').innerHTML = list.length ? list.map(o => {
     const cliente = clienteNombre(o.clienteId);
     // El "Estado" de la card es el del artículo más atrasado (ver

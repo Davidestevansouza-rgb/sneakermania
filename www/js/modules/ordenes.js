@@ -421,6 +421,24 @@ export function renderOrdenes() {
     });
   }
 
+  // CONTEO DE ARTÍCULOS: total de artículos individuales (precintos numerados)
+  // registrados en las órdenes que quedaron tras aplicar los filtros. Cuando
+  // hay un filtro de fecha activo, muestra cuántos artículos se registraron en
+  // ese día/rango; si no, cuenta todos. El conteo suma los pares reales de
+  // cada orden (itemsDeOrden), no las órdenes.
+  const totalArticulos = list.reduce((acc, o) => acc + itemsDeOrden(o.id).length, 0);
+  const subEl = document.getElementById('ordenes-sub');
+  if (subEl) {
+    if (fechaDesde || fechaHasta) {
+      const rango = (fechaDesde && fechaHasta && fechaDesde === fechaHasta)
+        ? soloFechaISO(fechaDesde)
+        : [soloFechaISO(fechaDesde) || '…', soloFechaISO(fechaHasta) || '…'].join(' → ');
+      subEl.textContent = list.length + ' órdenes · ' + totalArticulos + ' artículos registrados (' + rango + ')';
+    } else {
+      subEl.textContent = state.ordenes.length + ' órdenes · ' + totalArticulos + ' artículos registrados';
+    }
+  }
+
   document.getElementById('ordenes-grid').innerHTML = list.length ? list.map(o => {
     const cliente = clienteNombre(o.clienteId);
     // El "Estado" de la card es el del artículo más atrasado (ver
@@ -545,6 +563,15 @@ export async function openOrdenModal(id) {
   poblarSelectEstadoOrden(o.estado);
   document.getElementById('orden-precio').value = o.precio;
   document.getElementById('orden-descuento').value = o.descuento || 0;
+  // Forma de pago (Pendiente / Efectivo / QR). Si la orden ya tiene un estado
+  // de pago avanzado (Pagado / Parcial), se conserva y el selector solo se usa
+  // como referencia — no lo pisa al guardar (ver saveOrden).
+  const formaPagoEl = document.getElementById('orden-forma-pago');
+  if (formaPagoEl) {
+    const estadoActual = id ? (o.estadoPago || 'Pendiente') : 'Pendiente';
+    formaPagoEl.value = ['Pendiente', 'Efectivo', 'QR'].includes(estadoActual) ? estadoActual : 'Pendiente';
+    formaPagoEl.dataset.estadoOriginal = id ? (o.estadoPago || 'Pendiente') : '';
+  }
   // Una vez creada la orden, el precio solo lo cambia el Administrador.
   const precioBloqueado = state.session.role !== 'Administrador' && !!id;
   document.getElementById('orden-precio').disabled = precioBloqueado;
@@ -575,6 +602,15 @@ export async function saveOrden(btn) {
     observaciones: document.getElementById('orden-observaciones').value.trim(),
     cantidadPares: Math.max(1, parseInt(document.getElementById('orden-cantidad-pares').value, 10) || 1)
   };
+  // Forma de pago elegida en el modal (Pendiente / Efectivo / QR). Se mapea a
+  // data.estadoPago. Si se está EDITANDO una orden con pago avanzado ya
+  // registrado (Pagado / Parcial), NO se pisa ese estado desde este selector.
+  const formaPagoEl = document.getElementById('orden-forma-pago');
+  const formaPago = formaPagoEl ? (formaPagoEl.value || 'Pendiente') : 'Pendiente';
+  const estadoPagoOriginal = formaPagoEl ? (formaPagoEl.dataset.estadoOriginal || '') : '';
+  if (!(id && ['Pagado', 'Parcial'].includes(estadoPagoOriginal))) {
+    data.estadoPago = formaPago;
+  }
   if (!data.clienteId) { showToast('Selecciona un cliente antes de guardar la orden'); return; }
   if (!data.precio || data.precio <= 0) { showToast('Debes indicar el precio del servicio antes de guardar la orden'); return; }
   // Los pares individuales son OPCIONALES al crear/editar la orden general:
@@ -1161,6 +1197,13 @@ export async function saveSignature() {
 export function viewOrdenDetalle(id, preselectItemId) {
   const o = ordenById(id);
   const cliente = clienteById(o.clienteId);
+  // Prefetch inteligente: al abrir el detalle disparamos en BACKGROUND (sin
+  // await, no bloquea la UI) la firma de TODAS las fotos de la orden, para que
+  // cuando el usuario las mire ya estén en cache y aparezcan al instante.
+  try {
+    const fotosOrden = o && o.extra && Array.isArray(o.extra.fotos) ? o.extra.fotos : [];
+    if (fotosOrden.length && storageManager.prefetchImageUrls) storageManager.prefetchImageUrls(fotosOrden);
+  } catch (_) { /* el prefetch es best-effort: nunca debe romper el detalle */ }
   const valorFinal = Number(o.precio) - Number(o.descuento || 0);
   const qrData = encodeURIComponent('ORDEN-' + o.numero);
   const waMsg = encodeURIComponent('Hola ' + cliente.nombre + ', tu artículo ' + o.marca + ' ' + o.modelo + ' (orden #' + o.numero + ') está en estado: ' + o.estado + '. ¡Gracias por tu confianza!');
@@ -1212,6 +1255,13 @@ export function viewOrdenDetalle(id, preselectItemId) {
       '<tr><th>Pagado / Pendiente</th><td>' + fmtMoney(o.pagado) + ' / ' + fmtMoney(Math.max(valorFinal - o.pagado, 0)) + '</td></tr>' +
       '<tr><th>Descuento</th><td>' + fmtMoney(o.descuento || 0) + '</td></tr>'
   );
+  // CAMBIO 5: si TODOS los pares de la orden están en "Biblioteca" (listos),
+  // se muestra un botón verde de WhatsApp para avisar al cliente que puede
+  // pasar a recogerlos.
+  const todosEnBiblioteca = itemsOrden.length > 0 && itemsOrden.every(it => estadoMostradoPar(it) === 'Biblioteca');
+  const btnListoRecogerHTML = todosEnBiblioteca
+    ? '<button class="btn btn-sm" style="background:#22c55e;color:#fff;border-color:#22c55e;" onclick="enviarWhatsAppListoRecoger(\'' + escAttr(o.id) + '\')">✅ Avisar: listos para recoger</button>'
+    : '';
   document.getElementById('orden-detalle-content').innerHTML =
     '<div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">' +
     bloqueQRHTML +
@@ -1242,6 +1292,7 @@ export function viewOrdenDetalle(id, preselectItemId) {
         // desde la tarjeta de Órdenes de servicio.
         '<button class="btn btn-ghost btn-sm" onclick="openComprobanteChooser(\'' + escAttr(o.id) + '\')">🖨 Comprobante</button>' +
         '<button class="btn btn-teal btn-sm" onclick="enviarWhatsAppOrden(\'' + escAttr(o.id) + '\')">💬 WhatsApp</button>' +
+        btnListoRecogerHTML +
       '</div>'
     ));
   if (itemsOrden.length && !esEmpleado()) {
@@ -2096,6 +2147,30 @@ export async function enviarWhatsAppOrden(ordenId) {
   }
 }
 
+/** CAMBIO 5: avisa al cliente por WhatsApp que TODOS los pares de su orden
+ *  ya están listos para recoger (se muestra solo cuando el 100% de los pares
+ *  llegaron a "Biblioteca"). Usa el mensaje institucional con horarios. Si el
+ *  cliente no tiene teléfono registrado, avisa con un toast. */
+export function enviarWhatsAppListoRecoger(ordenId) {
+  const o = ordenById(ordenId);
+  if (!o) return;
+  const c = clienteById(o.clienteId);
+  if (!c) return;
+  const tel = ((c.whatsapp || c.telefono || '') + '').replace(/[^0-9]/g, '');
+  if (!tel) { showToast('Este cliente no tiene número de teléfono registrado'); return; }
+  const msg = '👟 ¡Sus artículos ya están listos para recoger!\n\n' +
+    'Nos complace informarle que su servicio ha sido finalizado y sus artículos se encuentran listos para su entrega.\n\n' +
+    '𝗛𝗢𝗥𝗔𝗥𝗜𝗢𝗦 𝗗𝗘 𝗔𝗧𝗘𝗡𝗖𝗜𝗢́𝗡\n\n' +
+    'Lunes a viernes\n🕣 8:30 AM – 1:00 PM\n🕑 2:00 PM – 7:00 PM\n\n' +
+    'Sábados\n🕘 9:00 AM – 1:00 PM\n\n' +
+    'Agradecemos su confianza y esperamos verlo pronto.';
+  if (window.enviarWhatsApp) {
+    window.enviarWhatsApp(tel, msg);
+  } else {
+    window.open('https://wa.me/' + tel + '?text=' + encodeURIComponent(msg), '_blank');
+  }
+}
+
 /** Envía al cliente un WhatsApp automático con la info del QR de la orden
  *  y, si se le pasa una foto (File), la adjunta junto con el texto en el
  *  mismo mensaje. Se usa al registrar la orden (con la foto general recién
@@ -2154,8 +2229,30 @@ function aplicarFiltroFechaOrden() {
 function limpiarFiltroFechaOrden() {
   document.getElementById('orden-fecha-desde').value = '';
   document.getElementById('orden-fecha-hasta').value = '';
+  // CAMBIO 10: además de las fechas, se limpian los demás filtros para que el
+  // listado no quede "trabado" mostrando solo algunas órdenes al quitar el
+  // rango de fechas.
+  ['filtro-estado', 'filtro-prioridad', 'filtro-pago', 'filtro-orden-texto'].forEach(fid => {
+    const el = document.getElementById(fid);
+    if (el) el.value = '';
+  });
+  const globalSearch = document.getElementById('global-search');
+  if (globalSearch) globalSearch.value = '';
   renderOrdenes();
   window.closeDropdown('orden-fecha-dropdown');
+}
+
+/** CAMBIO 10: botón "Limpiar todos los filtros" de la barra de Órdenes.
+ *  Deja TODO en blanco (texto, fechas desde/hasta, estado, prioridad, pago,
+ *  y el buscador general de arriba) y vuelve a mostrar todas las órdenes. */
+function limpiarTodosFiltrosOrden() {
+  ['filtro-estado', 'filtro-prioridad', 'filtro-pago', 'filtro-orden-texto', 'orden-fecha-desde', 'orden-fecha-hasta'].forEach(fid => {
+    const el = document.getElementById(fid);
+    if (el) el.value = '';
+  });
+  const globalSearch = document.getElementById('global-search');
+  if (globalSearch) globalSearch.value = '';
+  renderOrdenes();
 }
 function actualizarBotonFiltroFechaOrden(activo) {
   const btn = document.getElementById('btn-filtro-fecha-orden');
@@ -2166,14 +2263,14 @@ function actualizarBotonFiltroFechaOrden(activo) {
 Object.assign(window, {
   populateClienteSelect, filtrarClientesComboOrden, seleccionarClienteOrden,
   renderOrdenes, openOrdenModal, saveOrden, advanceEstado, toggleArticulosDropdown,
-  toggleFiltroFechaOrden, aplicarFiltroFechaOrden, limpiarFiltroFechaOrden,
+  toggleFiltroFechaOrden, aplicarFiltroFechaOrden, limpiarFiltroFechaOrden, limpiarTodosFiltrosOrden,
   advanceEstadoYRefrescarDetalle, entregarOrden,
   advanceTimelineStep, openCalidadModal, updateCalidadProgress, saveCalidadChecklist,
   openFirmaModal, clearSignature, saveSignature, viewOrdenDetalle,
   openPagoQRModal, confirmarPagoQR, refreshPagoQRSiAbierto, openPagoEfectivoModal, confirmarPagoEfectivo,
   openFormaPagoChooser,
   openCorregirPagoModal, guardarCorreccionPago, printTicket,
-  downloadOrdenQR, shareComprobante, enviarWhatsAppOrden, deleteOrden,
+  downloadOrdenQR, shareComprobante, enviarWhatsAppOrden, enviarWhatsAppListoRecoger, deleteOrden,
   agregarFilaItemOrden, quitarFilaItemOrden, toggleOrdenMasiva,
   onCambioPrecioItem,
   sincronizarCantidadPares,
