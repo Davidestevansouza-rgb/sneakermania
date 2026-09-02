@@ -126,6 +126,10 @@ export function coloresPorServicio(servicios) {
   return colores;
 }
 
+// CAMBIO 8: alias con el nombre pedido en la especificación. Devuelve el mismo
+// array de colores (hex) por tipo de servicio que coloresPorServicio().
+export const getServicioColores = coloresPorServicio;
+
 export function renderItemCardHTML(it) {
       const servicios = Array.isArray(it.tipoServicio) && it.tipoServicio.length ? it.tipoServicio.join(', ') : 'Sin servicio asignado';
       // Datos del análisis de IA guardados en este par (si ya se le

@@ -132,7 +132,7 @@ function renderResumenPares(kpiElId, listaElId, registros, opts) {
       // "hoy" o historial filtrado por una fecha específica). En los resúmenes
       // de rango (semana/mes) las miniaturas quedan ocultas.
       const bloqueFoto = !mostrarFotos
-        ? '<div class="empty-state" style="padding:20px;"><div class="big">📅</div><div class="hint">Fotos visibles al filtrar por fecha</div></div>'
+        ? '<div class="empty-state" style="padding:20px;"><div class="big">📅</div><div class="hint">— (filtrá por fecha para ver fotos)</div></div>'
         : (primeraFoto
           ? '<div style="position:relative;"><img src="' + escHtml(primeraFoto) + '" loading="lazy" onclick="ampliarImagen(\'' + escHtml(primeraFoto) + '\', ' + escAttr(JSON.stringify(fotos)) + ')">' + extra + '</div>'
           : '<div class="empty-state" style="padding:20px;"><div class="big">👟</div>Sin foto</div>');
@@ -486,8 +486,18 @@ export function renderHistorialProduccion() {
   if (!fecha) { cont.innerHTML = '<div class="hint">Elige una fecha para ver el historial.</div>'; return; }
   let registros = (state.registroPares || []).filter(r => r.fecha === fecha);
   if (empleado) registros = registros.filter(r => r.empleado === empleado);
+  // CAMBIO 1: el historial debe mostrar primero lo último registrado (más
+  // reciente → más antiguo). renderResumenPares() invierte el array al
+  // pintarlo (.slice().reverse()), así que aquí ordenamos ASCENDENTE por
+  // fecha+hora para que, tras esa inversión, quede el más reciente primero.
+  registros = registros.slice().sort((a, b) =>
+    (a.fecha || '').localeCompare(b.fecha || '') || (a.hora || '').localeCompare(b.hora || ''));
+  // CAMBIO 2: las fotos del historial solo se muestran cuando hay una fecha
+  // activa en el filtro (prod-historial-fecha). Aquí siempre hay fecha (la
+  // función retorna antes si no la hay), así que se muestran las miniaturas.
+  const hayFechaActiva = !!(fechaEl && fechaEl.value);
   cont.innerHTML = '<div style="margin-bottom:8px;font-weight:700;">' + fmtDate(fecha) + (empleado ? ' · ' + escHtml(empleado) : '') + '</div><div id="prod-historial-kpi" class="kpi-grid" style="margin-bottom:12px;"></div><div id="prod-historial-lista"></div>';
-  renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en esta fecha' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: true, mostrarEmpleado: puedeVerEmpleadoProd(true) });
+  renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en esta fecha' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: hayFechaActiva, mostrarEmpleado: puedeVerEmpleadoProd(true) });
 }
 
 /** Atajo: junta los últimos 7 días (incluyendo hoy) en un solo resumen,

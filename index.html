@@ -838,7 +838,7 @@
           <div style="flex:1;min-width:220px;">
             <label class="hint">Fotos generales</label>
             <div id="orden-fotos-generales-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 6px;"></div>
-            <label class="btn btn-ghost btn-sm" style="display:inline-block;cursor:pointer;">+ Agregar foto<input type="file" accept="image/*" multiple style="display:none;" onchange="agregarFotosGeneralesOrden(this.files); this.value='';"></label>
+            <label class="btn btn-ghost btn-sm" style="display:inline-block;cursor:pointer;">+ Agregar foto<input type="file" accept="image/*" multiple style="display:none;" onclick="this.value='';" onchange="agregarFotosGeneralesOrden(this.files); this.value='';"></label>
           </div>
         </div>
         <div>
