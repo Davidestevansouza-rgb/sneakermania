@@ -102,6 +102,34 @@ export function renderItemsPanelHTML(ordenId) {
  *  función para poder reutilizarla tal cual en Producción, donde el
  *  empleado necesita ver esta misma información apenas escribe el número
  *  de artículo, sin tener que entrar a Órdenes (pestaña que ya no ve). */
+/** CAMBIO 8: devuelve los colores (hex) que representan los tipos de servicio
+ *  de un artículo, para dibujar cuadritos de color junto al estado:
+ *    · Restauración de color / Pintado / Pintado y personalizado → negro
+ *    · Zapatería / Reparación de zapatería                        → amarillo
+ *    · Expreso / Servicio expreso                                 → verde
+ *    · Limpieza / Lavado / Secado y detallado / Blanqueamiento    → sin cuadro
+ *  Acepta un array (it.tipoServicio) o un string (it.servicio). Devuelve los
+ *  colores sin repetir, en orden de aparición. */
+export function coloresPorServicio(servicios) {
+  const lista = Array.isArray(servicios) ? servicios : (servicios ? [servicios] : []);
+  const NEGRO = '#111827', AMARILLO = '#eab308', VERDE = '#22c55e';
+  const colores = [];
+  lista.forEach(s => {
+    const t = (s || '').toString().trim().toLowerCase();
+    let color = null;
+    if (['restauración de color', 'restauracion de color', 'pintado', 'pintado y personalizado'].includes(t)) color = NEGRO;
+    else if (['zapatería', 'zapateria', 'reparación de zapatería', 'reparacion de zapateria'].includes(t)) color = AMARILLO;
+    else if (['expreso', 'servicio expreso'].includes(t)) color = VERDE;
+    // Limpieza / Lavado / Secado y detallado / Blanqueamiento → sin cuadro.
+    if (color && !colores.includes(color)) colores.push(color);
+  });
+  return colores;
+}
+
+// CAMBIO 8: alias con el nombre pedido en la especificación. Devuelve el mismo
+// array de colores (hex) por tipo de servicio que coloresPorServicio().
+export const getServicioColores = coloresPorServicio;
+
 export function renderItemCardHTML(it) {
       const servicios = Array.isArray(it.tipoServicio) && it.tipoServicio.length ? it.tipoServicio.join(', ') : 'Sin servicio asignado';
       // Datos del análisis de IA guardados en este par (si ya se le
@@ -136,15 +164,36 @@ export function renderItemCardHTML(it) {
       // Pedro, quedan los dos nombres, cada uno en su propia línea.
       const registroServicios = (it.registroServicios && typeof it.registroServicios === 'object') ? it.registroServicios : {};
       const ORDEN_SERVICIOS_RESP = ['Lavado', 'Secado y detallado', 'Pintado y personalizado'];
+      // Buscar también en state.registroPares para artículos registrados
+      // antes de que existiera registroServicios (compatibilidad datos viejos).
+      const registrosProduccion = (state.registroPares || []).filter(r => r.codigo === it.codigo);
       const responsablesPorServicioHTML = ORDEN_SERVICIOS_RESP
-        .filter(s => registroServicios[s] && registroServicios[s].responsable)
-        .map(s => '<div class="hint">' + escHtml(s) + ': <strong>' + escHtml(registroServicios[s].responsable) + '</strong>' +
-          (registroServicios[s].fecha ? ' · ' + fmtDate(registroServicios[s].fecha) : '') + '</div>')
+        .map(s => {
+          if (registroServicios[s] && registroServicios[s].responsable) {
+            return '<div class="hint">' + escHtml(s) + ': <strong>' + escHtml(registroServicios[s].responsable) + '</strong>' +
+              (registroServicios[s].fecha ? ' · ' + fmtDate(registroServicios[s].fecha) : '') + '</div>';
+          }
+          // Fallback: datos viejos — buscar en state.registroPares por código y servicio
+          const reg = registrosProduccion.find(r => r.servicio === s);
+          if (reg && reg.empleado) {
+            return '<div class="hint">' + escHtml(s) + ': <strong>' + escHtml(reg.empleado) + '</strong>' +
+              (reg.fecha ? ' · ' + fmtDate(reg.fecha) : '') + '</div>';
+          }
+          return null;
+        })
+        .filter(Boolean)
         .join('');
       // Si aún no se registró ningún servicio en Producción, se muestra el
       // responsable asignado a mano al crear/editar el artículo (compatibilidad).
       const responsableFallbackHTML = !responsablesPorServicioHTML
         ? '<div class="hint">Responsable: ' + escHtml(it.responsable || 'Sin asignar') + '</div>'
+        : '';
+      // Foto de producción: primera foto registrada para este artículo,
+      // con lista completa para el lightbox al hacer clic.
+      const todasFotosProduccion = registrosProduccion.flatMap(r => Array.isArray(r.fotoUrls) && r.fotoUrls.length ? r.fotoUrls : (r.fotoUrl ? [r.fotoUrl] : []));
+      const fotoProduccion = todasFotosProduccion[0] || null;
+      const fotoProduccionHTML = fotoProduccion
+        ? '<div style="margin-top:4px;"><img src="' + escAttr(fotoProduccion) + '" loading="lazy" style="max-width:90px;max-height:90px;border-radius:6px;cursor:pointer;object-fit:cover;border:1px solid var(--line);" onclick="ampliarImagen(\'' + fotoProduccion.replace(/'/g, "\\'") + '\', ' + escAttr(JSON.stringify(todasFotosProduccion)) + ')" title="' + escAttr('Foto de producción · ' + todasFotosProduccion.length + ' foto(s)') + '"></div>'
         : '';
       // Pago y Prioridad pertenecen al resumen de la orden y ya se muestran
       // fuera de este bloque. No se repiten dentro de cada par.
@@ -156,6 +205,15 @@ export function renderItemCardHTML(it) {
       // SERVICIO_A_ESTADO_ITEM más arriba), que es quien escribe it.estado.
       const estadoHTML = '<span class="hint">Estado: ' + escHtml(estadoPar) +
         (estadoPar === 'Entregado' ? ' ✓' : '') + '</span>';
+      // CAMBIO 8: cuadritos de color según el tipo de servicio del par, junto
+      // al estado (negro = pintado/restauración, amarillo = zapatería,
+      // verde = expreso; limpieza/lavado no llevan cuadro).
+      const coloresServicio = coloresPorServicio(
+        Array.isArray(it.tipoServicio) && it.tipoServicio.length ? it.tipoServicio : (it.servicio || [])
+      );
+      const cuadrosServicioHTML = coloresServicio
+        .map(c => '<span title="Tipo de servicio" style="display:inline-block;width:16px;height:16px;border-radius:3px;background:' + c + ';border:1px solid rgba(0,0,0,0.15);"></span>')
+        .join('');
       // Fechas propias del par, tal como se cargaron al crear la orden
       // (ver fechaIngresoPar / fechaEntregaPar en agregarFilaItemOrden,
       // ordenes.js). Si el par no tiene fecha propia guardada (datos
@@ -181,8 +239,12 @@ export function renderItemCardHTML(it) {
             responsablesPorServicioHTML + responsableFallbackHTML +
             fechasParHTML +
           '</div>' +
-          '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
-            estadoHTML +
+          '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">' +
+            '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+              estadoHTML +
+              cuadrosServicioHTML +
+            '</div>' +
+            fotoProduccionHTML +
           '</div>' +
         '</div>' +
         iaHTML +

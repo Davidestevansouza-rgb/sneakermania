@@ -164,15 +164,36 @@ export function renderItemCardHTML(it) {
       // Pedro, quedan los dos nombres, cada uno en su propia línea.
       const registroServicios = (it.registroServicios && typeof it.registroServicios === 'object') ? it.registroServicios : {};
       const ORDEN_SERVICIOS_RESP = ['Lavado', 'Secado y detallado', 'Pintado y personalizado'];
+      // Buscar también en state.registroPares para artículos registrados
+      // antes de que existiera registroServicios (compatibilidad datos viejos).
+      const registrosProduccion = (state.registroPares || []).filter(r => r.codigo === it.codigo);
       const responsablesPorServicioHTML = ORDEN_SERVICIOS_RESP
-        .filter(s => registroServicios[s] && registroServicios[s].responsable)
-        .map(s => '<div class="hint">' + escHtml(s) + ': <strong>' + escHtml(registroServicios[s].responsable) + '</strong>' +
-          (registroServicios[s].fecha ? ' · ' + fmtDate(registroServicios[s].fecha) : '') + '</div>')
+        .map(s => {
+          if (registroServicios[s] && registroServicios[s].responsable) {
+            return '<div class="hint">' + escHtml(s) + ': <strong>' + escHtml(registroServicios[s].responsable) + '</strong>' +
+              (registroServicios[s].fecha ? ' · ' + fmtDate(registroServicios[s].fecha) : '') + '</div>';
+          }
+          // Fallback: datos viejos — buscar en state.registroPares por código y servicio
+          const reg = registrosProduccion.find(r => r.servicio === s);
+          if (reg && reg.empleado) {
+            return '<div class="hint">' + escHtml(s) + ': <strong>' + escHtml(reg.empleado) + '</strong>' +
+              (reg.fecha ? ' · ' + fmtDate(reg.fecha) : '') + '</div>';
+          }
+          return null;
+        })
+        .filter(Boolean)
         .join('');
       // Si aún no se registró ningún servicio en Producción, se muestra el
       // responsable asignado a mano al crear/editar el artículo (compatibilidad).
       const responsableFallbackHTML = !responsablesPorServicioHTML
         ? '<div class="hint">Responsable: ' + escHtml(it.responsable || 'Sin asignar') + '</div>'
+        : '';
+      // Foto de producción: primera foto registrada para este artículo,
+      // con lista completa para el lightbox al hacer clic.
+      const todasFotosProduccion = registrosProduccion.flatMap(r => Array.isArray(r.fotoUrls) && r.fotoUrls.length ? r.fotoUrls : (r.fotoUrl ? [r.fotoUrl] : []));
+      const fotoProduccion = todasFotosProduccion[0] || null;
+      const fotoProduccionHTML = fotoProduccion
+        ? '<div style="margin-top:4px;"><img src="' + escAttr(fotoProduccion) + '" loading="lazy" style="max-width:90px;max-height:90px;border-radius:6px;cursor:pointer;object-fit:cover;border:1px solid var(--line);" onclick="ampliarImagen(\'' + fotoProduccion.replace(/'/g, "\\'") + '\', ' + escAttr(JSON.stringify(todasFotosProduccion)) + ')" title="' + escAttr('Foto de producción · ' + todasFotosProduccion.length + ' foto(s)') + '"></div>'
         : '';
       // Pago y Prioridad pertenecen al resumen de la orden y ya se muestran
       // fuera de este bloque. No se repiten dentro de cada par.
@@ -218,9 +239,12 @@ export function renderItemCardHTML(it) {
             responsablesPorServicioHTML + responsableFallbackHTML +
             fechasParHTML +
           '</div>' +
-          '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
-            estadoHTML +
-            cuadrosServicioHTML +
+          '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">' +
+            '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+              estadoHTML +
+              cuadrosServicioHTML +
+            '</div>' +
+            fotoProduccionHTML +
           '</div>' +
         '</div>' +
         iaHTML +
