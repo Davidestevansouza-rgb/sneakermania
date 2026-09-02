@@ -160,7 +160,25 @@ export async function eliminarClientePermanente(id) {
 
 export function viewClienteHistorial(id) {
   window.switchTab('ordenes');
-  document.getElementById('filtro-orden-texto').value = clienteNombre(id);
+  const nombre = clienteNombre(id);
+  // El campo real de búsqueda de órdenes está oculto; el visible es
+  // "global-search". Antes solo se llenaba el oculto, así que al volver del
+  // historial la caja visible quedaba vacía pero el filtro seguía activo y el
+  // buscador parecía "trabado". Ahora se sincronizan ambos y se limpian los
+  // demás filtros (estado / prioridad / pago / fechas) para no arrastrar
+  // filtros viejos que dejaran la lista incompleta.
+  const filtroTexto = document.getElementById('filtro-orden-texto');
+  if (filtroTexto) filtroTexto.value = nombre;
+  const globalSearch = document.getElementById('global-search');
+  if (globalSearch) globalSearch.value = nombre;
+  ['filtro-estado', 'filtro-prioridad', 'filtro-pago'].forEach(fid => {
+    const el = document.getElementById(fid);
+    if (el) el.value = '';
+  });
+  ['orden-fecha-desde', 'orden-fecha-hasta'].forEach(fid => {
+    const el = document.getElementById(fid);
+    if (el) el.value = '';
+  });
   window.renderOrdenes();
 }
 

@@ -173,13 +173,22 @@ function renderGaleriaTodos() {
     migrateLegacyFotos(o);
     const fotos = (o.extra && o.extra.fotos) ? o.extra.fotos : [];
     if (!fotos.length) return;
+    const grupoId = 'gg-all-' + escAttr(o.id);
+    const portada = fotos[0];
+    const isStoragePortada = portada.url.startsWith('http');
+    const badgePortada = isStoragePortada ? ' <span class="storage-badge" title="Almacenada en la nube">☁️</span>' : '';
+    const contadorBadge = fotos.length > 1 ? '<span class="gallery-cover-badge">+' + (fotos.length - 1) + ' fotos</span>' : '';
     bloques += '<div class="gallery-cat"><h4>#' + escHtml(o.numero) + ' · ' + escHtml(clienteNombre(o.clienteId)) +
       ' <span class="hint">' + escHtml(o.marca || '') + ' ' + escHtml(o.modelo || '') + ' (' + fotos.length + ')</span></h4>' +
-      '<div class="gallery-thumbs">' +
+      '<div class="gallery-thumb-wrap gallery-cover" onclick="toggleGaleriaGrupo(\'' + grupoId + '\')" title="Ver todas las fotos">' +
+        '<img src="' + escAttr(portada.url) + '" loading="lazy" decoding="async" title="' + escAttr(portada.fecha || '') + '">' +
+        badgePortada + contadorBadge +
+      '</div>' +
+      '<div class="gallery-thumbs" id="' + grupoId + '" style="display:none;">' +
       fotos.map(foto => {
         const isStorage = foto.url.startsWith('http');
         const badge = isStorage ? ' <span class="storage-badge" title="Almacenada en la nube">☁️</span>' : '';
-        return '<div class="gallery-thumb-wrap"><img src="' + escAttr(foto.url) + '" onclick="ampliarImagen(\'' + foto.url.replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' + badge + '</div>';
+        return '<div class="gallery-thumb-wrap"><img src="' + escAttr(foto.url) + '" loading="lazy" decoding="async" onclick="ampliarImagen(\'' + foto.url.replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' + badge + '</div>';
       }).join('') +
       '</div></div>';
   });
@@ -248,17 +257,35 @@ export function renderGaleria() {
       // (detalle=suela, suela=Detallado, laterales=Pintado+personalizado) y
       // a "todos_pares". El resto, no.
       const empleadoPuedeSubirAqui = !esEmpleado() || ['detalle', 'suela', 'laterales', 'todos_pares'].includes(key);
-      return '<div class="gallery-cat"><h4>' + escHtml(label) + ' <span class="hint">(' + fotos.length + ')</span></h4><div class="gallery-thumbs">' +
-        fotos.map((foto, idx) => {
+      const grupoId = 'gc-' + escAttr(o.id) + '-' + key;
+      const addLabel = (puedeSubir && empleadoPuedeSubirAqui ? '<label class="gallery-add" title="Agregar foto">+<input type="file" accept="image/*" style="display:none;" onchange="addGaleriaFoto(\'' + escAttr(o.id) + '\',\'' + key + '\',this.files[0],\'' + escAttr(itemFiltrado ? itemFiltrado.id : '') + '\')"></label>' : '');
+      const thumbsHTML = fotos.map((foto, idx) => {
           const isStorage = foto.url.startsWith('http');
           const badge = isStorage ? ' <span class="storage-badge" title="Almacenada en la nube">☁️</span>' : '';
           return '<div class="gallery-thumb-wrap">' +
-            '<img src="' + escAttr(foto.url) + '" onclick="ampliarImagen(\'' + foto.url.replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' +
+            '<img src="' + escAttr(foto.url) + '" loading="lazy" decoding="async" onclick="ampliarImagen(\'' + foto.url.replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' +
             badge +
             (puedeBorrar ? '<button class="gallery-delete-btn" onclick="eliminarFoto(\'' + escAttr(o.id) + '\',' + idx + ',\'' + key + '\',\'' + escAttr(itemFiltrado ? itemFiltrado.id : '') + '\')" title="Eliminar">×</button>' : '') +
           '</div>';
-        }).join('') +
-        (puedeSubir && empleadoPuedeSubirAqui ? '<label class="gallery-add" title="Agregar foto">+<input type="file" accept="image/*" style="display:none;" onchange="addGaleriaFoto(\'' + escAttr(o.id) + '\',\'' + key + '\',this.files[0],\'' + escAttr(itemFiltrado ? itemFiltrado.id : '') + '\')"></label>' : '') +
+        }).join('');
+      // Con fotos: se muestra una portada (primera foto) con un badge "+N fotos"
+      // que al pulsarse despliega/oculta el resto. Sin fotos: se muestra directo
+      // el botón para agregar, para que siempre se pueda subir.
+      if (fotos.length) {
+        const portada = fotos[0];
+        const isStoragePortada = portada.url.startsWith('http');
+        const badgePortada = isStoragePortada ? ' <span class="storage-badge" title="Almacenada en la nube">☁️</span>' : '';
+        const contadorBadge = fotos.length > 1 ? '<span class="gallery-cover-badge">+' + (fotos.length - 1) + ' fotos</span>' : '';
+        return '<div class="gallery-cat"><h4>' + escHtml(label) + ' <span class="hint">(' + fotos.length + ')</span></h4>' +
+          '<div class="gallery-thumb-wrap gallery-cover" onclick="toggleGaleriaGrupo(\'' + grupoId + '\')" title="Ver todas las fotos">' +
+            '<img src="' + escAttr(portada.url) + '" loading="lazy" decoding="async" title="' + escAttr(portada.fecha || '') + '">' +
+            badgePortada + contadorBadge +
+          '</div>' +
+          '<div class="gallery-thumbs" id="' + grupoId + '" style="display:none;">' + thumbsHTML + addLabel + '</div>' +
+        '</div>';
+      }
+      return '<div class="gallery-cat"><h4>' + escHtml(label) + ' <span class="hint">(' + fotos.length + ')</span></h4><div class="gallery-thumbs">' +
+        addLabel +
       '</div></div>';
     }).join('') + '</div>';
 }
@@ -397,4 +424,13 @@ async function renderImagenAmpliada() {
   if (next) next.style.display = total > 1 ? 'block' : 'none';
 }
 
-Object.assign(window, { populateGaleriaSelect, renderGaleria, addGaleriaFoto, eliminarFoto, ampliarImagen, imagenAmpliadaNav, filtrarGaleriaOrdenes, seleccionarGaleriaOrden, seleccionarGaleriaItem, limpiarFiltroGaleriaItem });
+/** Muestra u oculta el grupo de fotos asociado a una portada de la galería.
+ *  Se usa desde las portadas (foto principal + badge "+N fotos") para
+ *  desplegar/plegar todas las fotos del grupo sin recargar la vista. */
+export function toggleGaleriaGrupo(grupoId) {
+  const cont = document.getElementById(grupoId);
+  if (!cont) return;
+  cont.style.display = (cont.style.display === 'none' || !cont.style.display) ? 'flex' : 'none';
+}
+
+Object.assign(window, { populateGaleriaSelect, renderGaleria, addGaleriaFoto, eliminarFoto, ampliarImagen, imagenAmpliadaNav, filtrarGaleriaOrdenes, seleccionarGaleriaOrden, seleccionarGaleriaItem, limpiarFiltroGaleriaItem, toggleGaleriaGrupo });

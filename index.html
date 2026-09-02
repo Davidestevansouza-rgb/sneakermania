@@ -190,6 +190,7 @@
                  completa este mismo input; se deja oculto para no romper
                  esa integración ni la de "Ver órdenes" desde Clientes. -->
             <input class="grow" id="filtro-orden-texto" placeholder="Buscar por cliente, marca, modelo o N°..." oninput="renderOrdenes()" style="display:none;">
+            <button class="btn btn-ghost btn-sm" id="btn-limpiar-filtros-orden" onclick="limpiarTodosFiltrosOrden()" title="Quitar todos los filtros y ver todas las órdenes">🧹 Limpiar todos los filtros</button>
           </div>
           <div class="ticket-grid" id="ordenes-grid"></div>
         </div>
@@ -863,6 +864,10 @@
       <input type="hidden" id="orden-estado" value="Recibido y registrado">
       <div class="field"><label>Precio *</label><input type="number" id="orden-precio" value="" min="0.01" step="0.01" required placeholder="0.00"></div>
       <div class="field"><label>Descuento</label><input type="number" id="orden-descuento" value="0" min="0" step="0.01" placeholder="0.00"></div>
+      <div class="field">
+        <label>Forma de pago</label>
+        <select id="orden-forma-pago"><option value="Pendiente">Pendiente</option><option value="Efectivo">Efectivo</option><option value="QR">QR</option></select>
+      </div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('modal-orden')">Cancelar</button><button class="btn btn-primary" onclick="saveOrden(this)">Guardar orden</button></div>
   </div>

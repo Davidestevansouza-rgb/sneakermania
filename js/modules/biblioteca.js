@@ -18,7 +18,7 @@
    ============================================================ */
 import { state, todayISO, persist, esAdmin, esSupervisor } from '../state.js';
 import * as db from '../db.js';
-import { showToast, fmtDate, ordenById, clienteNombre, logActivity, openModalEl, closeModal } from '../ui.js';
+import { showToast, fmtDate, ordenById, clienteNombre, clienteById, logActivity, openModalEl, closeModal } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
 import { itemsDeOrden, estadoMostradoPar } from './ordenes.js';
 
@@ -143,6 +143,16 @@ export function renderBiblioteca() {
       '<div id="biblioteca-buscar-orden-resultado" style="margin-top:10px;"></div>' +
     '</div>' +
 
+    '<div class="panel" style="margin-bottom:16px;" id="biblioteca-recordatorio-panel">' +
+      '<div class="panel-title">Enviar recordatorio al cliente</div>' +
+      '<div class="hint" style="margin-bottom:8px;">Escribe el número de orden y envía un WhatsApp al cliente recordándole que tiene artículos pendientes de recoger.</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+        '<input type="text" id="biblioteca-recordatorio-input" placeholder="Número de orden, ej. 9" ' +
+          'onkeydown="if(event.key===\'Enter\'){enviarRecordatorioBiblioteca();event.preventDefault();}" style="flex:1;min-width:200px;">' +
+        '<button class="btn btn-primary btn-sm" onclick="enviarRecordatorioBiblioteca()">📲 Enviar WhatsApp</button>' +
+      '</div>' +
+    '</div>' +
+
     '<div class="panel" style="margin-bottom:16px;">' +
       '<div class="panel-title">Mapa de estantería</div>' +
       '<div class="hint" style="margin-bottom:8px;">Verde: libre. Rojo: ocupado. Letras y números en negro (toca un espacio ocupado para ver el detalle).</div>' +
@@ -191,6 +201,10 @@ function renderBibliotecaMapa() {
   const el = document.getElementById('biblioteca-mapa');
   if (!el) return;
   const ocupacion = mapaOcupacion();
+  // CAMBIO 7: los espacios ocupados hace 3 días o más se resaltan en amarillo
+  // (clase "ocupada-antigua") para avisar que ese artículo lleva tiempo sin
+  // recogerse.
+  const limiteAntiguo = todayISO(-3);
   el.innerHTML = '<div class="biblioteca-grid">' +
     BIBLIOTECA_LETRAS.map(letra => {
       const celdas = [];
@@ -198,7 +212,8 @@ function renderBibliotecaMapa() {
         const espacio = letra + n;
         const it = ocupacion[espacio];
         if (it) {
-          celdas.push('<div class="biblioteca-celda ocupada" title="' + escAttr(it.codigo) + '" onclick="verEspacioBiblioteca(\'' + escAttr(it.id) + '\')">' +
+          const esAntigua = it.biblioteca && it.biblioteca.fecha && it.biblioteca.fecha <= limiteAntiguo;
+          celdas.push('<div class="biblioteca-celda ocupada' + (esAntigua ? ' ocupada-antigua' : '') + '" title="' + escAttr(it.codigo) + (esAntigua ? ' (3+ días en biblioteca)' : '') + '" onclick="verEspacioBiblioteca(\'' + escAttr(it.id) + '\')">' +
             '<span class="biblioteca-celda-cod">' + escHtml(espacio) + '</span>' +
             '<span class="biblioteca-celda-item">' + escHtml(it.codigo) + '</span>' +
           '</div>');
@@ -232,7 +247,10 @@ export function renderBibliotecaLista() {
     items.map(it => {
       const info = infoOrdenItem(it);
       const b = it.biblioteca || {};
-      return '<tr>' +
+      // CAMBIO 7: resalta en amarillo las filas de artículos que llevan 3 días
+      // o más en biblioteca y todavía no fueron entregados.
+      const esAntigua = !it.entregado && b.fecha && b.fecha <= todayISO(-3);
+      return '<tr' + (esAntigua ? ' class="biblioteca-fila-antigua" style="background:#fef3c7;"' : '') + '>' +
         '<td class="mono">' + escHtml(it.codigo) + '</td>' +
         '<td class="mono">' + escHtml(b.ubicacion || '—') + '</td>' +
         '<td>#' + escHtml(String(info.numeroOrden)) + '</td>' +
@@ -288,6 +306,32 @@ export function buscarUbicacionPorOrden() {
       '<div>' + estadoTxt + '</div>' +
     '</div>';
   }).join('');
+}
+
+/** CAMBIO 6: envía al cliente un WhatsApp recordándole que tiene artículos
+ *  pendientes de recoger. Busca la orden por número, obtiene el teléfono del
+ *  cliente y abre WhatsApp con el mensaje institucional. Avisa con un toast si
+ *  la orden no existe o si el cliente no tiene teléfono registrado. */
+export function enviarRecordatorioBiblioteca() {
+  const inputEl = document.getElementById('biblioteca-recordatorio-input');
+  if (!inputEl) return;
+  const texto = inputEl.value.trim().replace(/^#/, '');
+  if (!texto) { showToast('Escribe un número de orden'); return; }
+  const orden = state.ordenes.find(o => String(o.numero) === texto);
+  if (!orden) { showToast('Orden no encontrada'); return; }
+  const c = clienteById(orden.clienteId);
+  const tel = c ? ((c.whatsapp || c.telefono || '') + '').replace(/[^0-9]/g, '') : '';
+  if (!tel) { showToast('El cliente no tiene teléfono registrado'); return; }
+  const msg = 'Le escribimos para recordarle que tiene artículos pendientes de recoger en SneakerMania.\n\n' +
+    'Le agradeceríamos mucho que pueda pasar a recogerlos cuando le sea posible, ya que actualmente contamos con espacio limitado para almacenamiento.\n\n' +
+    '🕘 Horarios de atención:\n09:00 a 13:00\n14:00 a 19:00\n\n' +
+    'Por favor, pasar a recoger sus artículos. 🙏🏼\n\n' +
+    'Muchas gracias por su comprensión y por confiar en SneakerMania.';
+  if (window.enviarWhatsApp) {
+    window.enviarWhatsApp(tel, msg);
+  } else {
+    window.open('https://wa.me/' + tel + '?text=' + encodeURIComponent(msg), '_blank');
+  }
 }
 
 export function limpiarFiltroFechaBiblioteca() {
@@ -396,5 +440,5 @@ export function verEspacioBiblioteca(itemId) {
 Object.assign(window, {
   renderBiblioteca, renderBibliotecaLista, limpiarFiltroFechaBiblioteca,
   abrirUbicarEnBiblioteca, guardarUbicacionBiblioteca, verEspacioBiblioteca,
-  buscarUbicacionPorOrden
+  buscarUbicacionPorOrden, enviarRecordatorioBiblioteca
 });

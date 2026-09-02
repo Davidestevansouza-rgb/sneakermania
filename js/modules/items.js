@@ -102,6 +102,30 @@ export function renderItemsPanelHTML(ordenId) {
  *  función para poder reutilizarla tal cual en Producción, donde el
  *  empleado necesita ver esta misma información apenas escribe el número
  *  de artículo, sin tener que entrar a Órdenes (pestaña que ya no ve). */
+/** CAMBIO 8: devuelve los colores (hex) que representan los tipos de servicio
+ *  de un artículo, para dibujar cuadritos de color junto al estado:
+ *    · Restauración de color / Pintado / Pintado y personalizado → negro
+ *    · Zapatería / Reparación de zapatería                        → amarillo
+ *    · Expreso / Servicio expreso                                 → verde
+ *    · Limpieza / Lavado / Secado y detallado / Blanqueamiento    → sin cuadro
+ *  Acepta un array (it.tipoServicio) o un string (it.servicio). Devuelve los
+ *  colores sin repetir, en orden de aparición. */
+export function coloresPorServicio(servicios) {
+  const lista = Array.isArray(servicios) ? servicios : (servicios ? [servicios] : []);
+  const NEGRO = '#111827', AMARILLO = '#eab308', VERDE = '#22c55e';
+  const colores = [];
+  lista.forEach(s => {
+    const t = (s || '').toString().trim().toLowerCase();
+    let color = null;
+    if (['restauración de color', 'restauracion de color', 'pintado', 'pintado y personalizado'].includes(t)) color = NEGRO;
+    else if (['zapatería', 'zapateria', 'reparación de zapatería', 'reparacion de zapateria'].includes(t)) color = AMARILLO;
+    else if (['expreso', 'servicio expreso'].includes(t)) color = VERDE;
+    // Limpieza / Lavado / Secado y detallado / Blanqueamiento → sin cuadro.
+    if (color && !colores.includes(color)) colores.push(color);
+  });
+  return colores;
+}
+
 export function renderItemCardHTML(it) {
       const servicios = Array.isArray(it.tipoServicio) && it.tipoServicio.length ? it.tipoServicio.join(', ') : 'Sin servicio asignado';
       // Datos del análisis de IA guardados en este par (si ya se le
@@ -156,6 +180,15 @@ export function renderItemCardHTML(it) {
       // SERVICIO_A_ESTADO_ITEM más arriba), que es quien escribe it.estado.
       const estadoHTML = '<span class="hint">Estado: ' + escHtml(estadoPar) +
         (estadoPar === 'Entregado' ? ' ✓' : '') + '</span>';
+      // CAMBIO 8: cuadritos de color según el tipo de servicio del par, junto
+      // al estado (negro = pintado/restauración, amarillo = zapatería,
+      // verde = expreso; limpieza/lavado no llevan cuadro).
+      const coloresServicio = coloresPorServicio(
+        Array.isArray(it.tipoServicio) && it.tipoServicio.length ? it.tipoServicio : (it.servicio || [])
+      );
+      const cuadrosServicioHTML = coloresServicio
+        .map(c => '<span title="Tipo de servicio" style="display:inline-block;width:16px;height:16px;border-radius:3px;background:' + c + ';border:1px solid rgba(0,0,0,0.15);"></span>')
+        .join('');
       // Fechas propias del par, tal como se cargaron al crear la orden
       // (ver fechaIngresoPar / fechaEntregaPar en agregarFilaItemOrden,
       // ordenes.js). Si el par no tiene fecha propia guardada (datos
@@ -183,6 +216,7 @@ export function renderItemCardHTML(it) {
           '</div>' +
           '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
             estadoHTML +
+            cuadrosServicioHTML +
           '</div>' +
         '</div>' +
         iaHTML +
