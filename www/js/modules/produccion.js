@@ -154,10 +154,11 @@ function renderResumenPares(kpiElId, listaElId, registros, opts) {
 /** Muestra cuántas fotos se eligieron antes de registrar (feedback al lavador
  *  cuando sube 50-100 fotos de golpe). */
 export function mostrarConteoFotosProduccion() {
-  const fileInput = document.getElementById('prod-foto');
+  const camInput = document.getElementById('prod-foto-camera');
+  const galInput = document.getElementById('prod-foto-galeria');
   const conteoEl = document.getElementById('prod-foto-conteo');
-  if (!fileInput || !conteoEl) return;
-  const n = fileInput.files ? fileInput.files.length : 0;
+  if (!conteoEl) return;
+  const n = (camInput && camInput.files ? camInput.files.length : 0) + (galInput && galInput.files ? galInput.files.length : 0);
   if (n > MAX_FOTOS_POR_REGISTRO) {
     conteoEl.textContent = n + ' fotos seleccionadas — el máximo es ' + MAX_FOTOS_POR_REGISTRO + ', se subirán solo las primeras ' + MAX_FOTOS_POR_REGISTRO + '.';
   } else {
@@ -202,7 +203,7 @@ export function revisarRegistroExistente() {
     obsInput.value = existente.observacion || '';
     obsInput.dataset.registroId = existente.id;
     obsInput.dataset.original = existente.observacion || '';
-    if (hintEl) hintEl.textContent = 'El artículo ' + codigoNorm + ' ya fue registrado para "' + servicio + '"' + (existente.empleado ? ' por ' + existente.empleado : '') + '. Si escribes algo aquí, se integra a este registro (no se crea uno nuevo).';
+    if (hintEl) hintEl.textContent = 'El artículo ' + codigoNorm + ' ya fue registrado para "' + servicio + '"' + (existente.empleado ? ' por ' + existente.empleado : '') + '. Podés volver a poner el artículo y agregar fotos nuevas (ej. el "después"): se suman al registro que ya existe. Si escribís una observación, también se integra (no se crea uno nuevo).';
   } else {
     // No borres lo que la persona ya venía escribiendo si todavía no había
     // un registro previo cargado; solo limpia si veníamos de mostrar la
@@ -284,8 +285,12 @@ export async function registrarPares(btn) {
   // El empleado siempre registra a su propio nombre (aunque manipule el input).
   const empleado = (state.session && state.session.user) || '';
   const fecha = document.getElementById('prod-fecha').value || todayISO(0);
-  const fileInput = document.getElementById('prod-foto');
-  const files = fileInput && fileInput.files ? Array.from(fileInput.files).slice(0, MAX_FOTOS_POR_REGISTRO) : [];
+  const camInput = document.getElementById('prod-foto-camera');
+  const galInput = document.getElementById('prod-foto-galeria');
+  const files = [
+    ...(camInput && camInput.files ? Array.from(camInput.files) : []),
+    ...(galInput && galInput.files ? Array.from(galInput.files) : [])
+  ].slice(0, MAX_FOTOS_POR_REGISTRO);
 
   if (!empleado) { showToast('No se pudo identificar al usuario que registra'); return; }
 
@@ -331,13 +336,65 @@ export async function registrarPares(btn) {
     } else if (observacionOriginal && notaNueva === observacionOriginal) {
       notaNueva = '';
     }
+    // Si el empleado agarró el artículo de vuelta y eligió NUEVAS fotos
+    // (ej. la foto del "después"), se suben y se AGREGAN al registro que
+    // ya existe — no se crea uno nuevo ni se vuelve a contar.
+    if (files.length) {
+      const restore = lockBtn(btn, 'Subiendo fotos…');
+      try {
+        const nuevasFotoUrls = [];
+        const timestamp = Date.now();
+        for (let i = 0; i < files.length; i++) {
+          showToast('Subiendo foto ' + (i + 1) + ' de ' + files.length + '…');
+          const file = files[i];
+          const ext = (file.name.split('.').pop() || 'jpg');
+          const result = await storageManager.uploadImageFile(file, 'produccion', 'pares_' + timestamp + '_' + i + '.' + ext);
+          nuevasFotoUrls.push(result.url);
+        }
+        const idx = (state.registroPares || []).indexOf(yaRegistrado);
+        if (idx >= 0) {
+          const fotosExistentes = Array.isArray(state.registroPares[idx].fotoUrls) ? state.registroPares[idx].fotoUrls : [];
+          state.registroPares[idx] = Object.assign({}, state.registroPares[idx], {
+            fotoUrls: [...fotosExistentes, ...nuevasFotoUrls],
+            fotoUrl: fotosExistentes[0] || nuevasFotoUrls[0] || ''
+          });
+          await persist();
+          await db.saveRegistroPar(state.registroPares[idx]);
+          // Vincula también las fotos nuevas a la Galería de la orden.
+          const itemVinc = (state.ordenItems || []).find(it => (it.codigo || '') === codigoNorm);
+          const catGaleria = SERVICIO_A_GALERIA_CAT[servicio];
+          if (itemVinc && catGaleria && nuevasFotoUrls.length) {
+            try { await vincularFotoGaleria(itemVinc.ordenId, catGaleria, nuevasFotoUrls, itemVinc.id); }
+            catch (e) { console.error('No se pudo vincular las fotos a la Galería:', e); }
+          }
+        }
+        // Si además escribió una observación nueva, se integra también.
+        if (notaNueva) await integrarObservacionEnRegistro(yaRegistrado, notaNueva, btn);
+        if (camInput) camInput.value = '';
+        if (galInput) galInput.value = '';
+        const conteoEl2 = document.getElementById('prod-foto-conteo');
+        if (conteoEl2) conteoEl2.textContent = '';
+        renderProduccion();
+        if (window.renderOrdenes) window.renderOrdenes();
+        showToast('📷 Foto(s) agregada(s) al registro existente ✓');
+      } catch (e) {
+        console.error(e);
+        showToast('Error al agregar las fotos');
+      } finally {
+        restore();
+      }
+      return;
+    }
+    // Sin fotos nuevas → solo se permite integrar una observación nueva.
     if (!notaNueva) {
-      showToast('El artículo ' + codigoNorm + ' ya fue registrado para "' + servicio + '"' + (yaRegistrado.empleado ? ' por ' + yaRegistrado.empleado : '') + '. Escribe una observación NUEVA si notaste algo con el artículo, o elige otro servicio.');
+      showToast('El artículo ' + codigoNorm + ' ya fue registrado para "' + servicio + '"' + (yaRegistrado.empleado ? ' por ' + yaRegistrado.empleado : '') + '. Agregá una foto nueva o escribí una observación NUEVA, o elegí otro servicio.');
       return;
     }
     await integrarObservacionEnRegistro(yaRegistrado, notaNueva, btn);
     return;
   }
+  // Registro NUEVO: la foto es obligatoria.
+  if (!files.length) { showToast('Agregá al menos una foto antes de registrar'); return; }
   const pares = 1;
 
   const hoyAntes = todayISO(0);
@@ -430,7 +487,8 @@ export async function registrarPares(btn) {
 
     document.getElementById('prod-empleado').value = '';
     if (codigoInput) codigoInput.value = '';
-    if (fileInput) fileInput.value = '';
+    if (camInput) camInput.value = '';
+    if (galInput) galInput.value = '';
     if (obsInput) { obsInput.value = ''; delete obsInput.dataset.registroId; delete obsInput.dataset.original; }
     if (blanqueamientoChk) blanqueamientoChk.checked = false;
     const hintEl = document.getElementById('prod-observacion-hint');

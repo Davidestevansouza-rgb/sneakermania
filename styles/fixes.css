@@ -237,3 +237,14 @@
   background: var(--teal, #0d9488);
   color: #fff;
 }
+
+
+
+/* CAMBIO 1 (v36): los modales de MONTO (QR / Efectivo) se abren ENCIMA del
+   chooser de forma de pago (que queda abierto detrás). Como en el DOM van
+   antes que #modal-forma-pago, con el mismo z-index quedarían tapados; por
+   eso se elevan por encima del chooser. */
+#modal-pago-qr.open,
+#modal-pago-efectivo.open {
+  z-index: 120;
+}

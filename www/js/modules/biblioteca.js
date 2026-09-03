@@ -72,10 +72,15 @@ function itemsConRegistroBiblioteca() {
   return todosLosItems().filter(it => it.biblioteca && it.biblioteca.fecha);
 }
 
-/** Mapa espacio -> artículo, solo con los que siguen ocupando ese lugar. */
+/** Mapa espacio -> ARRAY de artículos que siguen ocupando ese lugar.
+ *  Un mismo espacio puede tener varios artículos de la MISMA orden. */
 function mapaOcupacion() {
   const mapa = {};
-  itemsUbicadosVigentes().forEach(it => { mapa[it.biblioteca.ubicacion] = it; });
+  itemsUbicadosVigentes().forEach(it => {
+    const esp = it.biblioteca.ubicacion;
+    if (!mapa[esp]) mapa[esp] = [];
+    mapa[esp].push(it);
+  });
   return mapa;
 }
 
@@ -210,12 +215,13 @@ function renderBibliotecaMapa() {
       const celdas = [];
       for (let n = 1; n <= BIBLIOTECA_NUMEROS_POR_LETRA; n++) {
         const espacio = letra + n;
-        const it = ocupacion[espacio];
-        if (it) {
-          const esAntigua = it.biblioteca && it.biblioteca.fecha && it.biblioteca.fecha <= limiteAntiguo;
-          celdas.push('<div class="biblioteca-celda ocupada' + (esAntigua ? ' ocupada-antigua' : '') + '" title="' + escAttr(it.codigo) + (esAntigua ? ' (3+ días en biblioteca)' : '') + '" onclick="verEspacioBiblioteca(\'' + escAttr(it.id) + '\')">' +
+        const its = ocupacion[espacio] || [];
+        if (its.length) {
+          const esAntigua = its.some(x => x.biblioteca && x.biblioteca.fecha && x.biblioteca.fecha <= limiteAntiguo);
+          const codigos = its.map(x => x.codigo).join(', ');
+          celdas.push('<div class="biblioteca-celda ocupada' + (esAntigua ? ' ocupada-antigua' : '') + '" title="' + escAttr(codigos) + (esAntigua ? ' (3+ días en biblioteca)' : '') + '" onclick="verEspacioBiblioteca(\'' + escAttr(its[0].id) + '\')">' +
             '<span class="biblioteca-celda-cod">' + escHtml(espacio) + '</span>' +
-            '<span class="biblioteca-celda-item">' + escHtml(it.codigo) + '</span>' +
+            '<span class="biblioteca-celda-item">' + escHtml(codigos) + '</span>' +
           '</div>');
         } else {
           celdas.push('<div class="biblioteca-celda libre" title="' + escAttr(espacio) + ' libre">' +
@@ -435,11 +441,18 @@ function poblarNumerosBiblioteca(ocupacion, ubicacionActual) {
   const selNumero = document.getElementById('biblioteca-sel-numero');
   if (!selLetra || !selNumero) return;
   const letra = selLetra.value;
+  // Orden del artículo que se está ubicando: los espacios ocupados por
+  // artículos de la MISMA orden NO se bloquean (varios pares de la misma
+  // orden pueden compartir espacio); solo se bloquean si están ocupados
+  // por artículos de OTRA orden.
+  const itemActual = (state.ordenItems || []).find(x => x.id === itemBibliotecaActual);
+  const ordenActual = itemActual ? itemActual.ordenId : null;
   const opciones = [];
   for (let n = 1; n <= BIBLIOTECA_NUMEROS_POR_LETRA; n++) {
     const espacio = letra + n;
-    const ocupadoPorOtro = ocupacion[espacio] && espacio !== ubicacionActual;
-    opciones.push('<option value="' + n + '"' + (ocupadoPorOtro ? ' disabled' : '') + '>' + espacio + (ocupadoPorOtro ? ' (ocupado)' : '') + '</option>');
+    const itemsEnEsp = ocupacion[espacio] || [];
+    const ocupadoPorOtro = itemsEnEsp.length > 0 && espacio !== ubicacionActual && itemsEnEsp[0].ordenId !== ordenActual;
+    opciones.push('<option value="' + n + '"' + (ocupadoPorOtro ? ' disabled' : '') + '>' + espacio + (ocupadoPorOtro ? ' (ocupado)' : (itemsEnEsp.length > 0 && espacio !== ubicacionActual ? ' (misma orden)' : '')) + '</option>');
   }
   selNumero.innerHTML = opciones.join('');
   if (ubicacionActual && ubicacionActual.charAt(0) === letra) {
@@ -459,9 +472,15 @@ export async function guardarUbicacionBiblioteca(btn) {
   const numero = document.getElementById('biblioteca-sel-numero').value;
   const espacio = letra + numero;
   const ocupacion = mapaOcupacion();
-  if (ocupacion[espacio] && ocupacion[espacio].id !== it.id) {
-    showToast('⚠ El espacio ' + espacio + ' ya está ocupado por ' + ocupacion[espacio].codigo);
-    return;
+  const itemsEnEspacio = (ocupacion[espacio] || []).filter(x => x.id !== it.id);
+  if (itemsEnEspacio.length > 0) {
+    const ordenEnEspacio = itemsEnEspacio[0].ordenId;
+    if (ordenEnEspacio !== it.ordenId) {
+      const o = ordenById(ordenEnEspacio);
+      showToast('⚠ El espacio ' + espacio + ' ya está ocupado por artículos de la orden #' + (o ? o.numero : '?') + '. Elegí otro espacio o ubicá este artículo junto a los de su misma orden.');
+      return;
+    }
+    // Misma orden → se permite compartir el espacio (sin límite duro).
   }
   const ahora = new Date();
   const hora = ahora.toTimeString().slice(0, 5);

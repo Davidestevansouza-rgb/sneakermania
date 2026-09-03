@@ -350,7 +350,15 @@
                 <textarea id="prod-observacion" rows="2" placeholder="Anota algo del artículo (antes de registrar, o si ya lo registraste y notaste algo después)"></textarea>
                 <div class="hint" id="prod-observacion-hint"></div>
               </div>
-              <div class="field full"><label>Fotos (opcional, puedes elegir varias — hasta 100)</label><input type="file" id="prod-foto" accept="image/*" multiple onchange="mostrarConteoFotosProduccion()"><div class="hint" id="prod-foto-conteo"></div></div>
+              <div class="field full"><label>Fotos (obligatorio para un registro nuevo — puedes elegir varias, hasta 100)</label>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('prod-foto-camera').click()">📷 Cámara</button>
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('prod-foto-galeria').click()">🖼️ Galería</button>
+                </div>
+                <input type="file" id="prod-foto-camera" accept="image/*" capture="environment" style="display:none;" multiple onchange="mostrarConteoFotosProduccion()">
+                <input type="file" id="prod-foto-galeria" accept="image/*" style="display:none;" multiple onchange="mostrarConteoFotosProduccion()">
+                <div class="hint" id="prod-foto-conteo"></div>
+              </div>
             </div>
             <div class="hint" style="margin-bottom:8px;">Escribe el <strong>número del artículo</strong> que agarraste (ej. <span class="mono">12-1</span>) y elige tu servicio: queda a tu nombre y se contabiliza a ti. No se puede registrar un servicio sin indicar un artículo/orden válido, ni repetir el mismo servicio dos veces para el mismo artículo (si ya lo lavaron, solo queda disponible para detallar, etc.) — pero si ese artículo y servicio ya estaban registrados y solo escribes una <strong>observación</strong>, esa nota se integra al registro que ya existe (no se crea uno nuevo ni se vuelve a contar).</div>
             <button class="btn btn-primary" onclick="registrarPares(this)">+ Registrar</button>
@@ -839,7 +847,12 @@
           <div style="flex:1;min-width:220px;">
             <label class="hint">Fotos generales</label>
             <div id="orden-fotos-generales-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 6px;"></div>
-            <label class="btn btn-ghost btn-sm" style="display:inline-block;cursor:pointer;">+ Agregar foto<input type="file" accept="image/*" multiple style="display:none;" onclick="this.value='';" onchange="agregarFotosGeneralesOrden(this.files); this.value='';"></label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('orden-foto-general-camera').click()">📷 Cámara</button>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('orden-foto-general-galeria').click()">🖼️ Galería</button>
+            </div>
+            <input type="file" id="orden-foto-general-camera" accept="image/*" capture="environment" style="display:none;" multiple onchange="agregarFotosGeneralesOrden(this.files); this.value='';">
+            <input type="file" id="orden-foto-general-galeria" accept="image/*" style="display:none;" multiple onchange="agregarFotosGeneralesOrden(this.files); this.value='';">
           </div>
         </div>
         <div>
@@ -921,6 +934,7 @@
       <button class="btn btn-primary btn-block" id="forma-pago-qr-btn">💳 QR</button>
       <button class="btn btn-primary btn-block" id="forma-pago-efectivo-btn">💵 Efectivo</button>
       <button class="btn btn-ghost btn-block" id="forma-pago-whatsapp-btn">📲 Enviar información por WhatsApp</button>
+      <button class="btn btn-ghost btn-block" onclick="closeModal('modal-forma-pago')">✅ Listo — cerrar</button>
     </div>
   </div>
 </div>
@@ -1014,7 +1028,7 @@
       <div class="field"><label>Letra</label><select id="biblioteca-sel-letra"></select></div>
       <div class="field"><label>Número</label><select id="biblioteca-sel-numero"></select></div>
     </div>
-    <div class="hint" style="margin-top:6px;">El espacio queda guardado como, por ejemplo, "H1".</div>
+    <div class="hint" style="margin-top:6px;">El espacio queda guardado como, por ejemplo, "H1". Varios artículos de la <strong>misma orden</strong> pueden compartir el mismo espacio; solo se bloquea si el espacio ya tiene artículos de <strong>otra orden</strong>.</div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeModal('modal-biblioteca-ubicar')">Cancelar</button>
       <button class="btn btn-primary" onclick="guardarUbicacionBiblioteca(this)">Guardar ubicación</button>

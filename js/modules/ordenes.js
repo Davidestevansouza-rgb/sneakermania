@@ -1565,11 +1565,14 @@ let fotosGeneralesExistentes = [];
 function renderFotosGeneralesPreview() {
   const cont = document.getElementById('orden-fotos-generales-preview');
   if (!cont) return;
+  // Un solo click en cualquier miniatura abre la foto ampliada (con
+  // navegación entre todas las existentes de la orden).
+  const allUrls = JSON.stringify(fotosGeneralesExistentes.map(f => f.url));
   const existentesHTML = fotosGeneralesExistentes.map(f =>
-    '<div class="foto-general-thumb"><img src="' + f.url + '"></div>'
+    '<div class="foto-general-thumb"><img src="' + f.url + '" style="cursor:pointer;" onclick="ampliarImagen(\'' + escAttr(f.url) + '\',' + escAttr(allUrls) + ')"></div>'
   ).join('');
   const pendientesHTML = fotosGeneralesPendientes.map((f, i) =>
-    '<div class="foto-general-thumb"><img src="' + f.previewUrl + '">' +
+    '<div class="foto-general-thumb"><img src="' + f.previewUrl + '" style="cursor:pointer;" onclick="ampliarImagen(this.src)">' +
       '<button type="button" class="quitar-foto" title="Quitar" onclick="quitarFotoGeneralPendiente(' + i + ')">✕</button>' +
     '</div>'
   ).join('');
@@ -1674,8 +1677,11 @@ export function openFormaPagoChooser(id) {
   const qrBtn = document.getElementById('forma-pago-qr-btn');
   const efBtn = document.getElementById('forma-pago-efectivo-btn');
   const waBtn = document.getElementById('forma-pago-whatsapp-btn');
-  qrBtn.onclick = () => { closeModal('modal-forma-pago'); openPagoQRModal(id); };
-  efBtn.onclick = () => { closeModal('modal-forma-pago'); openPagoEfectivoModal(id); };
+  // No cerramos el chooser: el sub-modal de monto se abre ENCIMA y, al
+  // confirmar el pago, el chooser queda visible detrás para que el
+  // supervisor pueda apretar "📲 Enviar información por WhatsApp".
+  qrBtn.onclick = () => { openPagoQRModal(id); };
+  efBtn.onclick = () => { openPagoEfectivoModal(id); };
   if (waBtn) waBtn.onclick = () => { enviarWhatsAppOrden(id); };
   openModalEl('modal-forma-pago');
 }
