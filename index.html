@@ -867,11 +867,10 @@
       <div class="field"><label>Precio *</label><input type="number" id="orden-precio" value="" min="0.01" step="0.01" required placeholder="0.00"></div>
       <div class="field"><label>Descuento</label><input type="number" id="orden-descuento" value="0" min="0" step="0.01" placeholder="0.00"></div>
       <div class="field full">
-        <label>Forma de pago</label>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;" id="forma-pago-btns">
-          <button type="button" id="forma-pago-btn-pendiente" class="forma-pago-btn forma-pago-btn--active" data-valor="Pendiente" onclick="seleccionarFormaPago('Pendiente')">⏳ Pendiente</button>
-          <button type="button" id="forma-pago-btn-efectivo" class="forma-pago-btn" data-valor="Efectivo" onclick="seleccionarFormaPago('Efectivo')">💵 Efectivo</button>
-          <button type="button" id="forma-pago-btn-qr" class="forma-pago-btn" data-valor="QR" onclick="seleccionarFormaPago('QR')">💳 QR</button>
+        <label>Pago</label>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:6px;">
+          <button type="button" class="btn btn-teal" onclick="guardarYRegistrarPago(this)">💰 Guardar y registrar pago</button>
+          <span id="orden-pago-estado-label" style="font-size:13px;color:var(--ink-soft);">⏳ Sin pago registrado</span>
         </div>
         <input type="hidden" id="orden-forma-pago" value="Pendiente">
       </div>

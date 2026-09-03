@@ -596,7 +596,7 @@ export async function openOrdenModal(id) {
   openModalEl('modal-orden');
 }
 
-export async function saveOrden(btn) {
+export async function saveOrden(btn, opts = {}) {
   if (!puedeEditarOrdenes()) { showToast('No tienes permiso para guardar órdenes'); return; }
   const id = document.getElementById('orden-id').value;
   const data = {
@@ -702,6 +702,9 @@ export async function saveOrden(btn) {
         leida: false
       }).catch(e => console.error('No se pudo registrar la notificación de descuento:', e));
     }
+    // Modo silencioso: no cerrar el modal ni mostrar toast, solo devolver el id
+    // (usado por guardarYRegistrarPago para abrir el chooser de pago después).
+    if (opts.silent) return target.id;
     closeModal('modal-orden');
     renderOrdenes();
     showToast('Orden guardada');
@@ -712,6 +715,7 @@ export async function saveOrden(btn) {
       const clienteWa = clienteById(target.clienteId);
       enviarWhatsAppAutomatico(target, 'Hola ' + (clienteWa ? clienteWa.nombre : '') + ' 👟 ¡Registramos tu pedido (orden #' + target.numero + ')!', fotoGeneralParaWhatsApp);
     }
+    return target.id;
   } catch (e) {
     console.error(e);
     showToast('Error al guardar la orden');
@@ -2297,6 +2301,20 @@ function onFotoFilaItem(input) {
   }
 }
 
+// Guardar la orden y abrir inmediatamente el chooser de pago real (QR / Efectivo).
+// Reemplaza los botones simples de "Pendiente/Efectivo/QR" por el mismo flujo
+// que usa el botón "💰 Forma de pago" en la tarjeta de órdenes existentes.
+async function guardarYRegistrarPago(btn) {
+  // saveOrden devuelve el id de la orden guardada (o undefined si falla).
+  const id = await saveOrden(btn, { silent: true });
+  if (!id) return; // saveOrden ya mostró el error/toast
+  // Actualizar label para indicar que se va a registrar el pago
+  const label = document.getElementById('orden-pago-estado-label');
+  if (label) label.textContent = '⏳ Registrando pago…';
+  // Abrir el mismo chooser que tienen las órdenes ya creadas
+  openFormaPagoChooser(id);
+}
+
 // Selección visual de forma de pago en el modal de nueva/editar orden.
 function seleccionarFormaPago(valor) {
   const input = document.getElementById('orden-forma-pago');
@@ -2326,7 +2344,8 @@ Object.assign(window, {
   restaurarOrden, eliminarOrdenPermanente,
   renderSeguimientoItemSeleccionado, advanceItemTimelineStep,
   openFirmasChooser, openComprobanteChooser,
-  seleccionarFormaPago
+  seleccionarFormaPago,
+  guardarYRegistrarPago
 });
 // estadoMostradoPar y sincronizarEstadoOrdenDesdeTimelinePares no se llaman
 // desde onclick del HTML (son de uso interno entre módulos), no hace
