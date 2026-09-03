@@ -593,6 +593,21 @@ export async function openOrdenModal(id) {
     : [];
   renderFotosGeneralesPreview();
 
+  // Resetear el label de estado de pago según si es nueva orden o edición.
+  const pagoLabel = document.getElementById('orden-pago-estado-label');
+  if (pagoLabel) {
+    if (id) {
+      const oActual = ordenById(id);
+      const ep = oActual ? (oActual.estadoPago || 'Pendiente') : 'Pendiente';
+      pagoLabel.style.color = '';
+      pagoLabel.textContent = ep === 'Pagado' ? '✅ Orden pagada' :
+                              ep === 'Parcial' ? '⚠️ Pago parcial registrado' :
+                              '⏳ Sin pago registrado — guardá para habilitar registro';
+    } else {
+      pagoLabel.style.color = '';
+      pagoLabel.textContent = 'Guardá la orden primero para habilitar el registro de pago';
+    }
+  }
   openModalEl('modal-orden');
 }
 
@@ -702,19 +717,22 @@ export async function saveOrden(btn, opts = {}) {
         leida: false
       }).catch(e => console.error('No se pudo registrar la notificación de descuento:', e));
     }
-    // Modo silencioso: no cerrar el modal ni mostrar toast, solo devolver el id
-    // (usado por guardarYRegistrarPago para abrir el chooser de pago después).
+    // Modo silencioso: solo devolver el id sin cerrar modal ni toast.
     if (opts.silent) return target.id;
+    // keepOpen: guarda pero mantiene el modal abierto para que el usuario
+    // pueda apretar "💰 Registrar pago" a continuación sin perder el contexto.
+    if (opts.keepOpen) {
+      // Actualizar #orden-id con el ID real (crucial para órdenes nuevas,
+      // que aún no tenían ID antes de guardarse).
+      const ordenIdInput = document.getElementById('orden-id');
+      if (ordenIdInput) ordenIdInput.value = target.id;
+      renderOrdenes();
+      showToast('✅ Orden guardada');
+      return target.id;
+    }
     closeModal('modal-orden');
     renderOrdenes();
     showToast('Orden guardada');
-    // Envío automático por WhatsApp al registrar una orden nueva: la info
-    // del registro (misma que el QR) y la foto general (si se cargó) van
-    // JUNTAS en un solo mensaje. No bloquea el guardado si falla.
-    if (esNuevaOrden) {
-      const clienteWa = clienteById(target.clienteId);
-      enviarWhatsAppAutomatico(target, 'Hola ' + (clienteWa ? clienteWa.nombre : '') + ' 👟 ¡Registramos tu pedido (orden #' + target.numero + ')!', fotoGeneralParaWhatsApp);
-    }
     return target.id;
   } catch (e) {
     console.error(e);
@@ -2300,18 +2318,26 @@ function onFotoFilaItem(input) {
     if (window.showToast) window.showToast('📷 Foto guardada. Se sube al guardar la orden.');
   }
 }
-
-// Guardar la orden y abrir inmediatamente el chooser de pago real (QR / Efectivo).
-// Reemplaza los botones simples de "Pendiente/Efectivo/QR" por el mismo flujo
-// que usa el botón "💰 Forma de pago" en la tarjeta de órdenes existentes.
-async function guardarYRegistrarPago(btn) {
-  // saveOrden devuelve el id de la orden guardada (o undefined si falla).
-  const id = await saveOrden(btn, { silent: true });
-  if (!id) return; // saveOrden ya mostró el error/toast
-  // Actualizar label para indicar que se va a registrar el pago
+/** Guarda la orden sin cerrar el modal (modo keepOpen), para que el usuario
+ *  pueda luego apretar "💰 Registrar pago" desde el mismo formulario.
+ *  El botón "Guardar orden" llama a esta función. */
+async function saveOrdenYMantener(btn) {
+  const id = await saveOrden(btn, { keepOpen: true });
+  if (!id) return;
   const label = document.getElementById('orden-pago-estado-label');
-  if (label) label.textContent = '⏳ Registrando pago…';
-  // Abrir el mismo chooser que tienen las órdenes ya creadas
+  if (label) {
+    label.textContent = '✅ Orden guardada — ahora podés registrar el pago';
+    label.style.color = 'var(--teal-deep, #0d9488)';
+  }
+}
+
+/** Abre el chooser de pago (QR / Efectivo / WhatsApp) usando el ID de la
+ *  orden guardada. Si la orden todavía no fue guardada, avisa al usuario.
+ *  El botón "💰 Registrar pago" llama a esta función. */
+function abrirRegistroPagoDesdeModal() {
+  const id = (document.getElementById('orden-id') || {}).value;
+  if (!id) { showToast('Guardá la orden primero antes de registrar el pago'); return; }
+  closeModal('modal-orden');
   openFormaPagoChooser(id);
 }
 
@@ -2345,7 +2371,7 @@ Object.assign(window, {
   renderSeguimientoItemSeleccionado, advanceItemTimelineStep,
   openFirmasChooser, openComprobanteChooser,
   seleccionarFormaPago,
-  guardarYRegistrarPago
+  saveOrdenYMantener, abrirRegistroPagoDesdeModal
 });
 // estadoMostradoPar y sincronizarEstadoOrdenDesdeTimelinePares no se llaman
 // desde onclick del HTML (son de uso interno entre módulos), no hace
