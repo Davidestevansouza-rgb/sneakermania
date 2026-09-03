@@ -1,16 +1,31 @@
 /* Service Worker — Sistema SeS (PWA / modo offline)
    Estrategia: stale-while-revalidate SOLO para archivos estáticos del mismo
    origen. Las peticiones a Supabase (API, Auth, Storage) NUNCA se cachean. */
-const CACHE = 'ses-static-v31';
-// IMPORTANTE: NO incluir './' — Cloudflare Pages redirige '/' → '/index.html'
-// y esa respuesta de redirección queda cacheada; Safari la devuelve y explota
-// con "Response served by service worker has redirections".
+const CACHE = 'ses-static-v32';
+// En Cloudflare Pages la raíz './' responde 200 directo, mientras que
+// './index.html' responde 308 → '/'. Por eso cacheamos y servimos SIEMPRE
+// la raíz './' para la navegación, NUNCA './index.html' (que redirige y
+// rompe Safari con "Response served by service worker has redirections").
 const CORE = [
-  './index.html',
+  './',
   './manifest.json',
   './styles/main.css',
   './styles/fixes.css'
 ];
+
+// Reconstruye una respuesta SIN la bandera `redirected`. Safari/iOS bloquea
+// cualquier respuesta que el SW devuelva con response.redirected === true
+// (típico cuando el fetch siguió un 3xx). Al recrearla con new Response()
+// la bandera desaparece y Safari la acepta.
+async function stripRedirect(res) {
+  if (!res || !res.redirected) return res;
+  const body = await res.blob();
+  return new Response(body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers
+  });
+}
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE)).then(() => self.skipWaiting()));
@@ -39,16 +54,21 @@ self.addEventListener('fetch', (e) => {
 
   // ── Peticiones de navegación (cargar la página) ──────────────────────────
   // Safari/iOS lanza "Response served by service worker has redirections"
-  // si el SW devuelve cualquier respuesta 3xx para una petición navigate.
-  // La solución es servir index.html directamente desde caché (nunca
-  // una redirección). Si no está en caché, ir a red con redirect:follow
-  // para que el fetch absorba la redirección internamente.
+  // si el SW devuelve una respuesta con redirected=true. Servimos la raíz './'
+  // (que en Cloudflare responde 200 directo) desde caché; si hay que ir a red,
+  // seguimos el redirect y luego limpiamos la bandera con stripRedirect.
   if (req.mode === 'navigate') {
-    e.respondWith(
-      caches.match('./index.html').then((cached) =>
-        cached || fetch('./index.html', { redirect: 'follow' })
-      )
-    );
+    e.respondWith((async () => {
+      const cached = await caches.match('./');
+      if (cached) return stripRedirect(cached);
+      try {
+        const res = await fetch('./', { redirect: 'follow' });
+        return await stripRedirect(res);
+      } catch (err) {
+        const fallback = await caches.match('./');
+        return fallback ? stripRedirect(fallback) : Response.error();
+      }
+    })());
     return;
   }
 
@@ -56,14 +76,15 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(req);
-      // Nunca servir desde caché una respuesta que sea redirección (opaqueredirect).
-      const cachedOk = cached && cached.status === 200 ? cached : null;
-      const network = fetch(req, { redirect: 'follow' }).then((res) => {
-        // Solo cachear respuestas exitosas del mismo origen (basic).
-        if (res && res.status === 200 && res.type === 'basic') {
-          cache.put(req, res.clone()).catch(() => {});
+      // Nunca servir desde caché una respuesta redirigida.
+      const cachedOk = cached && cached.status === 200 && !cached.redirected ? cached : null;
+      const network = fetch(req, { redirect: 'follow' }).then(async (res) => {
+        const clean = await stripRedirect(res);
+        // Solo cachear respuestas exitosas del mismo origen (basic) y sin redirección.
+        if (clean && clean.status === 200 && clean.type === 'basic') {
+          cache.put(req, clean.clone()).catch(() => {});
         }
-        return res;
+        return clean;
       }).catch(() => cachedOk);
       return cachedOk || network;
     })
