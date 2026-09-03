@@ -195,10 +195,8 @@ export function renderItemCardHTML(it) {
       // Foto de producción: primera foto registrada para este artículo,
       // con lista completa para el lightbox al hacer clic.
       const todasFotosProduccion = registrosProduccion.flatMap(r => Array.isArray(r.fotoUrls) && r.fotoUrls.length ? r.fotoUrls : (r.fotoUrl ? [r.fotoUrl] : []));
-      const fotoProduccion = todasFotosProduccion[0] || null;
-      const fotoProduccionHTML = fotoProduccion
-        ? '<div style="margin-top:4px;"><img src="' + escAttr(fotoProduccion) + '" loading="lazy" style="max-width:90px;max-height:90px;border-radius:6px;cursor:pointer;object-fit:cover;border:1px solid var(--line);" onclick="ampliarImagen(\'' + fotoProduccion.replace(/'/g, "\\'") + '\', ' + escAttr(JSON.stringify(todasFotosProduccion)) + ')" title="' + escAttr('Foto de producción · ' + todasFotosProduccion.length + ' foto(s)') + '"></div>'
-        : '';
+      // Las fotos de producción (Lavado / Secado / Pintado) no se muestran
+      // en este card — ya aparecen en Producción e historial del supervisor.
       // Foto INICIAL del artículo: la que se tomó al registrar la orden,
       // guardada en orden.extra.fotos con f.item === it.codigo (ver
       // agregarFilaParCO en cliente-orden.js). Se muestra además de la foto
@@ -255,7 +253,6 @@ export function renderItemCardHTML(it) {
             responsablesPorServicioHTML + responsableFallbackHTML +
             fechasParHTML +
             fotoItemHTML +
-            fotoProduccionHTML +
           '</div>' +
           '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">' +
             '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
