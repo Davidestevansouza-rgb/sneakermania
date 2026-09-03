@@ -10,6 +10,7 @@
    ============================================================ */
 import { state, persist, todayISO, esEmpleado } from '../state.js';
 import * as db from '../db.js';
+import * as storageManager from '../storage-manager.js';
 import { showToast, ordenById, clienteNombre, logActivity, closeModal, openModalEl, fmtDate } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
 import { itemsDeOrden, estadoMostradoPar } from './ordenes.js';
@@ -64,7 +65,10 @@ const RANGO_ITEM = { 'Recibido y registrado': 0, 'Lavado': 1, 'Secado y detallad
 export const SERVICIO_A_ESTADO_ITEM = {
   'Lavado': 'Lavado',
   'Secado y detallado': 'Secado y detallado',
-  'Pintado y personalizado': 'Pintado y personalizado'
+  'Pintado y personalizado': 'Pintado y personalizado',
+  // "Blanqueando" es una variante de limpieza: comparte etapa con "Lavado"
+  // (no crea un estado nuevo en el flujo del par, ver ITEM_ESTADOS).
+  'Blanqueando': 'Lavado'
 };
 
 /** Refresca el panel de pares embebido en el detalle de la orden, si
@@ -195,6 +199,18 @@ export function renderItemCardHTML(it) {
       const fotoProduccionHTML = fotoProduccion
         ? '<div style="margin-top:4px;"><img src="' + escAttr(fotoProduccion) + '" loading="lazy" style="max-width:90px;max-height:90px;border-radius:6px;cursor:pointer;object-fit:cover;border:1px solid var(--line);" onclick="ampliarImagen(\'' + fotoProduccion.replace(/'/g, "\\'") + '\', ' + escAttr(JSON.stringify(todasFotosProduccion)) + ')" title="' + escAttr('Foto de producción · ' + todasFotosProduccion.length + ' foto(s)') + '"></div>'
         : '';
+      // Foto INICIAL del artículo: la que se tomó al registrar la orden,
+      // guardada en orden.extra.fotos con f.item === it.codigo (ver
+      // agregarFilaParCO en cliente-orden.js). Se muestra además de la foto
+      // de producción (si existe), y se puede agregar/cambiar con el botón.
+      const fotoItem = orden && orden.extra && Array.isArray(orden.extra.fotos)
+        ? orden.extra.fotos.find(f => f.item === it.codigo)
+        : null;
+      const urlFotoItem = fotoItem ? fotoItem.url : null;
+      const fotoItemHTML = urlFotoItem
+        ? '<div style="margin-top:4px;"><img src="' + escAttr(urlFotoItem) + '" loading="lazy" style="max-width:90px;max-height:90px;border-radius:6px;cursor:pointer;object-fit:cover;border:1px solid var(--line);" onclick="ampliarImagen(\'' + urlFotoItem.replace(/'/g, "\\'") + '\')" title="Foto del artículo"></div>'
+        : '';
+      const btnAgregarFotoHTML = '<label class="btn btn-ghost btn-sm" style="cursor:pointer;font-size:11px;margin-top:4px;" title="Agregar o cambiar foto de este artículo">📷 ' + (urlFotoItem ? 'Cambiar foto' : 'Agregar foto') + '<input type="file" accept="image/*" capture="environment" style="display:none;" onchange="agregarFotoItem(\'' + escAttr(it.id) + '\', this.files[0]); this.value=\'\'"></label>';
       // Pago y Prioridad pertenecen al resumen de la orden y ya se muestran
       // fuera de este bloque. No se repiten dentro de cada par.
       const pagoHTML = '';
@@ -244,11 +260,44 @@ export function renderItemCardHTML(it) {
               estadoHTML +
               cuadrosServicioHTML +
             '</div>' +
+            fotoItemHTML +
             fotoProduccionHTML +
+            btnAgregarFotoHTML +
           '</div>' +
         '</div>' +
         iaHTML +
       '</div>';
+}
+
+/** Agrega (o reemplaza) la foto de UN artículo individual. Sube el archivo
+ *  a R2 vía storageManager.uploadFoto y lo guarda en orden.extra.fotos con
+ *  f.item === codigo del artículo (mismo formato que las fotos que se toman
+ *  al registrar la orden en cliente-orden.js). Si el artículo ya tenía una
+ *  foto propia, la reemplaza. */
+export async function agregarFotoItem(itemId, file) {
+  if (!file) return;
+  const item = (state.ordenItems || []).find(it => it.id === itemId);
+  if (!item) { showToast('Artículo no encontrado'); return; }
+  const orden = ordenById(item.ordenId);
+  if (!orden) { showToast('Orden no encontrada'); return; }
+  showToast('Subiendo foto del artículo...');
+  try {
+    const fotoData = await storageManager.uploadFoto(file, orden.id, 'todos_pares');
+    fotoData.item = item.codigo;
+    if (!orden.extra) orden.extra = {};
+    if (!Array.isArray(orden.extra.fotos)) orden.extra.fotos = [];
+    // Reemplazar foto anterior de este artículo si ya había una
+    orden.extra.fotos = orden.extra.fotos.filter(f => f.item !== item.codigo);
+    orden.extra.fotos.push(fotoData);
+    await persist();
+    await db.saveOrden(orden);
+    logActivity('Agregó foto al artículo ' + item.codigo);
+    showToast('✅ Foto guardada');
+    refrescarVistas(item.ordenId);
+  } catch (e) {
+    console.error('Error subiendo foto del artículo:', e);
+    showToast('❌ Error subiendo foto: ' + (e.message || ''));
+  }
 }
 
 export async function cambiarEstadoItem(itemId, nuevoEstado) {
@@ -487,5 +536,5 @@ export async function cerrarOrdenSinPares(ordenId) {
 
 Object.assign(window, {
   renderItemsPanelHTML, cambiarEstadoItem, marcarItemEntregado, cerrarOrdenEntrega,
-  openEntregaParesModal, entregarParDesdeModal, cerrarOrdenSinPares
+  openEntregaParesModal, entregarParDesdeModal, cerrarOrdenSinPares, agregarFotoItem
 });
