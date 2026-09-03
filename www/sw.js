@@ -1,7 +1,7 @@
 /* Service Worker — Sistema SeS (PWA / modo offline)
    Estrategia: stale-while-revalidate SOLO para archivos estáticos del mismo
    origen. Las peticiones a Supabase (API, Auth, Storage) NUNCA se cachean. */
-const CACHE = 'ses-static-v29';
+const CACHE = 'ses-static-v30';
 const CORE = [
   './',
   './index.html',
@@ -38,7 +38,12 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(req);
-      const network = fetch(req).then((res) => {
+      // redirect:'follow' es crítico en Safari/iOS: si el SW devuelve una
+      // respuesta de redirección (3xx) el navegador lanza
+      // "Response served by service worker has redirections" y bloquea la app.
+      // Con follow, el fetch sigue la redirección internamente y solo devuelve
+      // la respuesta final (200) al navegador.
+      const network = fetch(req, { redirect: 'follow' }).then((res) => {
         // Clonar SIEMPRE la respuesta ANTES de consumir/devolver su body.
         // Un Response body solo puede leerse una vez: si se guarda en cache la
         // respuesta original y luego se devuelve (o viceversa) se produce el
