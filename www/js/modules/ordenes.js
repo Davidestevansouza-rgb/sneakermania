@@ -573,8 +573,10 @@ export async function openOrdenModal(id) {
   const formaPagoEl = document.getElementById('orden-forma-pago');
   if (formaPagoEl) {
     const estadoActual = id ? (o.estadoPago || 'Pendiente') : 'Pendiente';
-    formaPagoEl.value = ['Pendiente', 'Efectivo', 'QR'].includes(estadoActual) ? estadoActual : 'Pendiente';
+    const valorPago = ['Pendiente', 'Efectivo', 'QR'].includes(estadoActual) ? estadoActual : 'Pendiente';
+    formaPagoEl.value = valorPago;
     formaPagoEl.dataset.estadoOriginal = id ? (o.estadoPago || 'Pendiente') : '';
+    if (window.seleccionarFormaPago) window.seleccionarFormaPago(valorPago);
   }
   // Una vez creada la orden, el precio solo lo cambia el Administrador.
   const precioBloqueado = state.session.role !== 'Administrador' && !!id;
@@ -2295,6 +2297,16 @@ function onFotoFilaItem(input) {
   }
 }
 
+// Selección visual de forma de pago en el modal de nueva/editar orden.
+function seleccionarFormaPago(valor) {
+  const input = document.getElementById('orden-forma-pago');
+  if (input) input.value = valor;
+  ['Pendiente', 'Efectivo', 'QR'].forEach(v => {
+    const btn = document.getElementById('forma-pago-btn-' + v.toLowerCase());
+    if (btn) btn.classList.toggle('forma-pago-btn--active', v === valor);
+  });
+}
+
 // Exponer funciones llamadas desde onclick del HTML y desde otros módulos.
 Object.assign(window, {
   populateClienteSelect, filtrarClientesComboOrden, seleccionarClienteOrden,
@@ -2313,7 +2325,8 @@ Object.assign(window, {
   agregarFotosGeneralesOrden, quitarFotoGeneralPendiente,
   restaurarOrden, eliminarOrdenPermanente,
   renderSeguimientoItemSeleccionado, advanceItemTimelineStep,
-  openFirmasChooser, openComprobanteChooser
+  openFirmasChooser, openComprobanteChooser,
+  seleccionarFormaPago
 });
 // estadoMostradoPar y sincronizarEstadoOrdenDesdeTimelinePares no se llaman
 // desde onclick del HTML (son de uso interno entre módulos), no hace
