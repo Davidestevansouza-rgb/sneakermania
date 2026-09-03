@@ -235,32 +235,95 @@ export function renderBibliotecaLista() {
   const fecha = fechaEl ? fechaEl.value : '';
   let items = itemsConRegistroBiblioteca();
   if (fecha) items = items.filter(it => it.biblioteca.fecha === fecha);
-  items = items.sort((a, b) => (b.biblioteca.fecha + (b.biblioteca.hora || '')).localeCompare(a.biblioteca.fecha + (a.biblioteca.hora || '')));
 
   if (!items.length) {
     el.innerHTML = '<div class="hint">' + (fecha ? 'No hay artículos registrados en biblioteca ese día.' : 'Todavía no hay artículos registrados en biblioteca.') + '</div>';
     return;
   }
-  el.innerHTML = '<div style="overflow-x:auto;"><table class="data">' +
-    '<thead><tr><th>Código</th><th>Estante</th><th>Orden</th><th>Cliente</th><th>Registrado</th><th>Entregado</th><th></th></tr></thead>' +
-    '<tbody>' +
-    items.map(it => {
-      const info = infoOrdenItem(it);
+
+  // Agrupar artículos por orden, manteniendo orden de ingreso más reciente primero.
+  const gruposPorOrden = {};
+  const ordenIdsOrdenados = [];
+  items.sort((a, b) => (b.biblioteca.fecha + (b.biblioteca.hora || '')).localeCompare(a.biblioteca.fecha + (a.biblioteca.hora || '')))
+    .forEach(it => {
+      const oid = it.ordenId || 'sin-orden';
+      if (!gruposPorOrden[oid]) { gruposPorOrden[oid] = []; ordenIdsOrdenados.push(oid); }
+      gruposPorOrden[oid].push(it);
+    });
+
+  const limiteAntiguo = todayISO(-3);
+
+  const bloques = ordenIdsOrdenados.map(ordenId => {
+    const arts = gruposPorOrden[ordenId];
+    const o = ordenById(ordenId);
+    if (!o) return '';
+    const info = infoOrdenItem(arts[0]);
+
+    // Foto de portada: primera foto general de la orden
+    const portada = (o.extra && o.extra.fotos && o.extra.fotos[0]) ? o.extra.fotos[0].url : null;
+    const imgHTML = portada
+      ? '<img src="' + escAttr(portada) + '" loading="lazy" style="width:72px;height:72px;object-fit:cover;border-radius:10px;flex-shrink:0;border:2px solid var(--line);" alt="foto orden">'
+      : '<div style="width:72px;height:72px;border-radius:10px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;border:2px solid var(--line);">👟</div>';
+
+    // ¿Algún artículo lleva 3+ días sin retirarse?
+    const tieneAntigua = arts.some(it => !it.entregado && it.biblioteca && it.biblioteca.fecha && it.biblioteca.fecha <= limiteAntiguo);
+    const groupId = 'bib-ord-' + ordenId;
+
+    const articulosHTML = arts.map(it => {
       const b = it.biblioteca || {};
-      // CAMBIO 7: resalta en amarillo las filas de artículos que llevan 3 días
-      // o más en biblioteca y todavía no fueron entregados.
-      const esAntigua = !it.entregado && b.fecha && b.fecha <= todayISO(-3);
-      return '<tr' + (esAntigua ? ' class="biblioteca-fila-antigua" style="background:#fef3c7;"' : '') + '>' +
-        '<td class="mono">' + escHtml(it.codigo) + '</td>' +
-        '<td class="mono">' + escHtml(b.ubicacion || '—') + '</td>' +
-        '<td>#' + escHtml(String(info.numeroOrden)) + '</td>' +
-        '<td>' + escHtml(info.cliente) + '</td>' +
-        '<td>' + fmtDate(b.fecha) + (b.hora ? ' · ' + escHtml(b.hora) : '') + (b.usuario ? ' · ' + escHtml(b.usuario) : '') + '</td>' +
-        '<td>' + (it.entregado ? 'Sí' : 'No') + '</td>' +
-        '<td>' + (!it.entregado && b.ubicacion ? '<button class="btn btn-ghost btn-sm" onclick="abrirUbicarEnBiblioteca(\'' + escAttr(it.id) + '\')">Reubicar</button>' : '') + '</td>' +
-      '</tr>';
-    }).join('') +
-    '</tbody></table></div>';
+      const esAntigua = !it.entregado && b.fecha && b.fecha <= limiteAntiguo;
+      let diasTxt = '';
+      if (esAntigua && b.fecha) {
+        const dias = Math.round((new Date().setHours(0,0,0,0) - new Date(b.fecha).setHours(0,0,0,0)) / (1000*60*60*24));
+        diasTxt = ' · <span style="color:#d97706;font-weight:700;">⚠ ' + dias + ' día(s)</span>';
+      }
+      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line);' + (esAntigua ? 'background:#fef9e7;border-radius:6px;padding:6px 8px;' : '') + '">' +
+        '<div>' +
+          '<span class="mono" style="font-weight:700;">' + escHtml(it.codigo) + '</span>' +
+          (it.descripcion ? ' · <span class="hint">' + escHtml(it.descripcion) + '</span>' : '') +
+          '<div class="hint" style="margin-top:2px;">' +
+            (b.ubicacion ? '📍 Estante <strong>' + escHtml(b.ubicacion) + '</strong>' : '<span style="color:var(--ink-soft);">Sin estante asignado</span>') +
+            ' · ' + fmtDate(b.fecha) +
+            (it.entregado ? ' · <span style="color:green;">✓ Entregado</span>' : diasTxt) +
+          '</div>' +
+        '</div>' +
+        (!it.entregado && b.ubicacion ? '<button class="btn btn-ghost btn-sm" onclick="abrirUbicarEnBiblioteca(\'' + escAttr(it.id) + '\')">Reubicar</button>' : '') +
+      '</div>';
+    }).join('');
+
+    return '<div class="panel" style="margin-bottom:10px;' + (tieneAntigua ? 'border-left:3px solid #f59e0b;' : '') + '">' +
+      // Cabecera clickeable: foto + info de orden
+      '<div style="display:flex;gap:14px;align-items:center;cursor:pointer;user-select:none;" onclick="toggleBibliotecaGrupo(\'' + groupId + '\')">' +
+        imgHTML +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-weight:700;font-size:15px;">Orden #' + escHtml(String(o.numero)) +
+            (tieneAntigua ? ' <span style="color:#d97706;" title="Artículos con 3+ días en biblioteca">⚠</span>' : '') +
+          '</div>' +
+          '<div class="hint">' + escHtml(clienteNombre(o.clienteId)) +
+            (o.marca || o.modelo ? ' · ' + escHtml((o.marca || '') + ' ' + (o.modelo || '')).trim() : '') +
+          '</div>' +
+          '<div class="hint">' + arts.length + ' artículo(s) · toca para ver detalle</div>' +
+        '</div>' +
+        '<span style="font-size:20px;color:var(--ink-soft);" id="' + groupId + '-arrow">▾</span>' +
+      '</div>' +
+      // Lista de artículos (colapsada por defecto)
+      '<div id="' + groupId + '" style="display:none;margin-top:12px;">' +
+        articulosHTML +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  el.innerHTML = bloques || '<div class="hint">Todavía no hay artículos registrados en biblioteca.</div>';
+}
+
+/** Expande o colapsa el grupo de artículos de una orden en biblioteca. */
+export function toggleBibliotecaGrupo(groupId) {
+  const cont = document.getElementById(groupId);
+  if (!cont) return;
+  const abierto = cont.style.display !== 'none';
+  cont.style.display = abierto ? 'none' : 'block';
+  const arrow = document.getElementById(groupId + '-arrow');
+  if (arrow) arrow.textContent = abierto ? '▾' : '▴';
 }
 
 
@@ -440,5 +503,5 @@ export function verEspacioBiblioteca(itemId) {
 Object.assign(window, {
   renderBiblioteca, renderBibliotecaLista, limpiarFiltroFechaBiblioteca,
   abrirUbicarEnBiblioteca, guardarUbicacionBiblioteca, verEspacioBiblioteca,
-  buscarUbicacionPorOrden, enviarRecordatorioBiblioteca
+  buscarUbicacionPorOrden, enviarRecordatorioBiblioteca, toggleBibliotecaGrupo
 });
