@@ -123,7 +123,7 @@ export function coloresPorServicio(servicios) {
     let color = null;
     if (['restauración de color', 'restauracion de color', 'pintado', 'pintado y personalizado'].includes(t)) color = NEGRO;
     else if (['zapatería', 'zapateria', 'reparación de zapatería', 'reparacion de zapateria'].includes(t)) color = AMARILLO;
-    else if (['expreso', 'servicio expreso'].includes(t)) color = VERDE;
+    else if (t.startsWith('expreso') || t.includes('servicio expreso')) color = VERDE;
     // Limpieza / Lavado / Secado y detallado / Blanqueamiento → sin cuadro.
     if (color && !colores.includes(color)) colores.push(color);
   });
@@ -210,7 +210,7 @@ export function renderItemCardHTML(it) {
       const fotoItemHTML = urlFotoItem
         ? '<div style="margin-top:4px;"><img src="' + escAttr(urlFotoItem) + '" loading="lazy" style="max-width:90px;max-height:90px;border-radius:6px;cursor:pointer;object-fit:cover;border:1px solid var(--line);" onclick="ampliarImagen(\'' + urlFotoItem.replace(/'/g, "\\'") + '\')" title="Foto del artículo"></div>'
         : '';
-      const btnAgregarFotoHTML = '<label class="btn btn-ghost btn-sm" style="cursor:pointer;font-size:11px;margin-top:4px;" title="Agregar o cambiar foto de este artículo">📷 ' + (urlFotoItem ? 'Cambiar foto' : 'Agregar foto') + '<input type="file" accept="image/*" capture="environment" style="display:none;" onchange="agregarFotoItem(\'' + escAttr(it.id) + '\', this.files[0]); this.value=\'\'"></label>';
+      const btnAgregarFotoHTML = '<label class="btn btn-ghost btn-sm" style="cursor:pointer;font-size:11px;margin-top:8px;display:inline-block;" title="Agregar foto de este artículo">📷 Agregar foto<input type="file" accept="image/*" capture="environment" style="display:none;" onchange="agregarFotoItem(\'' + escAttr(it.id) + '\', this.files[0]); this.value=\'\'"></label>';
       // Pago y Prioridad pertenecen al resumen de la orden y ya se muestran
       // fuera de este bloque. No se repiten dentro de cada par.
       const pagoHTML = '';
@@ -247,25 +247,25 @@ export function renderItemCardHTML(it) {
         ? '<div class="hint">Orden #' + escHtml(orden.numero) + ' · ' + escHtml(clienteNombre(orden.clienteId)) + '</div>'
         : '';
       return '<div class="panel" style="margin-bottom:8px;padding:10px;">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
           '<div>' +
             '<div><strong class="mono">' + escHtml(it.codigo) + '</strong>' + (it.descripcion ? ' · ' + escHtml(it.descripcion) : '') + '</div>' +
             clienteOrdenHTML +
             '<div class="hint">' + escHtml(servicios) + '</div>' +
             responsablesPorServicioHTML + responsableFallbackHTML +
             fechasParHTML +
+            fotoItemHTML +
+            fotoProduccionHTML +
           '</div>' +
           '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">' +
             '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
               estadoHTML +
               cuadrosServicioHTML +
             '</div>' +
-            fotoItemHTML +
-            fotoProduccionHTML +
-            btnAgregarFotoHTML +
           '</div>' +
         '</div>' +
         iaHTML +
+        btnAgregarFotoHTML +
       '</div>';
 }
 
