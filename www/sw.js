@@ -1,9 +1,11 @@
 /* Service Worker — Sistema SeS (PWA / modo offline)
    Estrategia: stale-while-revalidate SOLO para archivos estáticos del mismo
    origen. Las peticiones a Supabase (API, Auth, Storage) NUNCA se cachean. */
-const CACHE = 'ses-static-v30';
+const CACHE = 'ses-static-v31';
+// IMPORTANTE: NO incluir './' — Cloudflare Pages redirige '/' → '/index.html'
+// y esa respuesta de redirección queda cacheada; Safari la devuelve y explota
+// con "Response served by service worker has redirections".
 const CORE = [
-  './',
   './index.html',
   './manifest.json',
   './styles/main.css',
@@ -35,27 +37,35 @@ self.addEventListener('fetch', (e) => {
   // No cachear llamadas a funciones/APIs.
   if (url.pathname.includes('/functions/') || url.pathname.includes('/rest/') || url.pathname.includes('/auth/')) return;
 
+  // ── Peticiones de navegación (cargar la página) ──────────────────────────
+  // Safari/iOS lanza "Response served by service worker has redirections"
+  // si el SW devuelve cualquier respuesta 3xx para una petición navigate.
+  // La solución es servir index.html directamente desde caché (nunca
+  // una redirección). Si no está en caché, ir a red con redirect:follow
+  // para que el fetch absorba la redirección internamente.
+  if (req.mode === 'navigate') {
+    e.respondWith(
+      caches.match('./index.html').then((cached) =>
+        cached || fetch('./index.html', { redirect: 'follow' })
+      )
+    );
+    return;
+  }
+
+  // ── Recursos estáticos (CSS, JS, imágenes…) ──────────────────────────────
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(req);
-      // redirect:'follow' es crítico en Safari/iOS: si el SW devuelve una
-      // respuesta de redirección (3xx) el navegador lanza
-      // "Response served by service worker has redirections" y bloquea la app.
-      // Con follow, el fetch sigue la redirección internamente y solo devuelve
-      // la respuesta final (200) al navegador.
+      // Nunca servir desde caché una respuesta que sea redirección (opaqueredirect).
+      const cachedOk = cached && cached.status === 200 ? cached : null;
       const network = fetch(req, { redirect: 'follow' }).then((res) => {
-        // Clonar SIEMPRE la respuesta ANTES de consumir/devolver su body.
-        // Un Response body solo puede leerse una vez: si se guarda en cache la
-        // respuesta original y luego se devuelve (o viceversa) se produce el
-        // error "Failed to execute 'clone' on 'Response': Response body is
-        // already used". Por eso clonamos primero y guardamos el clon.
+        // Solo cachear respuestas exitosas del mismo origen (basic).
         if (res && res.status === 200 && res.type === 'basic') {
-          const resToCache = res.clone();
-          cache.put(req, resToCache).catch(() => {});
+          cache.put(req, res.clone()).catch(() => {});
         }
         return res;
-      }).catch(() => cached);
-      return cached || network;
+      }).catch(() => cachedOk);
+      return cachedOk || network;
     })
   );
 });
