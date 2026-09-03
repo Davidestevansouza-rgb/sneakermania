@@ -1347,12 +1347,6 @@ function agregarFilaItemOrden(item, opts) {
   const precioPar = item && item.precio != null ? Number(item.precio) || 0 : 0;
   const entregado = item ? !!item.entregado : false;
   const empleados = getEmpleadosCache();
-  // Blanqueamiento: campo propio (no servicio). Se puede marcar solo antes
-  // de que el servicio sea registrado en Producción. Una vez que existe al
-  // menos un registroServicio, el campo queda bloqueado.
-  const blanqueamientoVal = item ? !!item.blanqueamiento : false;
-  const servicioRegistrado = item ? Object.keys(item.registroServicios || {}).length > 0 : false;
-  const blanqueamientoDisabled = entregado || servicioRegistrado;
 
   // Chips en vez de una lista desplegable: cada servicio es un botón que
   // se puede prender/apagar, y se pueden marcar varios a la vez.
@@ -1397,18 +1391,7 @@ function agregarFilaItemOrden(item, opts) {
         '<input type="number" class="item-precio-input" min="0" step="0.01" placeholder="0.00" value="' + escAttr(precioPar || '') + '" ' + (entregado ? 'disabled' : '') + ' oninput="onCambioPrecioItem(this)">' +
       '</div>' +
     '</div>' +
-    // Blanqueamiento: checkbox propio del artículo (no es un servicio).
-    // Se bloquea en cuanto se registra el primer servicio en Producción.
-    '<div style="margin-top:10px;">' +
-      '<label style="display:flex;align-items:center;gap:8px;font-size:12px;' + (blanqueamientoDisabled ? 'opacity:0.5;' : 'cursor:pointer;') + '">' +
-        '<input type="checkbox" class="item-blanqueamiento-chk"' + (blanqueamientoVal ? ' checked' : '') + (blanqueamientoDisabled ? ' disabled' : '') + '>' +
-        'Blanqueamiento' +
-        (blanqueamientoDisabled && servicioRegistrado ? ' <span class="hint">(registrado, no editable)</span>' : '') +
-      '</label>' +
-    '</div>' +
     // Botón para agregar foto al artículo directamente desde esta ventana.
-    // Si el artículo ya existe (tiene id), sube la foto de inmediato.
-    // Si es nuevo, la foto queda guardada y se sube al guardar la orden.
     '<div style="margin-top:8px;">' +
       '<label class="btn btn-ghost btn-sm" style="cursor:pointer;font-size:11px;" title="Agregar foto de este artículo">' +
         '📷 Agregar foto' +
@@ -1606,24 +1589,19 @@ async function sincronizarItemsDesdeFormulario(o) {
     const fechaIngreso = fila.querySelector('.item-fecha-ingreso-input')?.value || '';
     const fechaEntregaEstimada = fila.querySelector('.item-fecha-entrega-input')?.value || '';
     const precio = Number(fila.querySelector('.item-precio-input')?.value) || 0;
-    const blanqueamiento = !!(fila.querySelector('.item-blanqueamiento-chk')?.checked);
 
     if (itemId) {
       const item = existentes.find(it => it.id === itemId);
       if (!item) continue;
       idsVistos.add(item.id);
       const cambioServicio = JSON.stringify(item.tipoServicio || []) !== JSON.stringify(tipoServicio);
-      // Blanqueamiento solo se actualiza si el servicio AÚN no fue registrado en Producción
-      const puedeEditarBlanqueamiento = Object.keys(item.registroServicios || {}).length === 0 && !item.entregado;
-      const cambioBlanqueamiento = puedeEditarBlanqueamiento && !!item.blanqueamiento !== blanqueamiento;
-      if (item.descripcion !== descripcion || cambioServicio || item.responsable !== responsable || item.fechaIngreso !== fechaIngreso || item.fechaEntregaEstimada !== fechaEntregaEstimada || (Number(item.precio) || 0) !== precio || cambioBlanqueamiento) {
+      if (item.descripcion !== descripcion || cambioServicio || item.responsable !== responsable || item.fechaIngreso !== fechaIngreso || item.fechaEntregaEstimada !== fechaEntregaEstimada || (Number(item.precio) || 0) !== precio) {
         item.descripcion = descripcion;
         item.tipoServicio = tipoServicio;
         item.responsable = responsable;
         item.fechaIngreso = fechaIngreso;
         item.fechaEntregaEstimada = fechaEntregaEstimada;
         item.precio = precio;
-        if (puedeEditarBlanqueamiento) item.blanqueamiento = blanqueamiento;
         await db.saveOrdenItem(item);
       }
     } else {
@@ -1631,7 +1609,7 @@ async function sincronizarItemsDesdeFormulario(o) {
       const nuevo = {
         id: crypto.randomUUID(), ordenId: o.id, numeroItem,
         codigo: o.numero + '-' + numeroItem, descripcion, tipoServicio, responsable,
-        fechaIngreso, fechaEntregaEstimada, precio, blanqueamiento,
+        fechaIngreso, fechaEntregaEstimada, precio,
         estado: 'Recibido y registrado', entregado: false, fechaEntrega: null
       };
       state.ordenItems.push(nuevo);

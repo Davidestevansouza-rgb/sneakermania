@@ -9,7 +9,7 @@
    historial por fecha para usar como respaldo de pago (semanal o
    de fin de mes).
    ============================================================ */
-import { state, todayISO, persist, esEmpleado } from '../state.js';
+import { state, todayISO, persist, esEmpleado, esAdmin, esSupervisor } from '../state.js';
 import * as db from '../db.js';
 import { showToast, fmtDate, logActivity, lockBtn } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
@@ -48,7 +48,16 @@ export function renderProduccion() {
   // El empleado solo ve SUS propios registros de HOY (no los de otros ni de
   // otros días). Supervisor y administrador ven todo.
   if (esEmpleado()) registrosHoy = registrosHoy.filter(esRegistroPropio);
-  renderResumenPares('prod-kpi-grid', 'prod-lista', registrosHoy, { permitirEliminar: true, tituloVacio: 'Todavía no hay artículos registrados hoy.' });
+  // Vista de "hoy": se ven las fotos de los registros del día. El nombre del
+  // empleado que registró es visible siempre para el administrador (y para el
+  // propio empleado, que solo ve lo suyo); para el supervisor queda oculto en
+  // esta vista y solo aparece cuando filtra por una fecha en el historial.
+  renderResumenPares('prod-kpi-grid', 'prod-lista', registrosHoy, {
+    permitirEliminar: true,
+    tituloVacio: 'Todavía no hay artículos registrados hoy.',
+    mostrarFotos: true,
+    mostrarEmpleado: puedeVerEmpleadoProd(false)
+  });
 
   // El historial por fecha (respaldo de pagos) es solo para supervisor/admin.
   const histPanel = document.getElementById('prod-historial-panel');
@@ -71,20 +80,39 @@ function poblarFiltroEmpleadoProduccion() {
   if (nombres.includes(actual)) sel.value = actual;
 }
 
+/** ¿Debe mostrarse el nombre del empleado que registró?
+ *  - Administrador: siempre (y el propio empleado, que solo ve lo suyo).
+ *  - Supervisor: solo cuando hay una fecha de filtro seleccionada
+ *    (en el historial), nunca en la vista de "hoy" ni en los resúmenes
+ *    de rango (semana / mes). */
+function puedeVerEmpleadoProd(hayFecha) {
+  if (esAdmin() || esEmpleado()) return true;
+  if (esSupervisor()) return !!hayFecha;
+  return true;
+}
+
 /** Arma el bloque de KPIs + tarjetas de fotos para un conjunto de
- *  registros (se reutiliza para "hoy" y para el historial por fecha). */
+ *  registros (se reutiliza para "hoy" y para el historial por fecha).
+ *  opts.mostrarFotos  (default true): si es false, oculta las miniaturas
+ *    de fotos de las tarjetas (se sigue mostrando el resto de la info).
+ *  opts.mostrarEmpleado (default true): si es false, oculta el nombre del
+ *    empleado que registró (tarjetas y ranking por usuario). */
 function renderResumenPares(kpiElId, listaElId, registros, opts) {
   opts = opts || {};
+  const mostrarFotos = opts.mostrarFotos !== false;
+  const mostrarEmpleado = opts.mostrarEmpleado !== false;
   const total = registros.reduce((sum, r) => sum + Number(r.pares || 0), 0);
   const totalFotos = registros.reduce((sum, r) => sum + (Array.isArray(r.fotoUrls) ? r.fotoUrls.length : 0), 0);
 
   const porEmpleado = {};
   registros.forEach(r => { porEmpleado[r.empleado] = (porEmpleado[r.empleado] || 0) + Number(r.pares || 0); });
-  const rankingHtml = Object.keys(porEmpleado).length
-    ? Object.entries(porEmpleado).sort((a, b) => b[1] - a[1]).map(([nombre, cant]) =>
-        '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span>' + escHtml(nombre) + '</span><strong>' + cant + '</strong></div>'
-      ).join('')
-    : '<div class="hint">Sin registros por empleado.</div>';
+  const rankingHtml = !mostrarEmpleado
+    ? '<div class="hint">Elige una fecha para ver el detalle por empleado.</div>'
+    : (Object.keys(porEmpleado).length
+      ? Object.entries(porEmpleado).sort((a, b) => b[1] - a[1]).map(([nombre, cant]) =>
+          '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span>' + escHtml(nombre) + '</span><strong>' + cant + '</strong></div>'
+        ).join('')
+      : '<div class="hint">Sin registros por empleado.</div>');
 
   const kpiGrid = kpiElId && document.getElementById(kpiElId);
   if (kpiGrid) {
@@ -100,12 +128,19 @@ function renderResumenPares(kpiElId, listaElId, registros, opts) {
       const fotos = Array.isArray(r.fotoUrls) ? r.fotoUrls : (r.fotoUrl ? [r.fotoUrl] : []);
       const primeraFoto = fotos[0];
       const extra = fotos.length > 1 ? '<div class="hint" style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,.6);color:#fff;border-radius:4px;padding:1px 6px;">+' + (fotos.length - 1) + '</div>' : '';
-      return '<div class="prod-card">' +
-        (primeraFoto
+      // Bloque de foto: solo se muestra si mostrarFotos está activo (vista de
+      // "hoy" o historial filtrado por una fecha específica). En los resúmenes
+      // de rango (semana/mes) las miniaturas quedan ocultas.
+      const bloqueFoto = !mostrarFotos
+        ? '<div class="empty-state" style="padding:20px;"><div class="big">📅</div><div class="hint">— (filtrá por fecha para ver fotos)</div></div>'
+        : (primeraFoto
           ? '<div style="position:relative;"><img src="' + escHtml(primeraFoto) + '" loading="lazy" onclick="ampliarImagen(\'' + escHtml(primeraFoto) + '\', ' + escAttr(JSON.stringify(fotos)) + ')">' + extra + '</div>'
-          : '<div class="empty-state" style="padding:20px;"><div class="big">👟</div>Sin foto</div>') +
+          : '<div class="empty-state" style="padding:20px;"><div class="big">👟</div>Sin foto</div>');
+      const empleadoHTML = mostrarEmpleado ? '<strong>' + escHtml(r.empleado) + '</strong>' : '<strong>Artículo registrado</strong>';
+      return '<div class="prod-card">' +
+        bloqueFoto +
         '<div style="padding:6px 4px;">' +
-          '<div><strong>' + escHtml(r.empleado) + '</strong>' + (r.codigo ? ' · <span class="mono">' + escHtml(r.codigo) + '</span>' : '') + (r.servicio ? ' · ' + escHtml(r.servicio) : '') + '</div>' +
+          '<div>' + empleadoHTML + (r.codigo ? ' · <span class="mono">' + escHtml(r.codigo) + '</span>' : '') + (r.servicio ? ' · ' + escHtml(r.servicio) : '') + '</div>' +
           '<div class="hint">' + r.pares + ' ' + (Number(r.pares) === 1 ? 'artículo' : 'artículos') + ' · ' + fmtDate(r.fecha) + (fotos.length ? ' · ' + fotos.length + ' foto(s)' : '') + '</div>' +
           (r.hora ? '<div class="hint">Hora: ' + escHtml(r.hora) + '</div>' : '') +
           (r.observacion ? '<div class="hint" style="white-space:pre-line;">📝 ' + escHtml(r.observacion) + '</div>' : '') +
@@ -265,6 +300,8 @@ export async function registrarPares(btn) {
   const codigoInput = document.getElementById('prod-codigo');
   const codigo = codigoInput ? codigoInput.value.trim() : '';
   const servicio = (document.getElementById('prod-servicio') || {}).value || '';
+  const blanqueamientoChk = document.getElementById('prod-blanqueamiento');
+  const blanqueamiento = blanqueamientoChk ? !!blanqueamientoChk.checked : false;
   const obsInput = document.getElementById('prod-observacion');
   const observacionTexto = obsInput ? obsInput.value.trim() : '';
 
@@ -362,6 +399,10 @@ export async function registrarPares(btn) {
         // el Pintado y personalizado — cada uno con su propio nombre fijo.
         if (!itemActualizado.registroServicios || typeof itemActualizado.registroServicios !== 'object') itemActualizado.registroServicios = {};
         itemActualizado.registroServicios[servicio] = { responsable: empleado, fecha };
+        // Blanqueamiento: se guarda como campo propio del artículo.
+        // Solo se escribe si el checkbox está marcado (no se desmarca
+        // si en un servicio posterior no está chequeado — queda fijo).
+        if (blanqueamiento) itemActualizado.blanqueamiento = true;
         const nuevoEstado = SERVICIO_A_ESTADO_ITEM[servicio];
         if (nuevoEstado) itemActualizado.estado = nuevoEstado;
         try {
@@ -391,6 +432,7 @@ export async function registrarPares(btn) {
     if (codigoInput) codigoInput.value = '';
     if (fileInput) fileInput.value = '';
     if (obsInput) { obsInput.value = ''; delete obsInput.dataset.registroId; delete obsInput.dataset.original; }
+    if (blanqueamientoChk) blanqueamientoChk.checked = false;
     const hintEl = document.getElementById('prod-observacion-hint');
     if (hintEl) hintEl.textContent = '';
     const conteoEl = document.getElementById('prod-foto-conteo');
@@ -451,8 +493,18 @@ export function renderHistorialProduccion() {
   if (!fecha) { cont.innerHTML = '<div class="hint">Elige una fecha para ver el historial.</div>'; return; }
   let registros = (state.registroPares || []).filter(r => r.fecha === fecha);
   if (empleado) registros = registros.filter(r => r.empleado === empleado);
+  // CAMBIO 1: el historial debe mostrar primero lo último registrado (más
+  // reciente → más antiguo). renderResumenPares() invierte el array al
+  // pintarlo (.slice().reverse()), así que aquí ordenamos ASCENDENTE por
+  // fecha+hora para que, tras esa inversión, quede el más reciente primero.
+  registros = registros.slice().sort((a, b) =>
+    (a.fecha || '').localeCompare(b.fecha || '') || (a.hora || '').localeCompare(b.hora || ''));
+  // CAMBIO 2: las fotos del historial solo se muestran cuando hay una fecha
+  // activa en el filtro (prod-historial-fecha). Aquí siempre hay fecha (la
+  // función retorna antes si no la hay), así que se muestran las miniaturas.
+  const hayFechaActiva = !!(fechaEl && fechaEl.value);
   cont.innerHTML = '<div style="margin-bottom:8px;font-weight:700;">' + fmtDate(fecha) + (empleado ? ' · ' + escHtml(empleado) : '') + '</div><div id="prod-historial-kpi" class="kpi-grid" style="margin-bottom:12px;"></div><div id="prod-historial-lista"></div>';
-  renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en esta fecha' + (empleado ? ' para ' + empleado : '') + '.' });
+  renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en esta fecha' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: hayFechaActiva, mostrarEmpleado: puedeVerEmpleadoProd(true) });
 }
 
 /** Atajo: junta los últimos 7 días (incluyendo hoy) en un solo resumen,
@@ -471,7 +523,7 @@ export function verSemanaProduccion() {
   const fechaEl = document.getElementById('prod-historial-fecha');
   if (fechaEl) fechaEl.value = '';
   cont.innerHTML = '<div style="margin-bottom:8px;font-weight:700;">Últimos 7 días (' + fmtDate(dias[0]) + ' — ' + fmtDate(dias[dias.length - 1]) + ')' + (empleado ? ' · ' + escHtml(empleado) : '') + '</div><div id="prod-historial-kpi" class="kpi-grid" style="margin-bottom:12px;"></div><div id="prod-historial-lista"></div>';
-  renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en los últimos 7 días' + (empleado ? ' para ' + empleado : '') + '.' });
+  renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en los últimos 7 días' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: false, mostrarEmpleado: puedeVerEmpleadoProd(false) });
 }
 
 /** Atajo: junta los últimos 31 días (incluyendo hoy) en un solo resumen,
@@ -490,7 +542,7 @@ export function verMesProduccion() {
   const fechaEl = document.getElementById('prod-historial-fecha');
   if (fechaEl) fechaEl.value = '';
   cont.innerHTML = '<div style="margin-bottom:8px;font-weight:700;">Últimos 31 días (' + fmtDate(dias[0]) + ' — ' + fmtDate(dias[dias.length - 1]) + ')' + (empleado ? ' · ' + escHtml(empleado) : '') + '</div><div id="prod-historial-kpi" class="kpi-grid" style="margin-bottom:12px;"></div><div id="prod-historial-lista"></div>';
-  renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en los últimos 31 días' + (empleado ? ' para ' + empleado : '') + '.' });
+  renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en los últimos 31 días' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: false, mostrarEmpleado: puedeVerEmpleadoProd(false) });
 }
 
 Object.assign(window, {

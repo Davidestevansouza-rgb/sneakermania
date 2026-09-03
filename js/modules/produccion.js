@@ -300,6 +300,8 @@ export async function registrarPares(btn) {
   const codigoInput = document.getElementById('prod-codigo');
   const codigo = codigoInput ? codigoInput.value.trim() : '';
   const servicio = (document.getElementById('prod-servicio') || {}).value || '';
+  const blanqueamientoChk = document.getElementById('prod-blanqueamiento');
+  const blanqueamiento = blanqueamientoChk ? !!blanqueamientoChk.checked : false;
   const obsInput = document.getElementById('prod-observacion');
   const observacionTexto = obsInput ? obsInput.value.trim() : '';
 
@@ -397,6 +399,10 @@ export async function registrarPares(btn) {
         // el Pintado y personalizado — cada uno con su propio nombre fijo.
         if (!itemActualizado.registroServicios || typeof itemActualizado.registroServicios !== 'object') itemActualizado.registroServicios = {};
         itemActualizado.registroServicios[servicio] = { responsable: empleado, fecha };
+        // Blanqueamiento: se guarda como campo propio del artículo.
+        // Solo se escribe si el checkbox está marcado (no se desmarca
+        // si en un servicio posterior no está chequeado — queda fijo).
+        if (blanqueamiento) itemActualizado.blanqueamiento = true;
         const nuevoEstado = SERVICIO_A_ESTADO_ITEM[servicio];
         if (nuevoEstado) itemActualizado.estado = nuevoEstado;
         try {
@@ -426,6 +432,7 @@ export async function registrarPares(btn) {
     if (codigoInput) codigoInput.value = '';
     if (fileInput) fileInput.value = '';
     if (obsInput) { obsInput.value = ''; delete obsInput.dataset.registroId; delete obsInput.dataset.original; }
+    if (blanqueamientoChk) blanqueamientoChk.checked = false;
     const hintEl = document.getElementById('prod-observacion-hint');
     if (hintEl) hintEl.textContent = '';
     const conteoEl = document.getElementById('prod-foto-conteo');
