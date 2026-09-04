@@ -229,6 +229,21 @@ async function pushDelete(table, id) {
 export const saveCliente = (c) => pushUpsert('clientes', clienteToDb(c));
 export const deleteCliente = (id) => pushDelete('clientes', id);
 export const saveOrden = (o) => pushUpsert('ordenes', ordenToDb(o));
+
+/** Obtiene el próximo número de orden de forma atómica (BD).
+ *  Fallback al contador local si la BD no está disponible (modo offline). */
+export async function siguienteOrdenNumero(fallbackLocal) {
+  if (!isOnline() || !supabase) return fallbackLocal;
+  try {
+    const { data, error } = await supabase.rpc('siguiente_orden_numero', {
+      p_tenant_id: tenantId()
+    });
+    if (!error && typeof data === 'number') return data;
+  } catch (e) {
+    console.warn('No se pudo obtener número de BD, usando local:', e);
+  }
+  return fallbackLocal;
+}
 export const deleteOrden = (id) => pushDelete('ordenes', id);
 export const saveGasto = (g) => pushUpsert('gastos', gastoToDb(g));
 export const deleteGasto = (id) => pushDelete('gastos', id);

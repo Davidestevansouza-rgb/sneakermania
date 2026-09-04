@@ -4,7 +4,7 @@
    control de calidad, firmas digitales, cobros (QR / efectivo),
    corrección de pagos, detalle e impresión de comprobante.
    ============================================================ */
-import { state, todayISO, persist, ensurePagoFields, puedeEditarOrdenes, esEmpleado } from '../state.js';
+import { state, todayISO, persist, ensurePagoFields, puedeEditarOrdenes, esEmpleado, tenantId } from '../state.js';
 import * as db from '../db.js';
 import {
   showToast, fmtMoney, fmtDate, fmtServicios,
@@ -678,8 +678,11 @@ export async function saveOrden(btn, opts = {}) {
       target = o;
       logActivity('Editó orden #' + o.numero);
     } else {
-      // IDs con UUID en lugar de Date.now() para evitar colisiones.
-      const o = { id: crypto.randomUUID(), numero: state.nextOrderNum++, descuento: 0, pagado: 0, metodoPago: '', fechaPago: '', estadoPago: 'Pendiente', fechaEntrega: '', fotos: { antes: [], durante: [], despues: [], detalle: [], suela: [], laterales: [], todos_pares: [] } };
+      // Número atómico desde la BD para evitar duplicados entre usuarios simultáneos.
+      // Si hay fallo de red, se usa el contador local como fallback.
+      const numOrden = await db.siguienteOrdenNumero(state.nextOrderNum);
+      if (numOrden >= state.nextOrderNum) state.nextOrderNum = numOrden + 1;
+      const o = { id: crypto.randomUUID(), numero: numOrden, descuento: 0, pagado: 0, metodoPago: '', fechaPago: '', estadoPago: 'Pendiente', fechaEntrega: '', fotos: { antes: [], durante: [], despues: [], detalle: [], suela: [], laterales: [], todos_pares: [] } };
       Object.assign(o, data);
       state.ordenes.push(o);
       target = o;
