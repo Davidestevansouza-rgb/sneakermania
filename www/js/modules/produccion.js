@@ -409,8 +409,13 @@ export async function registrarPares(btn) {
         showToast('Subiendo foto ' + (i + 1) + ' de ' + files.length + '…');
         const file = files[i];
         const ext = (file.name.split('.').pop() || 'jpg');
-        const result = await storageManager.uploadImageFile(file, 'produccion', 'pares_' + timestamp + '_' + i + '.' + ext);
-        fotoUrls.push(result.url);
+        try {
+          const result = await storageManager.uploadImageFile(file, 'produccion', 'pares_' + timestamp + '_' + i + '.' + ext);
+          fotoUrls.push(result.url);
+        } catch (uploadErr) {
+          console.error('No se pudo subir la foto ' + (i + 1) + ':', uploadErr);
+          showToast('⚠️ No se pudo subir la foto ' + (i + 1) + '. El registro continúa sin ella.');
+        }
       }
     }
 
