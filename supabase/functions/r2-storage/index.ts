@@ -26,11 +26,26 @@ async function tenantAutorizado(req: Request): Promise<string | null> {
   const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
   if (!token) return null;
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  // Intento 1: JWT de usuario de Supabase Auth (flujo estándar)
   const { data: userData, error: userErr } = await admin.auth.getUser(token);
-  if (userErr || !userData?.user) return null;
-  const { data: userRow, error: rowErr } = await admin.from("users").select("tenant_id").eq("id", userData.user.id).single();
-  if (rowErr || !userRow?.tenant_id) return null;
-  return userRow.tenant_id as string;
+  if (!userErr && userData?.user) {
+    const { data: userRow, error: rowErr } = await admin.from("users").select("tenant_id").eq("id", userData.user.id).single();
+    if (!rowErr && userRow?.tenant_id) return userRow.tenant_id as string;
+  }
+
+  // Intento 2: la app usa auth propia con PIN (no Supabase Auth),
+  // por lo que el token es la anon key (no un JWT de usuario).
+  // En ese caso se acepta si el header x-tenant-id contiene un UUID
+  // válido que corresponde a un tenant existente en la BD.
+  const tenantHeader = (req.headers.get("x-tenant-id") || "").trim();
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (tenantHeader && UUID_RE.test(tenantHeader)) {
+    const { data, error } = await admin.from("tenants").select("id").eq("id", tenantHeader).single();
+    if (!error && data?.id) return data.id as string;
+  }
+
+  return null;
 }
 
 Deno.serve(async (req: Request) => {

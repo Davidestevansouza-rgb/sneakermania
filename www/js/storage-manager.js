@@ -10,7 +10,10 @@ import { supabase } from './config.js';
 import { state, tenantId } from './state.js';
 
 const SIGNED_URL_CACHE = new Map();
-const SIGNED_URL_TTL_MS = 8 * 60 * 1000;
+// TTL del cache de URLs firmadas: se subió de 8 a 50 minutos para evitar pedir
+// una URL nueva al Edge Function en cada visita. Las URLs se piden firmadas por
+// 3000 s (50 min), así el cache y la URL caducan a la par.
+const SIGNED_URL_TTL_MS = 50 * 60 * 1000; // era 8 min, ahora 50 min
 
 function extraerPathR2(url) {
   if (!url || typeof url !== 'string') return null;
@@ -23,26 +26,6 @@ function extraerPathR2(url) {
   } catch (_) { return null; }
 }
 
-/** Obtiene el token JWT válido de la sesión actual */
-async function getValidToken() {
-  try {
-    const { data: { session }, error } = await supabase.auth.getSession();
-    if (error) {
-      console.error('[getValidToken] Error obteniendo sesión:', error);
-      return null;
-    }
-    if (session && session.access_token) {
-      console.log('[getValidToken] Token obtenido exitosamente');
-      return session.access_token;
-    }
-    console.warn('[getValidToken] No hay sesión activa');
-    return null;
-  } catch (e) {
-    console.error('[getValidToken] Exception:', e);
-    return null;
-  }
-}
-
 /** Obtiene una URL firmada para un objeto R2 sin guardar la firma en la BD.
  *  Mantiene compatibilidad: si no se puede firmar, devuelve la URL original.
  */
@@ -53,10 +36,10 @@ export async function resolveImageUrl(url, path = null) {
   const cached = SIGNED_URL_CACHE.get(objectPath);
   if (cached && cached.expiresAt > Date.now()) return cached.url;
   try {
-    const token = await getValidToken();
+    const tid1 = tenantId();
     const { data, error } = await supabase.functions.invoke('r2-storage', {
-      body: { action: 'signed-url', path: objectPath, expires: 600 },
-      headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      body: { action: 'signed-url', path: objectPath, expires: 3000 },
+      headers: tid1 ? { 'x-tenant-id': tid1 } : {}
     });
     if (!error && data?.url) {
       SIGNED_URL_CACHE.set(objectPath, { url: data.url, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
@@ -70,13 +53,42 @@ export async function resolveImageUrl(url, path = null) {
 
 export async function resolveImageUrls(fotos) {
   if (!Array.isArray(fotos)) return [];
+  // Todas las firmas se piden EN PARALELO (Promise.all), no una tras otra, para
+  // que la galería de una orden cargue de golpe y no foto por foto.
   return Promise.all(fotos.map(async f => ({ ...f, resolvedUrl: await resolveImageUrl(f.url, f.path) })));
+}
+
+/**
+ * Resuelve un lote de URLs firmadas en paralelo (alias explícito de
+ * resolveImageUrls para dejar claro en el código que es un prefetch en batch).
+ * Devuelve las fotos con su `resolvedUrl` ya lista.
+ * @param {Array<{url:string, path?:string}>} fotos
+ */
+export async function resolveImageUrlsBatch(fotos) {
+  return resolveImageUrls(fotos);
+}
+
+/**
+ * Prefetch en BACKGROUND (sin await, no bloquea la UI): calienta el cache de
+ * URLs firmadas de un conjunto de fotos (p. ej. todas las de una orden) para
+ * que cuando el usuario las mire ya estén firmadas y aparezcan al instante.
+ * Es seguro llamarlo varias veces: las que ya estén en cache no repiten pedido.
+ * @param {Array<{url:string, path?:string}>} fotos
+ */
+export function prefetchImageUrls(fotos) {
+  if (!Array.isArray(fotos) || !fotos.length) return;
+  // No await a propósito: corre en segundo plano.
+  Promise.all(fotos.map(f => resolveImageUrl(f && f.url, f && f.path).catch(() => null)))
+    .catch(() => {});
 }
 
 export async function secureImageUrlsInDom(root = document) {
   if (!root) return;
   const imgs = root.querySelectorAll ? root.querySelectorAll('img[src]') : [];
   await Promise.all(Array.from(imgs).map(async img => {
+    // Carga diferida: el navegador solo descarga la imagen cuando está por
+    // entrar en pantalla. Acelera la carga inicial de listados con muchas fotos.
+    if (!img.hasAttribute('loading')) img.setAttribute('loading', 'lazy');
     const src = img.getAttribute('src');
     const signed = await resolveImageUrl(src);
     if (signed && signed !== src) img.setAttribute('src', signed);
@@ -111,85 +123,37 @@ export async function uploadFile(file, folder, filename, internal = {}) {
   const tenant = tenantId();
   if (!tenant) throw new Error('No hay tenant autenticado');
   
-  // Obtener token ANTES de empezar reintentos
-  const token = await getValidToken();
-  if (!token) {
-    console.error('[uploadFile] No se pudo obtener token JWT válido');
-    throw new Error('No se pudo autenticar con el servidor. Intenta refrescar la página.');
-  }
-  
-  const path = `${tenant}/${folder}/${filename}`;
-  console.log('[uploadFile] Iniciando subida:', { tenant, folder, filename, path, fileSize: file.size, fileType: file.type });
-
   // Path: tenant_id/folder/filename
+  const path = `${tenant}/${folder}/${filename}`;
+
   // Reintentos: ERR_HTTP2_PROTOCOL_ERROR y "Failed to fetch" suelen ser cortes
   // transitorios de la conexión (típico al subir fotos pesadas desde el
   // celular con wifi/datos inestables), no un error real del archivo.
   const MAX_INTENTOS = 3;
   let ultimoError = null;
-  
   for (let intento = 1; intento <= MAX_INTENTOS; intento++) {
     const form = new FormData();
     form.append('file', file, filename);
     form.append('path', path);
 
-    try {
-      console.log(`[uploadFile] Intento ${intento}/${MAX_INTENTOS}...`);
-      
-      const { data, error } = await supabase.functions.invoke('r2-storage', { 
-        body: form,
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+    const tid2 = tenantId();
+    const { data, error } = await supabase.functions.invoke('r2-storage', {
+      body: form,
+      headers: tid2 ? { 'x-tenant-id': tid2 } : {}
+    });
 
-      // DEBUGGING DETALLADO
-      if (error) {
-        console.error(`[uploadFile] Error en intento ${intento}:`, {
-          status: error.status,
-          message: error.message,
-          name: error.name,
-          context: error.context
-        });
-      }
-      
-      if (data) {
-        console.log(`[uploadFile] Respuesta del servidor (intento ${intento}):`, data);
-      }
-
-      if (!error && data && data.url) {
-        console.log('[uploadFile] ✅ Subida exitosa:', { url: data.url, path: data.path });
-        return { url: data.url, path: data.path || path };
-      }
-
-      ultimoError = error || new Error((data && data.error) || 'Error desconocido al subir el archivo');
-      const mensaje = (ultimoError.message || '').toLowerCase();
-      const esErrorRed = mensaje.includes('failed to fetch') || mensaje.includes('network') || mensaje.includes('http2') || mensaje.includes('protocol');
-      
-      console.error(`[uploadFile] Error en intento ${intento} (tipo: ${esErrorRed ? 'red/temporal' : 'servidor'}):`, ultimoError.message);
-      
-      if (!esErrorRed || intento === MAX_INTENTOS) {
-        console.error(`[uploadFile] No se reintentar más. esErrorRed=${esErrorRed}, intento=${intento}`);
-        break;
-      }
-      // Espera creciente antes de reintentar (500ms, 1500ms).
-      const delayMs = intento * 500;
-      console.log(`[uploadFile] Esperando ${delayMs}ms antes de reintentar...`);
-      await new Promise(r => setTimeout(r, delayMs));
-    } catch (e) {
-      console.error(`[uploadFile] Exception en intento ${intento}:`, {
-        message: e.message,
-        name: e.name,
-        stack: e.stack
-      });
-      ultimoError = e;
-      if (intento < MAX_INTENTOS) {
-        const delayMs = intento * 500;
-        console.log(`[uploadFile] Esperando ${delayMs}ms antes de reintentar después de exception...`);
-        await new Promise(r => setTimeout(r, delayMs));
-      }
+    if (!error && data && data.url) {
+      return { url: data.url, path: data.path || path };
     }
+
+    ultimoError = error || new Error((data && data.error) || 'Error desconocido al subir el archivo');
+    const mensaje = (ultimoError.message || '').toLowerCase();
+    const esErrorRed = mensaje.includes('failed to fetch') || mensaje.includes('network') || mensaje.includes('http2') || mensaje.includes('protocol');
+    console.error(`Error al subir archivo (intento ${intento}/${MAX_INTENTOS}):`, ultimoError);
+    if (!esErrorRed || intento === MAX_INTENTOS) break;
+    // Espera creciente antes de reintentar (500ms, 1500ms).
+    await new Promise(r => setTimeout(r, intento * 500));
   }
-  
-  console.error('[uploadFile] ❌ Fallo definitivo después de ' + MAX_INTENTOS + ' intentos:', ultimoError);
   throw ultimoError;
 }
 
@@ -203,12 +167,10 @@ export async function uploadImageFile(file, folder, filename) {
   if (!file || !file.type || !file.type.startsWith('image/')) {
     throw new Error('El archivo debe ser una imagen');
   }
-  console.log('[uploadImageFile] Comprimiendo imagen:', { filename, fileSize: file.size, fileType: file.type });
   const comprimido = await comprimirImagen(file);
   if (!comprimido || !comprimido.type || !comprimido.type.startsWith('image/')) {
     throw new Error('No se pudo comprimir la imagen; la subida fue cancelada');
   }
-  console.log('[uploadImageFile] Imagen comprimida exitosamente:', { comprimidoSize: comprimido.size });
   const nombreJpg = filename.replace(/\.[^.]+$/, '') + '.jpg';
   return uploadFile(comprimido, folder, nombreJpg, { skipImageCompressionCheck: true });
 }
@@ -255,8 +217,6 @@ export async function uploadFirma(base64Data, ordenId, tipo) {
  */
 export async function comprimirImagen(file, ladoMax = 1200, pesoObjetivoKB = 200, calidadMinima = 0.5) {
   try {
-    console.log('[comprimirImagen] Iniciando compresión:', { fileName: file.name, fileSize: file.size, ladoMax, pesoObjetivoKB, calidadMinima });
-    
     const bitmap = await createImageBitmap(file);
     const { width, height } = bitmap;
 
@@ -266,8 +226,6 @@ export async function comprimirImagen(file, ladoMax = 1200, pesoObjetivoKB = 200
     const anchoFinal = Math.round(width * escala);
     const altoFinal = Math.round(height * escala);
     const lado = Math.max(anchoFinal, altoFinal);
-
-    console.log('[comprimirImagen] Dimensiones:', { original: { width, height }, final: { anchoFinal, altoFinal, lado } });
 
     const canvas = document.createElement('canvas');
     canvas.width = lado;
@@ -285,28 +243,16 @@ export async function comprimirImagen(file, ladoMax = 1200, pesoObjetivoKB = 200
     let calidad = 0.85;
     let blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', calidad));
     let intentos = 0;
-    
-    console.log('[comprimirImagen] Compresión adaptativa: pesoObjetivo=' + pesoObjetivo + ' bytes');
-    
     while (blob && blob.size > pesoObjetivo && calidad > calidadMinima && intentos < 6) {
       calidad = Math.round((calidad - 0.1) * 100) / 100;
       blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', calidad));
       intentos++;
-      console.log(`[comprimirImagen]   Intento ${intentos}: calidad=${calidad}, size=${blob.size} bytes`);
     }
 
     if (!blob) throw new Error('No se pudo generar la imagen comprimida');
-    
-    console.log('[comprimirImagen] ✅ Compresión completada:', { 
-      calidadFinal: calidad, 
-      tamañoOriginal: file.size, 
-      tamañoComprimido: blob.size, 
-      ratio: ((1 - blob.size / file.size) * 100).toFixed(1) + '%'
-    });
-    
     return blob;
   } catch (e) {
-    console.error('[comprimirImagen] ❌ Error:', e);
+    console.error('No se pudo comprimir la imagen; se cancela la subida:', e);
     throw new Error('No se pudo comprimir la imagen. La foto original NO se subió.');
   }
 }
@@ -322,8 +268,6 @@ export async function uploadFoto(file, ordenId, categoria) {
   if (!file.type.startsWith('image/')) {
     throw new Error('El archivo debe ser una imagen');
   }
-  
-  console.log('[uploadFoto] Iniciando subida de foto:', { fileName: file.name, fileSize: file.size, ordenId, categoria });
   
   // Comprimir antes de subir (si el archivo ya es chico, apenas cambia).
   const archivoASubir = await comprimirImagen(file);
@@ -348,11 +292,10 @@ export async function uploadFoto(file, ordenId, categoria) {
  * @returns {Promise<void>}
  */
 export async function deleteFile(path) {
-  const token = await getValidToken();
-  
+  const tidDel = tenantId();
   const { data, error } = await supabase.functions.invoke('r2-storage', {
     body: { action: 'delete', path },
-    headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+    headers: tidDel ? { 'x-tenant-id': tidDel } : {}
   });
 
   if (error || !data || data.error) {
@@ -370,11 +313,11 @@ export async function deleteFile(path) {
 export async function listOrdenFiles(ordenId) {
   const tenant = tenantId();
   const folder = `${tenant}/ordenes/${ordenId}`;
-  const token = await getValidToken();
 
+  const tidList = tenantId();
   const { data, error } = await supabase.functions.invoke('r2-storage', {
     body: { action: 'list', prefix: folder },
-    headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+    headers: tidList ? { 'x-tenant-id': tidList } : {}
   });
 
   if (error || !data || data.error) {

@@ -36,8 +36,10 @@ export async function resolveImageUrl(url, path = null) {
   const cached = SIGNED_URL_CACHE.get(objectPath);
   if (cached && cached.expiresAt > Date.now()) return cached.url;
   try {
+    const tid1 = tenantId();
     const { data, error } = await supabase.functions.invoke('r2-storage', {
-      body: { action: 'signed-url', path: objectPath, expires: 3000 }
+      body: { action: 'signed-url', path: objectPath, expires: 3000 },
+      headers: tid1 ? { 'x-tenant-id': tid1 } : {}
     });
     if (!error && data?.url) {
       SIGNED_URL_CACHE.set(objectPath, { url: data.url, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
@@ -134,7 +136,11 @@ export async function uploadFile(file, folder, filename, internal = {}) {
     form.append('file', file, filename);
     form.append('path', path);
 
-    const { data, error } = await supabase.functions.invoke('r2-storage', { body: form });
+    const tid2 = tenantId();
+    const { data, error } = await supabase.functions.invoke('r2-storage', {
+      body: form,
+      headers: tid2 ? { 'x-tenant-id': tid2 } : {}
+    });
 
     if (!error && data && data.url) {
       return { url: data.url, path: data.path || path };
@@ -286,8 +292,10 @@ export async function uploadFoto(file, ordenId, categoria) {
  * @returns {Promise<void>}
  */
 export async function deleteFile(path) {
+  const tidDel = tenantId();
   const { data, error } = await supabase.functions.invoke('r2-storage', {
-    body: { action: 'delete', path }
+    body: { action: 'delete', path },
+    headers: tidDel ? { 'x-tenant-id': tidDel } : {}
   });
 
   if (error || !data || data.error) {
@@ -306,8 +314,10 @@ export async function listOrdenFiles(ordenId) {
   const tenant = tenantId();
   const folder = `${tenant}/ordenes/${ordenId}`;
 
+  const tidList = tenantId();
   const { data, error } = await supabase.functions.invoke('r2-storage', {
-    body: { action: 'list', prefix: folder }
+    body: { action: 'list', prefix: folder },
+    headers: tidList ? { 'x-tenant-id': tidList } : {}
   });
 
   if (error || !data || data.error) {
