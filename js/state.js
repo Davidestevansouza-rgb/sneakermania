@@ -158,7 +158,8 @@ export function clearQueue() {
    Roles y permisos
    ------------------------------------------------------------
    Roles posibles (columna users.rol): 'Administrador', 'Supervisor',
-   'Empleado'. Un valor null en TABS_POR_ROL significa "todo".
+   'Empleado'. Un valor null en TABS_POR_ROL significa "todo" SOLO para
+   Administrador. Cualquier rol desconocido debe fallar cerrado.
    ------------------------------------------------------------ */
 
 /** Rol actual de la sesión (o null si no hay sesión). */
@@ -185,8 +186,10 @@ export const TABS_POR_ROL = {
 
 /** ¿El rol actual puede ver esta pestaña? */
 export function puedeVerTab(tab) {
-  const permitidas = TABS_POR_ROL[rolActual()];
-  if (permitidas == null) return true; // Administrador o rol desconocido = todo
+  const rol = rolActual();
+  if (rol === 'Administrador') return true;
+  const permitidas = TABS_POR_ROL[rol];
+  if (!Array.isArray(permitidas)) return false;
   return permitidas.includes(tab);
 }
 
