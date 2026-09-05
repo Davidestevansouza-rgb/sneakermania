@@ -10,7 +10,7 @@ import { supabase } from './config.js';
 import { state, setState, seedData, loadCache, puedeVerTab, tabInicial } from './state.js';
 import { showToast, setConnStatus, bindPrimerGestoAudio } from './ui.js';
 import * as db from './db.js';
-import { doLogout, initBiometricLoginUI } from './auth.js';
+import { initBiometricLoginUI, restorePersistedSession } from './auth.js';
 
 // Módulos de features (cada uno se auto-registra en window).
 import { renderDashboard } from './modules/dashboard.js';
@@ -138,31 +138,14 @@ function wireConnectivity() {
 }
 
 /* ============================================================
-   CIERRE AUTOMÁTICO DE SESIÓN POR INACTIVIDAD (30 minutos)
+   SESIÓN PERSISTENTE
+   ============================================================
+   Ya no se cierra la sesión por 30 minutos de inactividad. En iPhone,
+   Android y PC la sesión válida se conserva y Supabase renueva el token.
+   El cierre ocurre solo por logout manual, sesión reemplazada/desactivada
+   o porque Supabase ya no pueda renovar una sesión válida.
    ============================================================ */
-const INACTIVIDAD_MS = 30 * 60 * 1000; // 30 minutos
-let inactivityTimer = null;
-
-function resetInactivityTimer() {
-  // Solo cuenta si hay una sesión activa (la app está visible).
-  if (!(state && state.session && state.session.loggedIn)) return;
-  if (inactivityTimer) clearTimeout(inactivityTimer);
-  inactivityTimer = setTimeout(async () => { // 30 minutos
-    if (state && state.session && state.session.loggedIn) {
-      try { await doLogout(); } catch (e) { console.error(e); }
-      showToast('Sesión cerrada automáticamente por inactividad (30 min).');
-    }
-  }, INACTIVIDAD_MS);
-}
-
-function wireInactivityLogout() {
-  ['mousedown', 'keydown', 'touchstart', 'click', 'scroll'].forEach(ev =>
-    document.addEventListener(ev, resetInactivityTimer, { passive: true }));
-  resetInactivityTimer();
-}
-
-// Exponer para que auth.js reinicie el temporizador tras iniciar sesión.
-window.resetInactivityTimer = resetInactivityTimer;
+window.resetInactivityTimer = () => {};
 
 /* ============================================================
    MANEJO GLOBAL DE ERRORES
@@ -193,27 +176,28 @@ window.addEventListener('unhandledrejection', function (ev) {
   if (!state.session) state.session = { loggedIn: false, role: null, user: null };
 
   wireConnectivity();
-  wireInactivityLogout();
   // Desbloquea el audio de las alertas sonoras de notificaciones en el
-  // primer click/tap (los navegadores no dejan sonar audio sin gesto
-  // previo del usuario).
+  // primer click/tap (los navegadores no dejan sonar audio sin gesto previo).
   bindPrimerGestoAudio();
   setConnStatus(db.online() ? 'online' : 'offline', db.pendingCount());
 
-  // IMPORTANTE (seguridad): NO se restaura ninguna sesión automáticamente.
-  // Con persistSession:false (ver config.js) no queda un token guardado
-  // entre recargas, pero además nunca se llama a onAuthenticated() aquí:
-  // el único camino de acceso es doLogin() → rol + usuario + contraseña +
-  // botón "Iniciar sesión". Cada recarga de página exige volver a
-  // autenticarse; no hay reingreso automático ni reutilización de sesión.
+  // Primero intenta recuperar silenciosamente la sesión válida de este
+  // dispositivo. Esto evita pedir contraseña después de una recarga, de
+  // volver desde otra app o de que iOS/Android haya descargado la página.
+  let restored = false;
   if (supabase) {
-    try { await supabase.auth.signOut(); } catch (e) { /* noop: no había sesión que cerrar */ }
+    try { restored = await restorePersistedSession(); } catch (e) {
+      console.warn('No se pudo restaurar la sesión guardada:', e?.message || e);
+    }
   }
-  document.getElementById('login-screen').style.display = 'flex';
-  document.getElementById('app-shell').style.display = 'none';
 
-  // Muestra el botón de huella/Face ID si este dispositivo ya lo tiene activado.
-  initBiometricLoginUI();
+  if (!restored) {
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('app-shell').style.display = 'none';
+    // Si ya existe una credencial biométrica en ESTE dispositivo, el botón
+    // se mantiene disponible como acceso rápido de respaldo.
+    await initBiometricLoginUI();
+  }
 })();
 
 // Exposición global para los onclick del HTML.
