@@ -233,7 +233,7 @@ export const saveOrden = (o) => pushUpsert('ordenes', ordenToDb(o));
 /** Obtiene el próximo número de orden de forma atómica (BD).
  *  Fallback al contador local si la BD no está disponible (modo offline). */
 export async function siguienteOrdenNumero(fallbackLocal) {
-  if (!isOnline() || !supabase) return fallbackLocal;
+  if (!online() || !supabase) return fallbackLocal;
   try {
     const { data, error } = await supabase.rpc('siguiente_orden_numero', {
       p_tenant_id: tenantId()
