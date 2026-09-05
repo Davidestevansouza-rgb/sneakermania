@@ -10,34 +10,39 @@ const jsonHeaders = { ...corsHeaders, 'Content-Type': 'application/json' }
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY')!
-const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY')!
 const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') || 'mailto:soporte@tudominio.com'
-
-webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
 
 const SUMMARY_MAP: Record<string, string> = { atrasados: 'atraso', stock_bajo: 'stock', pagos_pendientes: 'pago' }
 function extraerCantidad(o: any): number { return Number((o.extra && o.extra.cantidadPares) || o.cantidad || o.pares || 1) || 1 }
 function armarCuerpoOrdenes(items: any[], total: number): string { const lineas = items.map((it: any, idx: number) => `${idx + 1}) #${it.orden} — ${it.cantidad} par(es) — ${it.cliente}`); const resto = total - items.length; if (resto > 0) lineas.push(`y ${resto} más...`); return lineas.join('\n') }
 function armarCuerpoStock(items: any[], total: number): string { const lineas = items.map((it: any, idx: number) => `${idx + 1}) ${it.nombre} (${it.cantidad}/${it.minimo})`); const resto = total - items.length; if (resto > 0) lineas.push(`y ${resto} más...`); return lineas.join('\n') }
 
-async function getExpectedSecret(supabase: ReturnType<typeof createClient>): Promise<string | null> {
-  const { data, error } = await supabase.from('app_config').select('value').eq('key', 'SEND_PUSH_CRON_SECRET').maybeSingle()
-  if (error || !data?.value) return null
-  return data.value
+async function getPrivateConfig(supabase: ReturnType<typeof createClient>) {
+  const keys = ['SEND_PUSH_CRON_SECRET', 'VAPID_PUBLIC_KEY_V2', 'VAPID_PRIVATE_KEY_V2']
+  const { data, error } = await supabase.from('app_config').select('key,value').in('key', keys)
+  if (error) throw error
+  const cfg: Record<string,string> = {}
+  for (const r of data || []) if (r?.key && r?.value) cfg[r.key] = r.value
+  return cfg
 }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'Método no permitido' }), { status: 405, headers: jsonHeaders })
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return new Response(JSON.stringify({ error: 'Endpoint no configurado' }), { status: 503, headers: jsonHeaders })
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return new Response(JSON.stringify({ error: 'Endpoint no configurado' }), { status: 503, headers: jsonHeaders })
 
   try {
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
-    const expectedSecret = await getExpectedSecret(supabase)
+    const cfg = await getPrivateConfig(supabase)
+    const expectedSecret = cfg.SEND_PUSH_CRON_SECRET
+    const vapidPublic = cfg.VAPID_PUBLIC_KEY_V2
+    const vapidPrivate = cfg.VAPID_PRIVATE_KEY_V2
     const got = req.headers.get('x-cron-secret') || ''
-    if (!expectedSecret) return new Response(JSON.stringify({ error: 'Endpoint de cron no configurado' }), { status: 503, headers: jsonHeaders })
+
+    if (!expectedSecret || !vapidPublic || !vapidPrivate) return new Response(JSON.stringify({ error: 'Endpoint de push no configurado' }), { status: 503, headers: jsonHeaders })
     if (!got || got !== expectedSecret) return new Response(JSON.stringify({ error: 'No autorizado' }), { status: 401, headers: jsonHeaders })
+
+    webpush.setVapidDetails(VAPID_SUBJECT, vapidPublic, vapidPrivate)
 
     const hoy = new Date().toISOString().slice(0, 10)
     const urlObj = new URL(req.url)
@@ -85,7 +90,7 @@ Deno.serve(async (req) => {
         const payload = JSON.stringify({ titulo:c.titulo, mensaje:c.armarMensaje(), url:'./', tag:c.tag, type:c.type, items:c.armarItems(), tenant_id:tenantId })
         for (const sub of subsTenant) {
           try { await webpush.sendNotification({ endpoint:sub.endpoint, keys:{p256dh:sub.p256dh,auth:sub.auth} },payload); totalEnviados++ }
-          catch (err:any) { if (err && (err.statusCode===404 || err.statusCode===410)) await supabase.from('push_subscriptions').delete().eq('id',sub.id); else console.error('Error enviando push:',err?.message||err) }
+          catch (err:any) { if (err && (err.statusCode===404 || err.statusCode===410 || err.statusCode===401 || err.statusCode===403)) await supabase.from('push_subscriptions').delete().eq('id',sub.id); else console.error('Error enviando push:',err?.message||err) }
         }
         await supabase.from('push_notif_log').insert({tenant_id:tenantId,tipo:c.tipo,fecha:hoy})
       }
