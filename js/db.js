@@ -213,7 +213,7 @@ function invToDb(i) {
 function invFromDb(r) {
   return {
     id: r.id, nombre: r.nombre, categoria: r.categoria, proveedor: r.proveedor || '',
-    cantidad: Number(r.cantidad) || 0, stockMinimo: Number(r.stock_minimo) || 0,
+    cantidad: Number(r.cantidad) || 0, stockMinimo: Number(r.stockMinimo) || 0,
     precioCompra: Number(r.precio_compra) || 0, fechaCompra: r.fecha_compra || '',
     fechaVencimiento: r.fecha_vencimiento || ''
   };
@@ -283,19 +283,21 @@ export const saveCliente = (c) => pushUpsert('clientes', clienteToDb(c));
 export const deleteCliente = (id) => pushDelete('clientes', id);
 export const saveOrden = (o) => pushUpsert('ordenes', ordenToDb(o));
 
-/** Obtiene el próximo número de orden de forma atómica (BD).
- *  Fallback al contador local si la BD no está disponible (modo offline). */
-export async function siguienteOrdenNumero(fallbackLocal) {
-  if (!online() || !supabase) return fallbackLocal;
-  try {
-    const { data, error } = await supabase.rpc('siguiente_orden_numero', {
-      p_tenant_id: tenantId()
-    });
-    if (!error && typeof data === 'number') return data;
-  } catch (e) {
-    console.warn('No se pudo obtener número de BD, usando local:', e);
+/** Obtiene el próximo número de orden exclusivamente de la BD.
+ *  Crear una orden nueva requiere conexión: nunca se usa un número local provisional. */
+export async function siguienteOrdenNumero() {
+  if (!online() || !supabase) {
+    throw new Error('ORDER_NUMBER_REQUIRES_ONLINE');
   }
-  return fallbackLocal;
+  const { data, error } = await supabase.rpc('siguiente_orden_numero', {
+    p_tenant_id: tenantId()
+  });
+  if (error) throw error;
+  const numero = Number(data);
+  if (!Number.isSafeInteger(numero) || numero <= 0) {
+    throw new Error('ORDER_NUMBER_INVALID_RESPONSE');
+  }
+  return numero;
 }
 export const deleteOrden = (id) => pushDelete('ordenes', id);
 export const saveGasto = (g) => pushUpsert('gastos', gastoToDb(g));
