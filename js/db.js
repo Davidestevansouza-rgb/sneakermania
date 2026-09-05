@@ -213,7 +213,7 @@ function invToDb(i) {
 function invFromDb(r) {
   return {
     id: r.id, nombre: r.nombre, categoria: r.categoria, proveedor: r.proveedor || '',
-    cantidad: Number(r.cantidad) || 0, stockMinimo: Number(r.stockMinimo) || 0,
+    cantidad: Number(r.cantidad) || 0, stockMinimo: Number(r.stock_minimo) || 0,
     precioCompra: Number(r.precio_compra) || 0, fechaCompra: r.fecha_compra || '',
     fechaVencimiento: r.fecha_vencimiento || ''
   };
