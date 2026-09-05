@@ -27,14 +27,19 @@ export const CURRENCY_SYMBOL = '$';
 
 /**
  * Cliente de Supabase.
- * La librería se carga por CDN como script clásico (window.supabase),
- * por lo que está disponible antes de que se ejecuten los módulos.
+ * La sesión se conserva en ESTE dispositivo para que iPhone/Android/PC no
+ * obliguen al usuario a escribir la contraseña en cada recarga o reapertura.
+ * Supabase renueva el token automáticamente mientras la sesión siga válida.
  */
 let supabaseClient = null;
 try {
   if (typeof window !== 'undefined' && window.supabase && window.supabase.createClient) {
     supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: { persistSession: false, autoRefreshToken: true }
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false
+      }
     });
   } else {
     console.error('No se encontró la librería de Supabase (revisa la etiqueta <script> del CDN).');
