@@ -84,7 +84,58 @@ function clienteFromDb(r) {
 /* --- ordenes ---
    Los escalares se guardan en columnas tipadas (para consultas/RLS);
    el objeto completo se guarda además en `extra` para fidelidad total. */
+function normalizarSnapshotOrden(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+
+  const chain = [];
+  const seen = new Set();
+  let current = raw;
+  while (current && typeof current === 'object' && !Array.isArray(current) && !seen.has(current)) {
+    chain.push(current);
+    seen.add(current);
+    current = (current.extra && typeof current.extra === 'object' && !Array.isArray(current.extra))
+      ? current.extra
+      : null;
+  }
+
+  const base = {};
+  for (let i = chain.length - 1; i >= 0; i--) {
+    for (const [key, value] of Object.entries(chain[i])) {
+      if (key !== 'extra') base[key] = value;
+    }
+  }
+
+  const fotos = [];
+  const fotoKeys = new Set();
+  for (const node of chain) {
+    if (!Array.isArray(node.fotos)) continue;
+    for (const foto of node.fotos) {
+      if (!foto || typeof foto !== 'object') continue;
+      const key = foto.path || foto.url || JSON.stringify(foto);
+      if (fotoKeys.has(key)) continue;
+      fotoKeys.add(key);
+      fotos.push(foto);
+    }
+  }
+
+  const deepest = chain[chain.length - 1] || {};
+  const deepestLooksLikeOrder = (
+    Object.prototype.hasOwnProperty.call(deepest, 'id') ||
+    Object.prototype.hasOwnProperty.call(deepest, 'numero') ||
+    Object.prototype.hasOwnProperty.call(deepest, 'clienteId') ||
+    Object.prototype.hasOwnProperty.call(deepest, 'cliente_id')
+  );
+  const extra = deepestLooksLikeOrder ? {} : { ...deepest };
+  delete extra.extra;
+  if (fotos.length) extra.fotos = fotos;
+  else if (!Array.isArray(extra.fotos)) extra.fotos = [];
+
+  base.extra = extra;
+  return base;
+}
+
 function ordenToDb(o) {
+  const snapshot = normalizarSnapshotOrden(o);
   return {
     id: o.id, tenant_id: tenantId(), numero: o.numero,
     cliente_id: o.clienteId, usuario_id: userId(),
@@ -113,11 +164,13 @@ function ordenToDb(o) {
     firma_retiro: o.firmaRetiro || null,
     firma_recepcionista: o.firmaRecepcionista || null,
     entregado: !!o.entregado,
-    extra: o
+    extra: snapshot
   };
 }
 function ordenFromDb(r) {
-  const base = (r.extra && typeof r.extra === 'object') ? { ...r.extra } : {};
+  const base = normalizarSnapshotOrden(
+    (r.extra && typeof r.extra === 'object') ? r.extra : {}
+  );
   base.id = r.id;
   base.numero = r.numero != null ? r.numero : base.numero;
   base.clienteId = base.clienteId || r.cliente_id;
