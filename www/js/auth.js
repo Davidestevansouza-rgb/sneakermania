@@ -37,8 +37,10 @@ async function _registrarSesionUnica(userId) {
     const { error } = await supabase.rpc('establecer_sesion', { p_user_id: userId, p_token: token });
     if (error) throw error;
     _iniciarValidacionSesion(userId, token);
+    return true;
   } catch (e) {
     console.warn('No se pudo registrar la sesión única:', e?.message || e);
+    return false;
   }
 }
 
@@ -68,9 +70,32 @@ function _iniciarValidacionSesion(userId, token) {
 }
 
 /**
- * Cierra el token de sesión única SOLO si este dispositivo todavía posee el
- * token vigente. Esto impide que una sesión vieja borre el token de la nueva.
+ * Al reabrir/recargar, reutiliza el token de sesión única de ESTE dispositivo.
+ * Si ya fue reemplazado por otro dispositivo no lo reclama de nuevo: deja que
+ * la sesión nueva siga siendo la vigente y muestra el login localmente.
  */
+async function _restaurarSesionUnica(userId) {
+  const token = localStorage.getItem(SESSION_TOKEN_KEY);
+  if (!token) {
+    await _registrarSesionUnica(userId);
+    return true;
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('valida_sesion', { p_user_id: userId, p_token: token });
+    if (error) {
+      _iniciarValidacionSesion(userId, token);
+      return true;
+    }
+    if (data === false) return false;
+    _iniciarValidacionSesion(userId, token);
+    return true;
+  } catch (e) {
+    _iniciarValidacionSesion(userId, token);
+    return true;
+  }
+}
+
 async function _cerrarSesionUnica(userId, invalidateRemoteToken = true) {
   _stopSessionValidation();
   const localToken = localStorage.getItem(SESSION_TOKEN_KEY);
@@ -87,8 +112,6 @@ async function _cerrarSesionUnica(userId, invalidateRemoteToken = true) {
       p_token: localToken
     });
     if (validationError || sigueSiendoActual !== true) return;
-
-    // cerrar_sesion solo se ejecuta si el token local sigue siendo el vigente.
     await supabase.rpc('cerrar_sesion', { p_user_id: userId });
   } catch (e) {
     // El logout local debe continuar aunque la red o el RPC fallen.
@@ -131,7 +154,8 @@ export async function doLogin() {
       }
     } catch (e) { /* noop */ }
 
-    await onAuthenticated(data.user);
+    const ok = await onAuthenticated(data.user);
+    if (!ok) return;
     try { await _registrarSesionUnica(data.user.id); } catch (e) { /* noop */ }
 
     try {
@@ -161,11 +185,17 @@ export async function doLoginBiometric() {
   const errorEl = document.getElementById('login-error');
   if (errorEl) errorEl.style.display = 'none';
 
+  if (!hasBiometric()) {
+    if (errorEl) { errorEl.textContent = 'Face ID/huella todavía no está activado en este dispositivo.'; errorEl.style.display = 'block'; }
+    return;
+  }
+
   const bioSession = getBiometricSession();
-  if (!bioSession || !hasBiometric()) {
-    if (errorEl) { errorEl.textContent = 'No hay una sesión guardada en este dispositivo. Ingresa con tu contraseña.'; errorEl.style.display = 'block'; }
-    const btn = document.getElementById('btn-login-biometric');
-    if (btn) btn.style.display = 'none';
+  if (!bioSession) {
+    if (errorEl) {
+      errorEl.textContent = 'Face ID/huella está activado, pero necesita vincularse de nuevo. Ingresa con tu contraseña una sola vez.';
+      errorEl.style.display = 'block';
+    }
     return;
   }
   if (!supabase) {
@@ -175,7 +205,7 @@ export async function doLoginBiometric() {
 
   const verificado = await verificarBiometria();
   if (!verificado) {
-    if (errorEl) { errorEl.textContent = 'No se pudo verificar la huella/Face ID.'; errorEl.style.display = 'block'; }
+    if (errorEl) { errorEl.textContent = 'No se pudo verificar Face ID/huella. Intenta nuevamente o usa tu contraseña.'; errorEl.style.display = 'block'; }
     return;
   }
 
@@ -191,13 +221,15 @@ export async function doLoginBiometric() {
       }
     } catch (e) { /* noop */ }
 
-    await onAuthenticated(data.user);
+    const ok = await onAuthenticated(data.user);
+    if (!ok) return;
     try { await _registrarSesionUnica(data.user.id); } catch (e) { /* noop */ }
   } catch (e) {
     console.error('Error restaurando sesión con huella/Face ID:', e);
-    if (errorEl) { errorEl.textContent = 'Tu sesión guardada expiró. Ingresa con tu contraseña.'; errorEl.style.display = 'block'; }
-    const btn = document.getElementById('btn-login-biometric');
-    if (btn) btn.style.display = 'none';
+    if (errorEl) {
+      errorEl.textContent = 'Face ID/huella sigue registrado, pero la sesión venció. Ingresa con tu contraseña una sola vez para renovarla.';
+      errorEl.style.display = 'block';
+    }
   }
 }
 
@@ -206,10 +238,43 @@ export async function initBiometricLoginUI() {
   if (!btn) return;
   try {
     const disponible = await biometricDisponible();
-    const puedeUsar = disponible && hasBiometric() && !!getBiometricSession();
-    btn.style.display = puedeUsar ? 'flex' : 'none';
+    btn.style.display = (disponible && hasBiometric()) ? 'flex' : 'none';
   } catch (e) {
-    btn.style.display = 'none';
+    btn.style.display = hasBiometric() ? 'flex' : 'none';
+  }
+}
+
+export async function restorePersistedSession() {
+  if (!supabase) return false;
+  try {
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session?.user) return false;
+
+    const uniqueOk = await _restaurarSesionUnica(session.user.id);
+    if (!uniqueOk) {
+      _stopSessionValidation();
+      localStorage.removeItem(SESSION_TOKEN_KEY);
+      try { await supabase.auth.signOut({ scope: 'local' }); } catch (e) { /* noop */ }
+      if (state) state.session = { loggedIn: false, role: null, user: null };
+      await persist();
+      const errorEl = document.getElementById('login-error');
+      if (errorEl) {
+        errorEl.textContent = 'Esta cuenta se abrió en otro dispositivo. Ingresa nuevamente si quieres usarla aquí.';
+        errorEl.style.display = 'block';
+      }
+      return false;
+    }
+
+    try {
+      localStorage.setItem('supabase_session', JSON.stringify(session));
+      saveSessionForPin(session);
+      if (hasBiometric()) saveBiometricSession(session);
+    } catch (e) { /* noop */ }
+
+    return await onAuthenticated(session.user);
+  } catch (e) {
+    console.warn('No se pudo recuperar la sesión persistente:', e?.message || e);
+    return false;
   }
 }
 
@@ -228,7 +293,6 @@ export async function onAuthenticated(authUser) {
 
   let perfil = null;
   try {
-    // Solo columnas requeridas para autenticación/permisos.
     const { data, error } = await supabase
       .from('users')
       .select('id,nombre,rol,tenant_id,activo')
@@ -237,19 +301,30 @@ export async function onAuthenticated(authUser) {
     if (error) throw error;
     perfil = data;
   } catch (e) {
-    console.error('No se encontró el perfil del usuario en la tabla users:', e);
-    showToast('Tu usuario no tiene perfil asignado. Contacta al administrador.');
-    await supabase.auth.signOut();
-    return;
+    const cached = loadCache();
+    const cachedSession = cached?.session;
+    if (cachedSession?.userId === authUser.id && cachedSession?.role && cachedSession?.tenantId) {
+      perfil = {
+        id: authUser.id,
+        nombre: cachedSession.user || authUser.email,
+        rol: cachedSession.role,
+        tenant_id: cachedSession.tenantId,
+        activo: true
+      };
+    } else {
+      console.error('No se pudo verificar el perfil del usuario:', e);
+      showToast('No se pudo verificar tu usuario. Revisa tu conexión e intenta nuevamente.');
+      return false;
+    }
   }
 
   if (perfil.activo === false) {
     console.warn('Intento de acceso de un usuario desactivado:', authUser.email);
     showToast('Tu usuario está desactivado. Contacta al administrador.');
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
     try { localStorage.removeItem('supabase_session'); } catch (e) { /* noop */ }
     try { clearPin(); } catch (e) { /* noop */ }
-    return;
+    return false;
   }
 
   state.session = {
@@ -261,7 +336,6 @@ export async function onAuthenticated(authUser) {
     tenantId: perfil.tenant_id
   };
 
-  // La carga completa se conserva únicamente al iniciar sesión.
   const ok = await db.loadAllData();
   if (!ok) {
     const cached = loadCache();
@@ -290,8 +364,6 @@ export async function onAuthenticated(authUser) {
   const inicial = tabInicial();
   if (inicial !== 'dashboard' && typeof app.switchTab === 'function') app.switchTab(inicial);
 
-  if (window.resetInactivityTimer) window.resetInactivityTimer();
-
   if (state.session.role === 'Supervisor') {
     try {
       const pushMod = await import('./modules/push-notifications.js');
@@ -302,18 +374,12 @@ export async function onAuthenticated(authUser) {
   }
 
   db.flushQueue().then(r => setConnStatus(db.online() ? 'online' : 'offline', r.pending));
-
-  // Cada módulo ya es idempotente: no crea canales/timers duplicados.
   startNotificationSync();
   startRealtimeAgenda();
   startRealtimeConfig();
+  return true;
 }
 
-/**
- * Cierra la sesión.
- * replaced=true se usa cuando ESTE dispositivo fue reemplazado por otro:
- * cierra solo localmente y jamás ejecuta cerrar_sesion contra el token nuevo.
- */
 export async function doLogout(options = {}) {
   if (_logoutInProgress) return;
   _logoutInProgress = true;
@@ -330,7 +396,6 @@ export async function doLogout(options = {}) {
     try {
       if (supabase) {
         if (replaced) {
-          // La sesión nueva vive en otro dispositivo; nunca revocarla globalmente.
           await supabase.auth.signOut({ scope: 'local' });
         } else if (hasBiometric()) {
           try {
@@ -339,7 +404,7 @@ export async function doLogout(options = {}) {
           } catch (e) { /* noop */ }
           await supabase.auth.signOut({ scope: 'local' });
         } else {
-          await supabase.auth.signOut();
+          await supabase.auth.signOut({ scope: 'local' });
         }
       }
     } catch (e) { /* noop */ }
@@ -358,6 +423,7 @@ export async function doLogout(options = {}) {
     if (shell) shell.style.display = 'none';
     const login = document.getElementById('login-screen');
     if (login) login.style.display = 'flex';
+    await initBiometricLoginUI();
     if (!replaced) showToast('Sesión cerrada');
   } finally {
     _replacementLogoutScheduled = false;
@@ -378,4 +444,4 @@ export function applyRolePermissions() {
   if (nuevaOrdenBtn) nuevaOrdenBtn.style.display = puedeEditarOrdenes() ? 'inline-flex' : 'none';
 }
 
-Object.assign(window, { selectRole, doLogin, doLogout, doLoginBiometric, initBiometricLoginUI });
+Object.assign(window, { selectRole, doLogin, doLogout, doLoginBiometric, initBiometricLoginUI, restorePersistedSession });
