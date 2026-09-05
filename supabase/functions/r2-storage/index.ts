@@ -6,7 +6,6 @@ const R2_ENDPOINT = Deno.env.get("R2_ENDPOINT");
 const R2_ACCESS_KEY_ID = Deno.env.get("R2_ACCESS_KEY_ID");
 const R2_SECRET_ACCESS_KEY = Deno.env.get("R2_SECRET_ACCESS_KEY");
 const R2_BUCKET = Deno.env.get("R2_BUCKET") || "sneakermania-fotos";
-const R2_PUBLIC_URL = Deno.env.get("R2_PUBLIC_URL");
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -22,7 +21,7 @@ const CORS_HEADERS = {
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json", "Cache-Control": "no-store" },
   });
 }
 function limpiarPath(path: string): string {
@@ -31,19 +30,14 @@ function limpiarPath(path: string): string {
 function primerSegmento(path: string): string {
   return limpiarPath(path).split("/")[0] || "";
 }
+function privateRef(path: string): string {
+  return `r2://${path}`;
+}
 
-/**
- * Autoriza EXCLUSIVAMENTE con un JWT real de Supabase Auth.
- * El tenant siempre se deriva server-side desde auth user -> public.users.
- * x-tenant-id puede seguir llegando por compatibilidad del frontend, pero
- * jamás se usa como credencial ni como fuente de autorización.
- */
+/** JWT real -> usuario -> tenant. x-tenant-id nunca autoriza. */
 async function tenantAutorizado(req: Request): Promise<string | null> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return null;
-
-  const token = (req.headers.get("authorization") || "")
-    .replace(/^Bearer\s+/i, "")
-    .trim();
+  const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
   if (!token) return null;
 
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -55,15 +49,15 @@ async function tenantAutorizado(req: Request): Promise<string | null> {
     .select("tenant_id, activo")
     .eq("id", userData.user.id)
     .single();
-
   if (rowErr || !userRow?.tenant_id || userRow.activo === false) return null;
   return userRow.tenant_id as string;
 }
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
+  if (req.method !== "POST") return jsonResponse({ error: "Método no permitido" }, 405);
 
-  if (!R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_PUBLIC_URL) {
+  if (!R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
     return jsonResponse({ error: "El servidor no tiene configurado el almacenamiento (R2)." }, 500);
   }
 
@@ -111,10 +105,9 @@ Deno.serve(async (req: Request) => {
       });
       if (!uploadResp.ok) return jsonResponse({ error: "No se pudo subir el archivo a R2" }, 502);
 
-      return jsonResponse({
-        url: `${R2_PUBLIC_URL.replace(/\/+$/, "")}/${cleanPath}`,
-        path: cleanPath,
-      });
+      // Nunca devolver ni persistir una URL pública del bucket. La BD guarda
+      // una referencia privada y la app obtiene una URL firmada al visualizar.
+      return jsonResponse({ url: privateRef(cleanPath), path: cleanPath });
     }
 
     const payload = await req.json().catch(() => ({}));
@@ -177,7 +170,7 @@ Deno.serve(async (req: Request) => {
         files: nombres.map((key) => ({
           name: key.split("/").pop(),
           path: key,
-          url: `${R2_PUBLIC_URL.replace(/\/+$/, "")}/${key}`,
+          url: privateRef(key),
         })),
       });
     }
