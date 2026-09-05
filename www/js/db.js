@@ -161,7 +161,7 @@ function invFromDb(r) {
   return {
     id: r.id, nombre: r.nombre, categoria: r.categoria, proveedor: r.proveedor || '',
     cantidad: Number(r.cantidad) || 0, stockMinimo: Number(r.stock_minimo) || 0,
-    precioCompra: Number(r.precio_compra) || 0, fechaCompra: r.fecha_compra || '',
+    precioCompra: Number(r.precio_compra) || 0, fechaCompra: r.fechaCompra || '',
     fechaVencimiento: r.fecha_vencimiento || ''
   };
 }
@@ -233,7 +233,7 @@ export const saveOrden = (o) => pushUpsert('ordenes', ordenToDb(o));
 /** Obtiene el próximo número de orden de forma atómica (BD).
  *  Fallback al contador local si la BD no está disponible (modo offline). */
 export async function siguienteOrdenNumero(fallbackLocal) {
-  if (!isOnline() || !supabase) return fallbackLocal;
+  if (!online() || !supabase) return fallbackLocal;
   try {
     const { data, error } = await supabase.rpc('siguiente_orden_numero', {
       p_tenant_id: tenantId()
@@ -271,8 +271,6 @@ function registroParToDb(r) {
 }
 function registroParFromDb(r) {
   const urls = Array.isArray(r.foto_urls) && r.foto_urls.length ? r.foto_urls : (r.foto_url ? [r.foto_url] : []);
-  // Respaldo para registros viejos sin "hora" guardada: se toma la hora de
-  // created_at (columna que ya existía en la tabla desde el inicio).
   const horaRespaldo = (!r.hora && r.created_at)
     ? new Date(r.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
     : null;
@@ -362,11 +360,6 @@ export async function logRemote(accion) {
   }
 }
 
-/** Busca en el registro de actividad (bitácora) dentro de un rango de
- *  fechas puntual (ej. hasta 2 meses atrás), sin quedar limitado a los
- *  últimos 100 registros que carga loadAllData(). Devuelve null si no se
- *  pudo consultar (sin conexión / error), para que quien llama pueda
- *  avisar sin confundirlo con "no hay resultados". */
 export async function fetchActivityLogRange(desde, hasta) {
   if (!online() || !supabase || !tenantId()) return null;
   try {
@@ -389,9 +382,6 @@ export async function saveConfig(cfg) {
   return pushUpsert('configuracion_tenant', { tenant_id: tenantId(), ...cfg });
 }
 
-/* ============================================================
-   CARGA INICIAL DE DATOS DEL TENANT
-   ============================================================ */
 export async function loadAllData() {
   if (!online() || !tenantId()) return false;
   try {
@@ -453,28 +443,18 @@ export async function loadAllData() {
 
 export async function saveFactura(factura) {
   const row = {
-    id: factura.id || crypto.randomUUID(),
-    tenant_id: tenantId(),
-    numero: factura.numero,
-    orden_id: factura.ordenId || null,
-    cliente_id: factura.clienteId || null,
-    nombre_cliente: factura.nombreCliente || factura.nombre || '',
-    rfc: factura.rfc || null,
-    email: factura.email || null,
-    telefono: factura.telefono || null,
-    direccion: factura.direccion || null,
-    concepto: factura.concepto || null,
-    metodo_pago: factura.metodoPago || null,
-    subtotal: factura.subtotal || 0,
-    total: factura.total || 0
+    id: factura.id || crypto.randomUUID(), tenant_id: tenantId(), numero: factura.numero,
+    orden_id: factura.ordenId || null, cliente_id: factura.clienteId || null,
+    nombre_cliente: factura.nombreCliente || factura.nombre || '', rfc: factura.rfc || null,
+    email: factura.email || null, telefono: factura.telefono || null, direccion: factura.direccion || null,
+    concepto: factura.concepto || null, metodo_pago: factura.metodoPago || null,
+    subtotal: factura.subtotal || 0, total: factura.total || 0
   };
   try {
     if (online()) {
       const { error } = await supabase.from('facturas').insert(row);
       if (error) throw error;
-    } else {
-      pushUpsert('facturas', row);
-    }
+    } else pushUpsert('facturas', row);
     return { ok: true, id: row.id };
   } catch (e) {
     console.error('Error al guardar la factura:', e);
@@ -496,31 +476,16 @@ export async function listUsers() {
 
 export async function createNotification(notif) {
   const row = {
-    id: crypto.randomUUID(),
-    tenant_id: tenantId(),
-    tipo: notif.tipo,
-    texto: notif.texto,
-    orden_id: notif.ordenId || null,
-    inventario_id: notif.inventarioId || null,
-    prioridad: notif.prioridad || 'Media',
-    leida: false
+    id: crypto.randomUUID(), tenant_id: tenantId(), tipo: notif.tipo, texto: notif.texto,
+    orden_id: notif.ordenId || null, inventario_id: notif.inventarioId || null,
+    prioridad: notif.prioridad || 'Media', leida: false
   };
   try {
     if (online()) {
       const { error } = await supabase.from('notificaciones').insert(row);
       if (error) throw error;
-    } else {
-      pushUpsert('notificaciones', row);
-    }
-    state.notificaciones.push({
-      id: row.id,
-      tipo: row.tipo,
-      texto: row.texto,
-      ordenId: row.orden_id,
-      inventarioId: row.inventario_id,
-      prioridad: row.prioridad,
-      leida: false
-    });
+    } else pushUpsert('notificaciones', row);
+    state.notificaciones.push({ id: row.id, tipo: row.tipo, texto: row.texto, ordenId: row.orden_id, inventarioId: row.inventario_id, prioridad: row.prioridad, leida: false });
     return { ok: true };
   } catch (e) {
     console.error('Error al crear notificación:', e);
@@ -531,14 +496,9 @@ export async function createNotification(notif) {
 export async function markNotificationRead(notifId) {
   try {
     if (online()) {
-      const { error } = await supabase
-        .from('notificaciones')
-        .update({ leida: true })
-        .eq('id', notifId);
+      const { error } = await supabase.from('notificaciones').update({ leida: true }).eq('id', notifId);
       if (error) throw error;
-    } else {
-      pushUpsert('notificaciones', { id: notifId, leida: true });
-    }
+    } else pushUpsert('notificaciones', { id: notifId, leida: true });
     const n = state.notificaciones.find(x => x.id === notifId);
     if (n) n.leida = true;
     return { ok: true };
@@ -548,61 +508,44 @@ export async function markNotificationRead(notifId) {
   }
 }
 
-/* ============================================================
-   SINCRONIZACIÓN DE LA COLA OFFLINE
-   ============================================================ */
 export async function flushQueue() {
   if (!online()) return { flushed: 0, pending: getQueue().length };
   let q = getQueue();
   if (!q.length) return { flushed: 0, pending: 0 };
-
   const restantes = [];
   let flushed = 0;
   let descartadas = 0;
   const idMap = new Map();
-
   function replaceIdsInRow(row) {
     if (!row || typeof row !== 'object') return row;
     const cloned = JSON.parse(JSON.stringify(row));
     for (const k of Object.keys(cloned)) {
       const v = cloned[k];
       if (typeof v === 'string' && idMap.has(v)) cloned[k] = idMap.get(v);
-      if (v && typeof v === 'object' && v.id && typeof v.id === 'string' && idMap.has(v.id)) {
-        cloned[k].id = idMap.get(v.id);
-      }
+      if (v && typeof v === 'object' && v.id && typeof v.id === 'string' && idMap.has(v.id)) cloned[k].id = idMap.get(v.id);
     }
     return cloned;
   }
-
   for (let i = 0; i < q.length; i++) {
     let op = q[i];
     try {
       if (op.row) op.row = replaceIdsInRow(op.row);
       if (op.op === 'delete' && op.id && idMap.has(op.id)) op.id = idMap.get(op.id);
-
       let data = null, error = null;
       if (op.op === 'upsert') ({ data, error } = await supabase.from(op.table).upsert(op.row).select());
       else if (op.op === 'insert') ({ data, error } = await supabase.from(op.table).insert(op.row).select());
       else if (op.op === 'delete') ({ error } = await supabase.from(op.table).delete().eq('id', op.id));
-
       if (error) throw error;
-
       if ((op.op === 'upsert' || op.op === 'insert') && data && data[0] && data[0].id && op.row && op.row.id && op.row.id !== data[0].id) {
         idMap.set(op.row.id, data[0].id);
         applyIdToState(op.row.id, data[0].id);
       }
       flushed++;
     } catch (e) {
-      if (isPermanentError(e)) {
-        console.error('Operación descartada de la cola por error permanente:', e.message || e);
-        descartadas++;
-      } else {
-        console.error('No se pudo sincronizar una operación, se mantiene en cola:', e.message || e);
-        restantes.push(op);
-      }
+      if (isPermanentError(e)) { console.error('Operación descartada de la cola por error permanente:', e.message || e); descartadas++; }
+      else { console.error('No se pudo sincronizar una operación, se mantiene en cola:', e.message || e); restantes.push(op); }
     }
   }
-
   if (idMap.size && restantes.length) {
     for (let j = 0; j < restantes.length; j++) {
       const op = restantes[j];
@@ -610,7 +553,6 @@ export async function flushQueue() {
       if (op.op === 'delete' && op.id && idMap.has(op.id)) op.id = idMap.get(op.id);
     }
   }
-
   if (restantes.length) setQueue(restantes); else clearQueue();
   return { flushed, pending: restantes.length, descartadas };
 }
