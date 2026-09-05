@@ -3,9 +3,10 @@
    Fase 2: Notificaciones calculadas automáticamente y almacenadas
    en la tabla notificaciones de Supabase.
    ============================================================ */
-import { state, todayISO, persist } from '../state.js';
+import { state, todayISO } from '../state.js';
 import { clienteNombre, reproducirSonidoNotificacion } from '../ui.js';
 import { escHtml } from '../sanitize.js';
+import { supabase } from '../config.js';
 import * as db from '../db.js';
 
 /**
@@ -15,70 +16,110 @@ import * as db from '../db.js';
 export function computeNotifications() {
   const today = todayISO(0);
   const notifs = [];
-  
+
   // Entregas hoy
   state.ordenes.filter(o => o.fechaEstimada === today && o.estado !== 'Entregado').forEach(o =>
-    notifs.push({ 
-      type: 'd', 
+    notifs.push({
+      type: 'd',
       texto: 'Entrega hoy: orden #' + o.numero + ' de ' + clienteNombre(o.clienteId),
       ordenId: o.id,
       prioridad: o.prioridad === 'Alta' ? 'Alta' : 'Media'
     })
   );
-  
+
   // Servicios atrasados
   state.ordenes.filter(o => o.fechaEstimada < today && o.estado !== 'Entregado').forEach(o =>
-    notifs.push({ 
-      type: 'a', 
+    notifs.push({
+      type: 'a',
       texto: 'Servicio atrasado: orden #' + o.numero + ' de ' + clienteNombre(o.clienteId),
       ordenId: o.id,
       prioridad: 'Alta'
     })
   );
-  
+
   // Stock bajo
   state.inventario.filter(i => Number(i.cantidad) <= Number(i.stockMinimo)).forEach(i =>
-    notifs.push({ 
-      type: 's', 
+    notifs.push({
+      type: 's',
       texto: 'Stock bajo: ' + i.nombre + ' (' + i.cantidad + ' unidades)',
       inventarioId: i.id,
       prioridad: 'Media'
     })
   );
-  
+
   // Pagos pendientes
   state.ordenes.filter(o => o.estadoPago === 'Pendiente' || o.estadoPago === 'Parcial').forEach(o =>
-    notifs.push({ 
-      type: 'p', 
+    notifs.push({
+      type: 'p',
       texto: 'Pago pendiente: orden #' + o.numero + ' — ' + clienteNombre(o.clienteId),
       ordenId: o.id,
       prioridad: 'Baja'
     })
   );
-  
+
   return notifs;
 }
+
+/**
+ * Refresca SOLO la tabla notificaciones. Antes syncNotifications() llamaba
+ * db.loadAllData(), lo que descargaba clientes, órdenes, inventario, gastos,
+ * facturas, registro_pares, orden_items, etc. cada minuto.
+ */
+async function reloadNotificationsOnly() {
+  const tenant = state.session?.tenantId;
+  if (!supabase || !tenant) return;
+
+  const { data, error } = await supabase
+    .from('notificaciones')
+    .select('id,tipo,texto,leida,prioridad,orden_id,inventario_id,created_at')
+    .eq('tenant_id', tenant)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (error) throw error;
+
+  state.notificaciones = (data || []).map(n => ({
+    id: n.id,
+    tipo: n.tipo,
+    texto: n.texto,
+    leida: !!n.leida,
+    prioridad: n.prioridad || 'Media',
+    ordenId: n.orden_id || null,
+    inventarioId: n.inventario_id || null,
+    fecha: n.created_at
+  }));
+}
+
+let notifSyncRunning = false;
 
 /**
  * Sincroniza las notificaciones calculadas con la base de datos.
  * Elimina notificaciones resueltas y crea nuevas.
  */
 export async function syncNotifications() {
-  const computed = computeNotifications();
-  const computedTexts = computed.map(n => n.texto);
-  
+  if (notifSyncRunning || !state.session?.loggedIn) return;
+  notifSyncRunning = true;
+
   try {
-    // Marcar como leídas las notificaciones que ya no aplican
+    // Primero refrescar únicamente notificaciones para evitar duplicados entre
+    // dispositivos sin descargar el resto de las tablas del tenant.
+    await reloadNotificationsOnly();
+
+    const computed = computeNotifications();
+    const computedTexts = computed.map(n => n.texto);
+
     if (!Array.isArray(state.notificaciones)) state.notificaciones = [];
+
+    // Marcar como leídas las notificaciones que ya no aplican.
     const resolved = state.notificaciones.filter(n => !n.leida && !computedTexts.includes(n.texto));
     for (const n of resolved) {
       await db.markNotificationRead(n.id);
     }
-    
-    // Crear notificaciones nuevas que no existen en la DB
+
+    // Crear notificaciones nuevas que no existen en la DB.
     const existingTexts = state.notificaciones.map(n => n.texto);
     const nuevas = computed.filter(n => !existingTexts.includes(n.texto));
-    
+
     for (const n of nuevas) {
       await db.createNotification({
         tipo: n.type,
@@ -89,25 +130,27 @@ export async function syncNotifications() {
         leida: false
       });
     }
-    
-    // Recargar notificaciones desde la DB
-    await db.loadAllData();
-    // Actualizar el contador rojo (solo sube si hay nuevas)
+
+    // No se usa loadAllData(): las funciones anteriores ya actualizan el
+    // estado local y solo refrescamos esta tabla si hubo escrituras.
+    if (resolved.length || nuevas.length) await reloadNotificationsOnly();
     updateBell();
-    
+
   } catch (e) {
     console.error('Error al sincronizar notificaciones:', e);
+  } finally {
+    notifSyncRunning = false;
   }
 }
 
 export async function renderNotificaciones() {
   // Sincronizar notificaciones primero
   await syncNotifications();
-  
+
   // Renderizar desde state.notificaciones (ya sincronizadas)
   const notifs = (state.notificaciones || []).filter(n => !n.leida);
   const esAdmin = state.session && state.session.role === 'Administrador';
-  
+
   document.getElementById('notif-list').innerHTML = notifs.length ? notifs.map(n => {
     const icon = ({ d: '📦', a: '⚠', s: '▥', p: '$' }[n.tipo] || '🔔');
     const prioClass = n.prioridad === 'Alta' ? ' alta' : (n.prioridad === 'Baja' ? ' baja' : '');
@@ -119,7 +162,7 @@ export async function renderNotificaciones() {
       btn +
     '</div>';
   }).join('') : '<div class="hint">No hay notificaciones pendientes.</div>';
-  
+
   // Al abrir el panel se marcan como vistas y el contador rojo vuelve a cero
   // (las notificaciones NO se eliminan).
   marcarNotifsVistas();
@@ -179,16 +222,17 @@ export function updateBell() {
 }
 
 /**
- * Auto-sync cada 60 segundos (solo si el usuario está activo)
+ * Auto-sync cada 60 segundos. Mantiene la frecuencia funcional existente,
+ * pero ahora cada ciclo consulta únicamente notificaciones.
  */
 let notifSyncInterval = null;
 
 export function startNotificationSync() {
   if (notifSyncInterval) return;
-  
+
   // Sync inmediato
   syncNotifications();
-  
+
   // Sync cada 60 segundos
   notifSyncInterval = setInterval(() => {
     syncNotifications();
@@ -200,11 +244,12 @@ export function stopNotificationSync() {
     clearInterval(notifSyncInterval);
     notifSyncInterval = null;
   }
+  notifSyncRunning = false;
 }
 
-Object.assign(window, { 
-  computeNotifications, 
-  renderNotificaciones, 
+Object.assign(window, {
+  computeNotifications,
+  renderNotificaciones,
   updateBell,
   marcarNotifsVistas,
   dismissNotification,

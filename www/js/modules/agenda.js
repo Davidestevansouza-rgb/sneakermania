@@ -6,23 +6,17 @@ import { state, todayISO, tenantId } from '../state.js';
 import { fmtDate, clienteNombre, showToast } from '../ui.js';
 import { escHtml } from '../sanitize.js';
 import { supabase } from '../config.js';
-import * as db from '../db.js';
 
 let realtimeChannel = null;
 
 export function renderAgenda() {
   const today = todayISO(0);
   const items = state.ordenItems || [];
-
-  // Lista plana de "pares" para la agenda (uno por cada ordenItem),
-  // con su fecha individual (it.fechaEntrega / it.fechaEstimada / o.fechaEstimada),
-  // estado de taller y cliente/orden.
   const pares = [];
+
   items.forEach(it => {
     const o = state.ordenes.find(x => x.id === it.ordenId);
     if (!o || o.estado === 'Entregado' || it.entregado) return;
-    // El par puede tener su propia fecha de entrega estimada (fechaEntregaEstimada,
-    // cargada al crear la orden) o caer con la de la orden general.
     const fechaPar = it.fechaEntregaEstimada || o.fechaEstimada;
     if (!fechaPar) return;
     pares.push({
@@ -36,8 +30,6 @@ export function renderAgenda() {
     });
   });
 
-  // Si una orden NO tiene pares individuales, llevamos su fecha general
-  // como un único "par general".
   state.ordenes.forEach(o => {
     if (o.estado === 'Entregado') return;
     const tieneItems = items.some(it => it.ordenId === o.id);
@@ -63,8 +55,6 @@ export function renderAgenda() {
     return (new Date(p.fecha) - new Date(today)) / (1000 * 3600 * 24) <= diasProgramados;
   }).sort((a, b) => a.fecha.localeCompare(b.fecha));
 
-  // Plantilla: una tarjeta por par, con su código (#orden-NRO_ITEM), cliente
-  // (# de orden general), estado de taller y la fecha estimada de entrega.
   const renderList = (list, kind) => list.length ? list.map(p => {
     const diasLabel = kind === 'atrasados'
       ? ' · ⚠ ' + Math.round((new Date(today) - new Date(p.fecha)) / (1000 * 3600 * 24)) + ' día(s) atrasado'
@@ -84,31 +74,21 @@ export function renderAgenda() {
   document.getElementById('agenda-atrasados').innerHTML = renderList(atrasados, 'atrasados');
   document.getElementById('agenda-programados').innerHTML = renderList(programados, 'programados');
 
-  // Indicador de tiempo real
   const indicator = document.getElementById('realtime-indicator');
-  if (indicator) {
-    indicator.style.display = realtimeChannel ? 'inline-flex' : 'none';
-  }
+  if (indicator) indicator.style.display = realtimeChannel ? 'inline-flex' : 'none';
 
-  // Beep de pip al detectar pares atrasados: lo reproducimos SOLO si la
-  // pestaña Agenda está activa y la cuenta de atrasados cambió desde la
-  // última vez (para no hacerlo molesto en cada render).
   const cuenta = atrasados.length;
   if (document.getElementById('tab-agenda')
       && document.getElementById('tab-agenda').classList.contains('active')) {
-    if (cuenta > 0 && cuenta !== ultimoAtrasadosAgenda) {
-      pipBeep();
-    }
+    if (cuenta > 0 && cuenta !== ultimoAtrasadosAgenda) pipBeep();
     ultimoAtrasadosAgenda = cuenta;
   } else {
-    // reset caché cuando se sale de la agenda
     ultimoAtrasadosAgenda = cuenta;
   }
 }
 
 let ultimoAtrasadosAgenda = null;
 
-/** Reproduce un "pip" corto usando el Web Audio API (sin archivo de audio). */
 function pipBeep() {
   try {
     if (!window.AudioContext && !window.webkitAudioContext) return;
@@ -122,55 +102,78 @@ function pipBeep() {
     gain.connect(ctx.destination);
     const now = ctx.currentTime;
     osc.start(now);
-    osc.stop(now + 0.15);   // pip corto de 150ms
+    osc.stop(now + 0.15);
     osc.onended = () => { try { ctx.close(); } catch (_) {} };
   } catch (e) { /* sin audio, no rompe nada */ }
 }
 
-/** Lleva al detalle de una orden al tocarla desde la agenda. */
 export function verOrdenDesdeAgenda(ordenId) {
   if (window.viewOrdenDetalle) window.viewOrdenDetalle(ordenId);
 }
 
+/** Convierte la fila snake_case de Postgres al formato camelCase del state. */
+function mapOrdenRealtime(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    clienteId: row.cliente_id ?? row.clienteId,
+    fechaIngreso: row.fecha_ingreso ?? row.fechaIngreso,
+    fechaEstimada: row.fecha_estimada ?? row.fechaEstimada,
+    estadoPago: row.estado_pago ?? row.estadoPago,
+    totalPares: row.total_pares ?? row.totalPares,
+    tenantId: row.tenant_id ?? row.tenantId
+  };
+}
+
 /**
- * Inicia suscripción a cambios en tiempo real de la tabla ordenes.
+ * Aplica solamente la fila de orden recibida por Realtime al estado local.
+ * No ejecuta loadAllData() ni hace ninguna consulta adicional.
  */
+function applyOrdenRealtime(payload) {
+  if (!Array.isArray(state.ordenes)) state.ordenes = [];
+
+  const eventType = payload?.eventType;
+  const raw = eventType === 'DELETE' ? payload.old : payload.new;
+  if (!raw?.id) return;
+
+  const idx = state.ordenes.findIndex(o => o.id === raw.id);
+
+  if (eventType === 'DELETE') {
+    if (idx >= 0) state.ordenes.splice(idx, 1);
+    return;
+  }
+
+  const mapped = mapOrdenRealtime(raw);
+  if (idx >= 0) state.ordenes[idx] = { ...state.ordenes[idx], ...mapped };
+  else state.ordenes.push(mapped);
+}
+
+/** Inicia una única suscripción a cambios de órdenes del tenant actual. */
 export function startRealtimeAgenda() {
-  if (realtimeChannel) return; // Ya está activo
-  
+  if (realtimeChannel) return;
+
   const tenant = tenantId();
-  if (!tenant) return;
-  
+  if (!tenant || !supabase) return;
+
   try {
-    // Crear canal de Realtime
     realtimeChannel = supabase
-      .channel('agenda-ordenes')
+      .channel('agenda-ordenes-' + tenant)
       .on(
         'postgres_changes',
         {
-          event: '*', // INSERT, UPDATE, DELETE
+          event: '*',
           schema: 'public',
           table: 'ordenes',
           filter: `tenant_id=eq.${tenant}`
         },
-        async (payload) => {
-          console.log('Realtime update:', payload);
-          
-          // Recargar datos y re-renderizar
-          await db.loadAllData();
-          
-          // Si la agenda está visible, renderizar
+        (payload) => {
+          applyOrdenRealtime(payload);
+
           const agendaTab = document.getElementById('tab-agenda');
-          if (agendaTab && agendaTab.classList.contains('active')) {
-            renderAgenda();
-          }
-          
-          // Mostrar notificación discreta
-          if (payload.eventType === 'INSERT') {
-            showToast('Nueva orden agregada', 'info');
-          } else if (payload.eventType === 'UPDATE') {
-            showToast('Orden actualizada', 'info');
-          }
+          if (agendaTab && agendaTab.classList.contains('active')) renderAgenda();
+
+          if (payload.eventType === 'INSERT') showToast('Nueva orden agregada', 'info');
+          else if (payload.eventType === 'UPDATE') showToast('Orden actualizada', 'info');
         }
       )
       .subscribe((status) => {
@@ -180,21 +183,19 @@ export function startRealtimeAgenda() {
           console.error('Error en canal Realtime');
         }
       });
-      
   } catch (e) {
+    realtimeChannel = null;
     console.error('Error al iniciar Realtime:', e);
   }
 }
 
-/**
- * Detiene la suscripción a tiempo real.
- */
+/** Detiene la suscripción actual exactamente una vez. */
 export function stopRealtimeAgenda() {
-  if (realtimeChannel) {
-    supabase.removeChannel(realtimeChannel);
-    realtimeChannel = null;
-    console.log('✗ Realtime agenda detenida');
-  }
+  const channel = realtimeChannel;
+  if (!channel) return;
+  realtimeChannel = null;
+  try { supabase.removeChannel(channel); } catch (e) { /* noop */ }
+  console.log('✗ Realtime agenda detenida');
 }
 
 Object.assign(window, { renderAgenda, startRealtimeAgenda, stopRealtimeAgenda, verOrdenDesdeAgenda });
