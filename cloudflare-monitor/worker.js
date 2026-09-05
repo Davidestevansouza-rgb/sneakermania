@@ -2,82 +2,84 @@
 // Cron: "0 11 * * *" (8 AM hora Bolivia = 11 UTC)
 
 const SUPABASE_EDGE_URL = "https://ypgyfgbftfvouobmsync.supabase.co/functions/v1/monitor-alertas";
-const MONITOR_SECRET = "sneakermania-monitor-2024";
-const RESEND_API_KEY_ENV = "RESEND_API_KEY"; // Se accede como env.RESEND_API_KEY
+const PAGES_URL = "https://sneakermania.pages.dev/";
 const ALERT_EMAIL = "davidestevansouza@gmail.com";
-const R2_BUCKET_NAME = "sneakermania-fotos";
 const R2_LIMIT_GB = 10;
 
 export default {
-  // Cron trigger - se ejecuta automáticamente
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runMonitor(env));
   },
 
-  // También se puede llamar manualmente via HTTP GET /monitor
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/monitor") {
-      const secret = request.headers.get("x-monitor-secret");
-      if (secret !== MONITOR_SECRET) {
-        return new Response("No autorizado", { status: 401 });
-      }
-      const result = await runMonitor(env);
-      return new Response(JSON.stringify(result), {
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-    return new Response("SneakerMania Monitor v1.0", { status: 200 });
+    if (url.pathname !== "/monitor") return new Response("SneakerMania Monitor", { status: 200 });
+
+    if (!env.MONITOR_SECRET) return new Response("Monitor no configurado", { status: 503 });
+    const supplied = request.headers.get("x-monitor-secret") || "";
+    if (supplied !== env.MONITOR_SECRET) return new Response("No autorizado", { status: 401 });
+
+    const result = await runMonitor(env);
+    return new Response(JSON.stringify(result), {
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+    });
   }
 };
 
 async function runMonitor(env) {
+  if (!env.MONITOR_SECRET) throw new Error("MONITOR_SECRET no configurado en Cloudflare Worker");
+
   const results = { timestamp: new Date().toISOString(), checks: {} };
 
-  // ── 1. Calcular uso de R2 ────────────────────────────────────────────────
+  // 1. Medición real de R2: recorre todas las páginas del bucket.
   let r2UsedGB = null;
   try {
-    if (env.R2_BUCKET) {
-      const listed = await env.R2_BUCKET.list({ limit: 1000 });
-      let totalBytes = 0;
-      for (const obj of listed.objects) {
-        totalBytes += obj.size || 0;
-      }
-      // Si hay más objetos (truncated), seguir listando para sumar todo.
-      if (listed.truncated) {
-        let cursor = listed.cursor;
-        while (cursor) {
-          const more = await env.R2_BUCKET.list({ limit: 1000, cursor });
-          for (const obj of more.objects) { totalBytes += obj.size || 0; }
-          cursor = more.truncated ? more.cursor : null;
-        }
-      }
-      r2UsedGB = totalBytes / (1024 * 1024 * 1024);
-      results.checks.r2 = { usedGB: r2UsedGB, pct: ((r2UsedGB / R2_LIMIT_GB) * 100).toFixed(1) };
-    }
+    if (!env.R2_BUCKET) throw new Error("Binding R2_BUCKET no configurado");
+    let totalBytes = 0;
+    let cursor;
+    do {
+      const listed = await env.R2_BUCKET.list({ limit: 1000, ...(cursor ? { cursor } : {}) });
+      for (const obj of listed.objects || []) totalBytes += Number(obj.size) || 0;
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+
+    r2UsedGB = totalBytes / (1024 * 1024 * 1024);
+    results.checks.r2 = {
+      usedGB: r2UsedGB,
+      pct: Number(((r2UsedGB / R2_LIMIT_GB) * 100).toFixed(1))
+    };
   } catch (e) {
     console.error("Error calculando R2:", e);
-    results.checks.r2 = { error: e.message };
+    results.checks.r2 = { error: String(e?.message || e) };
   }
 
-  // ── 2. Llamar a la Edge Function de Supabase con los datos de R2 ─────────
+  // 2. Verificación real de Cloudflare Pages.
+  try {
+    const pageResp = await fetch(PAGES_URL, { method: "HEAD", redirect: "follow" });
+    results.checks.pages = { ok: pageResp.ok, status: pageResp.status };
+  } catch (e) {
+    results.checks.pages = { ok: false, error: String(e?.message || e) };
+  }
+
+  // 3. Supabase monitor. El secreto solo vive en variables cifradas del Worker.
   try {
     const resp = await fetch(SUPABASE_EDGE_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-monitor-secret": MONITOR_SECRET,
+        "x-monitor-secret": env.MONITOR_SECRET,
       },
       body: JSON.stringify({ r2UsedGB }),
     });
-    const data = await resp.json();
-    results.checks.supabase = data;
-    results.emailSent = data.emailSent;
+    const data = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+    results.checks.supabase = { ok: resp.ok, status: resp.status, ...data };
+    results.emailSent = data.emailSent === true;
+    if (!resp.ok) throw new Error(`Supabase monitor HTTP ${resp.status}`);
   } catch (e) {
     console.error("Error llamando Edge Function:", e);
-    results.checks.supabase = { error: e.message };
+    if (!results.checks.supabase) results.checks.supabase = { ok: false, error: String(e?.message || e) };
 
-    // Si Supabase falla, enviar alerta directa via Resend
+    // Alerta independiente si Supabase no responde.
     if (env.RESEND_API_KEY) {
       await fetch("https://api.resend.com/emails", {
         method: "POST",
@@ -86,17 +88,15 @@ async function runMonitor(env) {
           from: "SneakerMania Monitor <onboarding@resend.dev>",
           to: [ALERT_EMAIL],
           subject: "🚨 SneakerMania — Error de monitoreo",
-          html: `<p>El Worker de monitoreo no pudo conectarse a Supabase.</p><p>Error: ${e.message}</p><p>Fecha: ${new Date().toLocaleString("es-BO", { timeZone: "America/La_Paz" })}</p>`
+          html: `<p>El Worker no pudo completar el chequeo de Supabase.</p><p>Fecha: ${new Date().toLocaleString("es-BO", { timeZone: "America/La_Paz" })}</p>`
         })
-      });
+      }).catch(() => {});
     }
   }
 
-  // ── 3. Resumen semanal (lunes) ───────────────────────────────────────────
-  const now = new Date();
-  const isMonday = now.getUTCDay() === 1;
-  if (isMonday && env.RESEND_API_KEY) {
-    await sendWeeklySummary(env.RESEND_API_KEY, results);
+  // 4. Resumen semanal (lunes UTC; Bolivia no cruza de día a las 8 AM).
+  if (new Date().getUTCDay() === 1 && env.RESEND_API_KEY) {
+    await sendWeeklySummary(env.RESEND_API_KEY, results).catch((e) => console.error("Resumen semanal:", e));
   }
 
   return results;
@@ -105,29 +105,18 @@ async function runMonitor(env) {
 async function sendWeeklySummary(apiKey, results) {
   const r2 = results.checks.r2;
   const sup = results.checks.supabase;
+  const pages = results.checks.pages;
   const html = `
   <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
-    <div style="background:#1d4ed8;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-      <h2 style="margin:0">📊 Resumen Semanal — SneakerMania</h2>
-      <p style="margin:4px 0 0;opacity:.85;font-size:14px">${new Date().toLocaleDateString("es-BO", { timeZone: "America/La_Paz", weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
-    </div>
-    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-top:none;padding:20px;border-radius:0 0 8px 8px">
-      <h3 style="color:#374151;margin-top:0">Estado del sistema</h3>
-      <table style="width:100%;border-collapse:collapse">
-        <tr style="background:#e5e7eb">
-          <th style="padding:8px 12px;text-align:left">Componente</th>
-          <th style="padding:8px 12px;text-align:left">Estado</th>
-        </tr>
-        <tr><td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">☁️ R2 Storage (fotos)</td><td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">${r2 && !r2.error ? `${r2.usedGB.toFixed(3)} GB / 10 GB (${r2.pct}%)` : '❌ No disponible'}</td></tr>
-        <tr><td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">🗄️ Supabase</td><td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">${sup && !sup.error ? '✅ Funcionando' : '⚠️ Verificar'}</td></tr>
-        <tr><td style="padding:8px 12px">🚀 Cloudflare Pages</td><td style="padding:8px 12px">✅ Activo</td></tr>
-      </table>
-      <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0">
-      <p style="font-size:12px;color:#6b7280;margin:0">Sistema SneakerMania • Monitoreo Automático semanal (lunes)</p>
-    </div>
+    <h2>📊 Resumen Semanal — SneakerMania</h2>
+    <table style="width:100%;border-collapse:collapse">
+      <tr><td style="padding:8px">☁️ R2 Storage</td><td style="padding:8px">${r2 && !r2.error ? `${Number(r2.usedGB).toFixed(3)} GB / ${R2_LIMIT_GB} GB (${r2.pct}%)` : "⚠️ No disponible"}</td></tr>
+      <tr><td style="padding:8px">🗄️ Supabase</td><td style="padding:8px">${sup?.ok ? "✅ Funcionando" : "⚠️ Verificar"}</td></tr>
+      <tr><td style="padding:8px">🚀 Cloudflare Pages</td><td style="padding:8px">${pages?.ok ? `✅ HTTP ${pages.status}` : "⚠️ Verificar"}</td></tr>
+    </table>
   </div>`;
 
-  await fetch("https://api.resend.com/emails", {
+  const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -137,4 +126,5 @@ async function sendWeeklySummary(apiKey, results) {
       html
     })
   });
+  if (!resp.ok) throw new Error(`Resend HTTP ${resp.status}`);
 }
