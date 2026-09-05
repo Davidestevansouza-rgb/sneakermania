@@ -386,14 +386,17 @@ export async function guardarClienteOrden(btn) {
       await db.saveCliente(cliente);
     }
 
-    // 2) Orden
+    // 2) Orden — usar SIEMPRE el contador atómico de Supabase cuando hay conexión.
+    // Esto evita que dos dispositivos/usuarios creen el mismo número de orden.
     const fechasIngreso = filas.map(f => f.querySelector('.co-fecha-ingreso-input')?.value).filter(Boolean).sort();
     const fechasEntrega = filas.map(f => f.querySelector('.co-fecha-entrega-input')?.value).filter(Boolean).sort();
     const tipoServicio = Array.from(new Set(filas.flatMap(f => Array.from(f.querySelectorAll('.co-servicio-chk:checked')).map(c => c.value))));
     const responsable = Array.from(new Set(filas.map(f => f.querySelector('.co-responsable-input')?.value || '').filter(Boolean))).join(', ');
+    const numOrden = await db.siguienteOrdenNumero(state.nextOrderNum);
+    if (numOrden >= state.nextOrderNum) state.nextOrderNum = numOrden + 1;
     const orden = ensurePagoFields({
       id: crypto.randomUUID(),
-      numero: state.nextOrderNum++,
+      numero: numOrden,
       clienteId: cliente.id,
       prioridad: document.getElementById('nco-prioridad').value,
       estado: 'Recibido y registrado',
