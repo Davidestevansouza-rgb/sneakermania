@@ -77,6 +77,7 @@ function _iniciarValidacionSesion(userId, token) {
 async function _restaurarSesionUnica(userId) {
   const token = localStorage.getItem(SESSION_TOKEN_KEY);
   if (!token) {
+    // Primera apertura después de activar sesión persistente o dispositivo nuevo.
     await _registrarSesionUnica(userId);
     return true;
   }
@@ -84,6 +85,7 @@ async function _restaurarSesionUnica(userId) {
   try {
     const { data, error } = await supabase.rpc('valida_sesion', { p_user_id: userId, p_token: token });
     if (error) {
+      // Si la red falla, no expulsar al usuario; se validará nuevamente al reconectar.
       _iniciarValidacionSesion(userId, token);
       return true;
     }
@@ -96,6 +98,10 @@ async function _restaurarSesionUnica(userId) {
   }
 }
 
+/**
+ * Cierra el token de sesión única SOLO si este dispositivo todavía posee el
+ * token vigente. Esto impide que una sesión vieja borre el token de la nueva.
+ */
 async function _cerrarSesionUnica(userId, invalidateRemoteToken = true) {
   _stopSessionValidation();
   const localToken = localStorage.getItem(SESSION_TOKEN_KEY);
@@ -112,6 +118,8 @@ async function _cerrarSesionUnica(userId, invalidateRemoteToken = true) {
       p_token: localToken
     });
     if (validationError || sigueSiendoActual !== true) return;
+
+    // cerrar_sesion solo se ejecuta si el token local sigue siendo el vigente.
     await supabase.rpc('cerrar_sesion', { p_user_id: userId });
   } catch (e) {
     // El logout local debe continuar aunque la red o el RPC fallen.
@@ -230,9 +238,11 @@ export async function doLoginBiometric() {
       errorEl.textContent = 'Face ID/huella sigue registrado, pero la sesión venció. Ingresa con tu contraseña una sola vez para renovarla.';
       errorEl.style.display = 'block';
     }
+    // No ocultar el botón ni borrar la biometría por un fallo de red/token.
   }
 }
 
+/** Mantiene visible el acceso biométrico si ESTE dispositivo ya fue registrado. */
 export async function initBiometricLoginUI() {
   const btn = document.getElementById('btn-login-biometric');
   if (!btn) return;
@@ -244,6 +254,11 @@ export async function initBiometricLoginUI() {
   }
 }
 
+/**
+ * Restaura silenciosamente una sesión válida guardada por Supabase.
+ * Se usa al recargar, volver desde WhatsApp u otra app, o cuando iOS/Android
+ * descarga y vuelve a cargar la PWA/página. No pide contraseña si no hace falta.
+ */
 export async function restorePersistedSession() {
   if (!supabase) return false;
   try {
@@ -293,6 +308,7 @@ export async function onAuthenticated(authUser) {
 
   let perfil = null;
   try {
+    // Solo columnas requeridas para autenticación/permisos.
     const { data, error } = await supabase
       .from('users')
       .select('id,nombre,rol,tenant_id,activo')
@@ -301,6 +317,8 @@ export async function onAuthenticated(authUser) {
     if (error) throw error;
     perfil = data;
   } catch (e) {
+    // Si solo falló internet, conservar la sesión y usar el perfil cacheado
+    // del mismo usuario. No expulsar al usuario por un corte temporal.
     const cached = loadCache();
     const cachedSession = cached?.session;
     if (cachedSession?.userId === authUser.id && cachedSession?.role && cachedSession?.tenantId) {
@@ -336,6 +354,7 @@ export async function onAuthenticated(authUser) {
     tenantId: perfil.tenant_id
   };
 
+  // La carga completa se conserva únicamente al iniciar/restaurar sesión.
   const ok = await db.loadAllData();
   if (!ok) {
     const cached = loadCache();
@@ -374,12 +393,19 @@ export async function onAuthenticated(authUser) {
   }
 
   db.flushQueue().then(r => setConnStatus(db.online() ? 'online' : 'offline', r.pending));
+
+  // Cada módulo ya es idempotente: no crea canales/timers duplicados.
   startNotificationSync();
   startRealtimeAgenda();
   startRealtimeConfig();
   return true;
 }
 
+/**
+ * Cierra la sesión.
+ * replaced=true se usa cuando ESTE dispositivo fue reemplazado por otro:
+ * cierra solo localmente y jamás ejecuta cerrar_sesion contra el token nuevo.
+ */
 export async function doLogout(options = {}) {
   if (_logoutInProgress) return;
   _logoutInProgress = true;
@@ -396,6 +422,7 @@ export async function doLogout(options = {}) {
     try {
       if (supabase) {
         if (replaced) {
+          // La sesión nueva vive en otro dispositivo; nunca revocarla globalmente.
           await supabase.auth.signOut({ scope: 'local' });
         } else if (hasBiometric()) {
           try {
