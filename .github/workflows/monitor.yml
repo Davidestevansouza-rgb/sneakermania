@@ -1,37 +1,39 @@
-name: SneakerMania Monitor
+name: SneakerMania Monitor Backup
 
 on:
   schedule:
-    # 11:00 UTC = 8:00 AM hora Bolivia (America/La_Paz, UTC-4)
-    - cron: '0 11 * * *'
-    # Reporte semanal: lunes a las 11:00 UTC
-    - cron: '0 11 * * 1'
+    # Respaldo diario del monitor principal de Cloudflare: 11:15 UTC.
+    - cron: '15 11 * * *'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   monitor:
-    name: Monitoreo Automático
+    name: Verificación Supabase
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      MONITOR_SECRET: ${{ secrets.MONITOR_SECRET }}
     steps:
-      - name: Monitor diario
+      - name: Verificar configuración segura
+        shell: bash
         run: |
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
+          if [ -z "$MONITOR_SECRET" ]; then
+            echo "MONITOR_SECRET no está configurado como GitHub Actions Secret."
+            exit 1
+          fi
+
+      - name: Ejecutar monitor de respaldo
+        shell: bash
+        run: |
+          RESPONSE=$(curl --fail-with-body --silent --show-error \
+            --max-time 30 \
             -X POST \
             -H "Content-Type: application/json" \
-            -H "x-monitor-secret: sneakermania-monitor-2024" \
+            -H "x-monitor-secret: ${MONITOR_SECRET}" \
             "https://ypgyfgbftfvouobmsync.supabase.co/functions/v1/monitor-alertas" \
-            -d '{"r2UsedGB": 0.001}')
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | head -1)
-          echo "Status: $HTTP_CODE"
-          echo "Response: $BODY"
-          if [ "$HTTP_CODE" != "200" ]; then exit 1; fi
-          
-      - name: Reporte semanal (lunes)
-        if: github.event.schedule == '0 11 * * 1'
-        run: |
-          curl -s -X POST \
-            -H "Content-Type: application/json" \
-            -H "x-monitor-secret: sneakermania-monitor-2024" \
-            "https://ypgyfgbftfvouobmsync.supabase.co/functions/v1/monitor-alertas" \
-            -d '{"tipo": "semanal", "r2UsedGB": 0.001}'
+            -d '{}')
+          echo "Monitor respondió correctamente."
+          echo "$RESPONSE"
