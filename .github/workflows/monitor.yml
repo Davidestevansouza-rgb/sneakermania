@@ -1,39 +1,19 @@
-name: SneakerMania Monitor Backup
+name: SneakerMania Monitor — Manual Diagnostic
 
+# El monitoreo productivo ya corre internamente en Supabase pg_cron y mide
+# la BD + R2 con credenciales que nunca salen del servidor. Este workflow
+# queda únicamente como diagnóstico manual para evitar secretos duplicados.
 on:
-  schedule:
-    # Respaldo diario del monitor principal de Cloudflare: 11:15 UTC.
-    - cron: '15 11 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  monitor:
-    name: Verificación Supabase
+  info:
+    name: Estado del monitor
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      MONITOR_SECRET: ${{ secrets.MONITOR_SECRET }}
     steps:
-      - name: Verificar configuración segura
-        shell: bash
-        run: |
-          if [ -z "$MONITOR_SECRET" ]; then
-            echo "MONITOR_SECRET no está configurado como GitHub Actions Secret."
-            exit 1
-          fi
-
-      - name: Ejecutar monitor de respaldo
-        shell: bash
-        run: |
-          RESPONSE=$(curl --fail-with-body --silent --show-error \
-            --max-time 30 \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -H "x-monitor-secret: ${MONITOR_SECRET}" \
-            "https://ypgyfgbftfvouobmsync.supabase.co/functions/v1/monitor-alertas" \
-            -d '{}')
-          echo "Monitor respondió correctamente."
-          echo "$RESPONSE"
+      - run: |
+          echo "El monitor productivo de SneakerMania se ejecuta desde Supabase pg_cron."
+          echo "No se almacenan secretos de producción en GitHub Actions."
