@@ -13,6 +13,8 @@ export function renderFinanzas() {
   const totalQR = state.ordenes.reduce((s, o) => s + Number(o.pagadoQR || 0), 0);
   const totalEfectivo = state.ordenes.reduce((s, o) => s + Number(o.pagadoEfectivo || 0), 0);
   const totalPendiente = state.ordenes.reduce((s, o) => { const vf = Number(o.precio) - Number(o.descuento || 0); return s + Math.max(vf - Number(o.pagado || 0), 0); }, 0);
+  // Descuentos otorgados en las órdenes: se reportan aquí para que las
+  // cuentas cuadren (precio bruto − descuentos = lo realmente cobrable).
   const totalDescuentos = state.ordenes.reduce((s, o) => s + Number(o.descuento || 0), 0);
   const ventaBruta = state.ordenes.reduce((s, o) => s + Number(o.precio || 0), 0);
   const gastosTotal = state.gastos.reduce((s, g) => s + Number(g.monto || 0), 0);
@@ -63,7 +65,7 @@ export async function saveGasto(btn) {
     descripcion: document.getElementById('gasto-descripcion').value.trim()
   };
   if (!data.monto || data.monto <= 0) { showToast('Debes indicar el monto del gasto'); return; }
-  const restore = lockBtn(btn);
+  const restore = lockBtn(btn);   // evita doble guardado
   let target;
   try {
     if (id) {
@@ -71,6 +73,7 @@ export async function saveGasto(btn) {
       Object.assign(target, data);
       logActivity('Editó gasto de ' + data.categoria + ' por ' + fmtMoney(data.monto));
     } else {
+      // ID con UUID en lugar de Date.now().
       data.id = crypto.randomUUID();
       state.gastos.push(data);
       target = data;
