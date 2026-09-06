@@ -13,7 +13,8 @@ function addCSS() {
   s.textContent = `
     .sm-pop{display:none!important}
     .sm-def-photo-btn{display:inline-flex!important;align-items:center;justify-content:center;gap:6px}
-    .modal-backdrop .modal{box-sizing:border-box;max-width:min(760px,calc(100vw - 24px))!important;overflow-x:hidden!important}
+    .modal-backdrop{overscroll-behavior:contain!important}
+    .modal-backdrop .modal{box-sizing:border-box;max-width:min(760px,calc(100vw - 24px))!important;overflow-x:hidden!important;overscroll-behavior:contain!important}
     .modal-backdrop .modal input,.modal-backdrop .modal select,.modal-backdrop .modal textarea{max-width:100%!important;box-sizing:border-box!important}
     #orden-fotos-generales-preview{display:flex!important;flex-wrap:wrap!important;gap:8px!important;position:static!important;margin-top:8px!important}
     #orden-fotos-generales-preview .foto-general-thumb{position:relative!important;flex:0 0 auto!important}
@@ -21,7 +22,7 @@ function addCSS() {
     #sm-frange,#sm-prange{gap:12px!important;align-items:end!important;overflow:visible!important}
     #tab-produccion .field,#tab-produccion input,#tab-produccion select,#tab-produccion textarea{min-width:0!important;max-width:100%!important;box-sizing:border-box!important}
     .timeline-list .timeline-item:nth-child(-n+4){display:none!important}
-    body.sm-body-locked{overflow:hidden!important;position:fixed!important;width:100%!important;left:0!important;right:0!important}
+    html.sm-no-bg-scroll,body.sm-no-bg-scroll{overflow:hidden!important;overscroll-behavior:none!important}
     @media(max-width:700px){
       #sm-frange,#sm-prange{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;gap:12px!important;width:100%!important;padding-left:12px!important;padding-right:12px!important;box-sizing:border-box!important}
       #sm-frange .field,#sm-prange .field{width:100%!important;min-width:0!important}
@@ -64,7 +65,7 @@ function fixOrdenGeneral() {
     const host = gal.parentElement || general;
     directNativeButton(host, gal, 'orden-general');
   }
-  document.querySelectorAll('#orden-items-list .orden-item-row').forEach((row, idx) => {
+  document.querySelectorAll('#orden-items-list .orden-item-row').forEach(row => {
     const input = row.querySelector('label[title="Agregar foto de este artículo"] input[type=file]') || row.querySelector('input[type=file]');
     const label = input?.closest('label');
     row.querySelectorAll('.sm-menu').forEach(x => x.style.display = 'none');
@@ -72,7 +73,6 @@ function fixOrdenGeneral() {
     if (label) {
       label.style.display = 'inline-flex';
       label.style.cursor = 'pointer';
-      label.childNodes.forEach(n => { if (n.nodeType === 3 && /Agregar foto/.test(n.textContent || '')) n.textContent = '📷 Agregar foto'; });
     }
   });
 }
@@ -82,7 +82,6 @@ function fixProduccion() {
   if (!tab) return;
   const codigo = document.getElementById('prod-codigo');
   const info = document.getElementById('prod-info-articulo-wrap');
-  const servicio = document.getElementById('prod-servicio');
   const blanco = document.getElementById('prod-blanqueamiento');
   const obs = document.getElementById('prod-observacion');
   const cam = document.getElementById('prod-foto-camera');
@@ -144,18 +143,10 @@ function fixFinanceRanges() {
   });
 }
 
-let lockedY = 0;
 function fixModalScroll() {
   const open = document.querySelector('.modal-backdrop.open');
-  if (open && !document.body.classList.contains('sm-body-locked')) {
-    lockedY = window.scrollY;
-    document.body.style.top = '-' + lockedY + 'px';
-    document.body.classList.add('sm-body-locked');
-  } else if (!open && document.body.classList.contains('sm-body-locked')) {
-    document.body.classList.remove('sm-body-locked');
-    document.body.style.top = '';
-    window.scrollTo(0, lockedY);
-  }
+  document.documentElement.classList.toggle('sm-no-bg-scroll', !!open);
+  document.body.classList.toggle('sm-no-bg-scroll', !!open);
 }
 
 async function persistAudit(orderId, isNew) {
@@ -182,7 +173,7 @@ function renderAuditOnTickets() {
     const d = document.createElement('div');
     d.className = 'sm-order-audit';
     d.style.cssText = 'border-top:1px dashed var(--line);margin-top:10px;padding-top:8px;font-size:12px;line-height:1.5;color:var(--ink-soft)';
-    d.innerHTML = 'Registrado por: <strong>' + reg + '</strong>' + (o.extra?.editadoPor && o.extra.editadoPor !== reg ? '<br>Editado por: <strong>' + o.extra.editadoPor + '</strong>' : '');
+    d.innerHTML = 'Registrado por: <strong>'+reg+'</strong>'+(o.extra?.editadoPor && o.extra.editadoPor !== reg ? '<br>Editado por: <strong>'+o.extra.editadoPor+'</strong>' : '');
     ticket.querySelector('.ticket-body')?.appendChild(d);
   });
 }
