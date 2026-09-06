@@ -1,159 +1,194 @@
-import { state, persist } from '../state.js';
-import * as db from '../db.js';
+import { state } from '../state.js';
 import * as storage from '../storage-manager.js';
-import { showToast } from '../ui.js';
 
 if (!window.__smFotosGeneralesFix0906) {
   window.__smFotosGeneralesFix0906 = true;
   queueMicrotask(instalar);
+  setTimeout(instalar, 300);
+  setTimeout(instalar, 1200);
 }
 
-let archivosSeleccionados = [];
+let cacheVisual = [];
+let observer = null;
+let restaurando = false;
 
-function claveArchivo(f) {
-  return [f?.name || '', f?.size || 0, f?.lastModified || 0].join('|');
-}
-function claveFoto(f) {
-  return f?.path || f?.url || JSON.stringify(f || {});
-}
 function generales(o) {
   return o?.extra && Array.isArray(o.extra.fotos)
     ? o.extra.fotos.filter(f => f && f.categoria === 'todos_pares')
     : [];
 }
-function registrarArchivos(fileList) {
-  const actuales = new Set(archivosSeleccionados.map(claveArchivo));
-  Array.from(fileList || []).forEach(f => {
-    if (!f || !(f.type || '').startsWith('image/')) return;
-    const k = claveArchivo(f);
-    if (!actuales.has(k)) {
-      archivosSeleccionados.push(f);
-      actuales.add(k);
-    }
-  });
+
+function modalOrdenVisible() {
+  const modal = document.getElementById('modal-orden');
+  if (!modal) return false;
+  const cs = getComputedStyle(modal);
+  return cs.display !== 'none' && cs.visibility !== 'hidden';
 }
 
-async function reconstruirMiniaturasExistentes() {
-  const id = document.getElementById('orden-id')?.value;
-  if (!id) return;
+function contenedor() {
+  return document.getElementById('orden-fotos-generales-preview');
+}
+
+function capturarVisual() {
+  const cont = contenedor();
+  if (!cont) return;
+  const urls = Array.from(cont.querySelectorAll('img'))
+    .map(img => img.currentSrc || img.src || '')
+    .filter(Boolean);
+  if (urls.length) cacheVisual = [...new Set(urls)];
+}
+
+function crearThumb(url) {
+  const wrap = document.createElement('div');
+  wrap.className = 'foto-general-thumb';
+  const img = document.createElement('img');
+  img.alt = 'Foto general';
+  img.loading = 'lazy';
+  img.style.cursor = 'pointer';
+  img.src = url;
+  img.onclick = () => {
+    if (typeof window.ampliarImagen === 'function') window.ampliarImagen(img.src);
+  };
+  wrap.appendChild(img);
+  return wrap;
+}
+
+function restaurarCacheSiSeVacia() {
+  if (restaurando || !modalOrdenVisible()) return;
+  const cont = contenedor();
+  if (!cont || cont.querySelector('img') || !cacheVisual.length) return;
+  restaurando = true;
+  try {
+    cacheVisual.forEach(url => cont.appendChild(crearThumb(url)));
+  } finally {
+    restaurando = false;
+  }
+}
+
+async function reconstruirDesdeState({ conservarVisual = true } = {}) {
+  const cont = contenedor();
+  const id = document.getElementById('orden-id')?.value || '';
+  if (!cont || !id) {
+    if (conservarVisual) restaurarCacheSiSeVacia();
+    return;
+  }
   const orden = (state.ordenes || []).find(o => o.id === id);
   const fotos = generales(orden);
-  const cont = document.getElementById('orden-fotos-generales-preview');
-  if (!cont) return;
-
-  cont.innerHTML = '';
-  for (const foto of fotos) {
-    const wrap = document.createElement('div');
-    wrap.className = 'foto-general-thumb';
-    const img = document.createElement('img');
-    img.alt = 'Foto general';
-    img.loading = 'lazy';
-    img.style.cursor = 'pointer';
-    try {
-      img.src = await storage.resolveImageUrl(foto.url, foto.path) || foto.url || '';
-    } catch (_) {
-      img.src = foto.url || '';
-    }
-    img.onclick = () => {
-      if (typeof window.ampliarImagen === 'function') window.ampliarImagen(img.src);
-    };
-    wrap.appendChild(img);
-    cont.appendChild(wrap);
+  if (!fotos.length) {
+    if (conservarVisual) restaurarCacheSiSeVacia();
+    return;
   }
+
+  const urls = [];
+  for (const foto of fotos) {
+    try {
+      const u = await storage.resolveImageUrl(foto.url, foto.path);
+      if (u) urls.push(u);
+    } catch (_) {
+      if (foto.url) urls.push(foto.url);
+    }
+  }
+  if (!urls.length) {
+    if (conservarVisual) restaurarCacheSiSeVacia();
+    return;
+  }
+
+  // Si todavía hay previews locales pendientes, no los eliminamos durante el guardado.
+  const locales = Array.from(cont.querySelectorAll('img'))
+    .map(img => img.currentSrc || img.src || '')
+    .filter(u => u && (u.startsWith('blob:') || u.startsWith('data:')));
+  const todos = [...new Set([...urls, ...locales])];
+  cacheVisual = todos.slice();
+  restaurando = true;
+  try {
+    cont.innerHTML = '';
+    todos.forEach(url => cont.appendChild(crearThumb(url)));
+  } finally {
+    restaurando = false;
+  }
+}
+
+function vigilarContenedor() {
+  const cont = contenedor();
+  if (!cont) return;
+  if (observer) observer.disconnect();
+  observer = new MutationObserver(() => {
+    if (restaurando) return;
+    const tiene = !!cont.querySelector('img');
+    if (tiene) capturarVisual();
+    else restaurarCacheSiSeVacia();
+  });
+  observer.observe(cont, { childList: true, subtree: true });
+  capturarVisual();
 }
 
 function envolverOpenOrden() {
   const original = window.openOrdenModal;
-  if (typeof original !== 'function' || original.__smFotosGeneralesOpen) return;
+  if (typeof original !== 'function' || original.__smFotosGeneralesOpenV2) return;
   const w = function(...args) {
-    archivosSeleccionados = [];
+    cacheVisual = [];
     const r = original.apply(this, args);
-    Promise.resolve(r).finally(() => setTimeout(reconstruirMiniaturasExistentes, 0));
+    Promise.resolve(r).finally(() => {
+      setTimeout(() => {
+        vigilarContenedor();
+        reconstruirDesdeState();
+      }, 0);
+    });
     return r;
   };
-  w.__smFotosGeneralesOpen = true;
+  w.__smFotosGeneralesOpenV2 = true;
   window.openOrdenModal = w;
 }
 
 function envolverSaveOrden() {
   const original = window.saveOrden;
-  if (typeof original !== 'function' || original.__smFotosGeneralesSave) return;
+  if (typeof original !== 'function' || original.__smFotosGeneralesSaveV2) return;
   const w = async function(...args) {
-    const idAntes = document.getElementById('orden-id')?.value || '';
-    const ordenAntes = idAntes ? (state.ordenes || []).find(o => o.id === idAntes) : null;
-    const antiguas = generales(ordenAntes).map(f => ({ ...f }));
-    const cantidadAntes = antiguas.length;
-    const seleccionadas = archivosSeleccionados.slice();
-
-    const resultado = await original.apply(this, args);
-    const idDespues = resultado || document.getElementById('orden-id')?.value || idAntes;
-    const orden = (state.ordenes || []).find(o => o.id === idDespues);
-    if (!orden) {
-      if (resultado) archivosSeleccionados = [];
-      return resultado;
-    }
-
-    orden.extra = orden.extra && typeof orden.extra === 'object' ? orden.extra : {};
-    orden.extra.fotos = Array.isArray(orden.extra.fotos) ? orden.extra.fotos : [];
-
-    let cambio = false;
-    const existentesAhora = new Set(orden.extra.fotos.map(claveFoto));
-
-    // Nunca perder fotos generales anteriores al editar.
-    for (const foto of antiguas) {
-      const k = claveFoto(foto);
-      if (!existentesAhora.has(k)) {
-        orden.extra.fotos.push(foto);
-        existentesAhora.add(k);
-        cambio = true;
-      }
-    }
-
-    // Completar solo las nuevas que el guardado original no haya persistido.
-    const cantidadGeneralAhora = generales(orden).length;
-    const agregadasPorOriginal = Math.max(0, cantidadGeneralAhora - cantidadAntes);
-    const faltantes = seleccionadas.slice(agregadasPorOriginal);
-    for (const file of faltantes) {
-      try {
-        const foto = await storage.uploadFoto(file, orden.id, 'todos_pares');
-        const k = claveFoto(foto);
-        if (!existentesAhora.has(k)) {
-          orden.extra.fotos.push(foto);
-          existentesAhora.add(k);
-          cambio = true;
-        }
-      } catch (e) {
-        console.error('No se pudo guardar foto general:', e);
-        showToast('Una foto general no pudo guardarse. Intenta nuevamente.');
-      }
-    }
-
-    if (cambio) {
-      await persist();
-      await db.saveOrden(orden);
-    }
-
-    archivosSeleccionados = [];
-    // Si el modal sigue abierto (p. ej. guardar y registrar pago), reconstruir
-    // inmediatamente desde el state ya persistido. Así no desaparecen al guardar.
-    setTimeout(reconstruirMiniaturasExistentes, 0);
-    return resultado;
+    capturarVisual();
+    const r = await original.apply(this, args);
+    // El guardado original sí persiste las fotos. Aquí solo mantenemos/renovamos la vista.
+    [0, 250, 700, 1500, 3000].forEach(ms => setTimeout(() => {
+      if (!modalOrdenVisible()) return;
+      restaurarCacheSiSeVacia();
+      reconstruirDesdeState();
+    }, ms));
+    return r;
   };
-  w.__smFotosGeneralesSave = true;
+  w.__smFotosGeneralesSaveV2 = true;
   window.saveOrden = w;
 }
 
 function instalar() {
+  envolverOpenOrden();
+  envolverSaveOrden();
+
   document.addEventListener('change', e => {
     const input = e.target;
-    if (!(input instanceof HTMLInputElement) || input.type !== 'file' || !input.files?.length) return;
+    if (!(input instanceof HTMLInputElement) || input.type !== 'file') return;
     const general = document.getElementById('orden-registro-general');
     if (general?.contains(input) || input.id === 'orden-foto-general-camera' || input.id === 'orden-foto-general-galeria') {
-      registrarArchivos(input.files);
+      setTimeout(() => {
+        vigilarContenedor();
+        capturarVisual();
+      }, 0);
     }
   }, true);
 
-  envolverOpenOrden();
-  envolverSaveOrden();
-  setTimeout(reconstruirMiniaturasExistentes, 0);
+  document.addEventListener('click', e => {
+    const b = e.target?.closest?.('button');
+    if (!b || !document.getElementById('modal-orden')?.contains(b)) return;
+    const txt = (b.textContent || '').toLowerCase();
+    const on = b.getAttribute('onclick') || '';
+    if (txt.includes('guardar') || on.includes('saveOrden')) {
+      capturarVisual();
+      [300, 800, 1600, 3000].forEach(ms => setTimeout(() => {
+        if (!modalOrdenVisible()) return;
+        restaurarCacheSiSeVacia();
+        reconstruirDesdeState();
+      }, ms));
+    }
+  }, true);
+
+  vigilarContenedor();
+  reconstruirDesdeState();
 }
