@@ -1,4 +1,5 @@
 import './correcciones-estables-20260906.js';
+import './correcciones-ultimas-20260906.js';
 import { state, todayISO } from '../state.js';
 import { fmtMoney, fmtDate, clienteNombre, chipPago } from '../ui.js';
 import { escHtml } from '../sanitize.js';
