@@ -1,5 +1,6 @@
 import './correcciones-preview-20260906.js';
 import './correcciones-funcionales-20260906.js';
+import './correcciones-definitivas-20260906.js';
 import { state, todayISO } from '../state.js';
 import { fmtMoney, fmtDate, clienteNombre, chipPago } from '../ui.js';
 import { escHtml } from '../sanitize.js';
