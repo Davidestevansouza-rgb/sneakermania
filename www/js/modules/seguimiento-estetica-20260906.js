@@ -2,7 +2,10 @@ if (!document.getElementById('sm-seguimiento-estetica-0906')) {
   const s = document.createElement('style');
   s.id = 'sm-seguimiento-estetica-0906';
   s.textContent = `
-    #orden-detalle-content .sm-supervision-step,
+    /* Supervisión ya no se muestra: el flujo visible queda en Control de calidad y Biblioteca. */
+    #orden-detalle-content .sm-supervision-step {
+      display:none !important;
+    }
     #orden-detalle-content .timeline-list .timeline-item {
       border:1px solid var(--line);
       border-radius:10px;
@@ -10,9 +13,6 @@ if (!document.getElementById('sm-seguimiento-estetica-0906')) {
       margin:0 0 10px 0;
       background:var(--paper-raised,#fff);
       box-shadow:none;
-    }
-    #orden-detalle-content .sm-supervision-step {
-      display:block !important;
     }
     #orden-detalle-content .timeline-list {
       margin:0;
@@ -22,11 +22,9 @@ if (!document.getElementById('sm-seguimiento-estetica-0906')) {
       display:none !important;
       content:none !important;
     }
-    #orden-detalle-content .sm-supervision-step .timeline-dot,
     #orden-detalle-content .timeline-list .timeline-dot {
       display:none !important;
     }
-    #orden-detalle-content .sm-supervision-step > div:last-child,
     #orden-detalle-content .timeline-list .timeline-item > div:last-child {
       width:100%;
       display:grid;
@@ -47,7 +45,6 @@ if (!document.getElementById('sm-seguimiento-estetica-0906')) {
       white-space:nowrap;
     }
     @media(max-width:520px){
-      #orden-detalle-content .sm-supervision-step > div:last-child,
       #orden-detalle-content .timeline-list .timeline-item > div:last-child {
         grid-template-columns:1fr;
       }
