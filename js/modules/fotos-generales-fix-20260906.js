@@ -33,22 +33,33 @@ function registrarArchivos(fileList) {
   });
 }
 
-async function refrescarMiniaturasExistentes() {
+async function reconstruirMiniaturasExistentes() {
   const id = document.getElementById('orden-id')?.value;
   if (!id) return;
   const orden = (state.ordenes || []).find(o => o.id === id);
   const fotos = generales(orden);
   const cont = document.getElementById('orden-fotos-generales-preview');
-  if (!cont || !fotos.length) return;
-  const imgs = Array.from(cont.querySelectorAll('img'));
-  await Promise.all(fotos.map(async (foto, i) => {
-    const img = imgs[i];
-    if (!img) return;
+  if (!cont) return;
+
+  cont.innerHTML = '';
+  for (const foto of fotos) {
+    const wrap = document.createElement('div');
+    wrap.className = 'foto-general-thumb';
+    const img = document.createElement('img');
+    img.alt = 'Foto general';
+    img.loading = 'lazy';
+    img.style.cursor = 'pointer';
     try {
-      const url = await storage.resolveImageUrl(foto.url, foto.path);
-      if (url) img.src = url;
-    } catch (_) {}
-  }));
+      img.src = await storage.resolveImageUrl(foto.url, foto.path) || foto.url || '';
+    } catch (_) {
+      img.src = foto.url || '';
+    }
+    img.onclick = () => {
+      if (typeof window.ampliarImagen === 'function') window.ampliarImagen(img.src);
+    };
+    wrap.appendChild(img);
+    cont.appendChild(wrap);
+  }
 }
 
 function envolverOpenOrden() {
@@ -57,7 +68,7 @@ function envolverOpenOrden() {
   const w = function(...args) {
     archivosSeleccionados = [];
     const r = original.apply(this, args);
-    Promise.resolve(r).finally(() => setTimeout(refrescarMiniaturasExistentes, 0));
+    Promise.resolve(r).finally(() => setTimeout(reconstruirMiniaturasExistentes, 0));
     return r;
   };
   w.__smFotosGeneralesOpen = true;
@@ -87,7 +98,8 @@ function envolverSaveOrden() {
 
     let cambio = false;
     const existentesAhora = new Set(orden.extra.fotos.map(claveFoto));
-    // En edición nunca se debe perder una foto general que ya existía.
+
+    // Nunca perder fotos generales anteriores al editar.
     for (const foto of antiguas) {
       const k = claveFoto(foto);
       if (!existentesAhora.has(k)) {
@@ -97,7 +109,7 @@ function envolverSaveOrden() {
       }
     }
 
-    // Si el guardado original no persistió todas las nuevas fotos, completar solo las faltantes.
+    // Completar solo las nuevas que el guardado original no haya persistido.
     const cantidadGeneralAhora = generales(orden).length;
     const agregadasPorOriginal = Math.max(0, cantidadGeneralAhora - cantidadAntes);
     const faltantes = seleccionadas.slice(agregadasPorOriginal);
@@ -120,8 +132,11 @@ function envolverSaveOrden() {
       await persist();
       await db.saveOrden(orden);
     }
+
     archivosSeleccionados = [];
-    setTimeout(refrescarMiniaturasExistentes, 0);
+    // Si el modal sigue abierto (p. ej. guardar y registrar pago), reconstruir
+    // inmediatamente desde el state ya persistido. Así no desaparecen al guardar.
+    setTimeout(reconstruirMiniaturasExistentes, 0);
     return resultado;
   };
   w.__smFotosGeneralesSave = true;
@@ -129,7 +144,6 @@ function envolverSaveOrden() {
 }
 
 function instalar() {
-  // Captura únicamente archivos elegidos en el bloque Registro General.
   document.addEventListener('change', e => {
     const input = e.target;
     if (!(input instanceof HTMLInputElement) || input.type !== 'file' || !input.files?.length) return;
@@ -141,5 +155,5 @@ function instalar() {
 
   envolverOpenOrden();
   envolverSaveOrden();
-  setTimeout(refrescarMiniaturasExistentes, 0);
+  setTimeout(reconstruirMiniaturasExistentes, 0);
 }
