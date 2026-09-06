@@ -118,19 +118,10 @@ function inferirAuditoria(o){
 }
 
 function fixAuditoriaOrdenes(){
+  // Esta capa SOLO completa/persiste los datos de auditoría.
+  // El render visual se hace únicamente en correcciones-estables para evitar duplicados.
   (state.ordenes||[]).forEach(o=>{
     if(inferirAuditoria(o)) { persist().then(()=>db.saveOrden(o)).catch(()=>{}); }
-  });
-  document.querySelectorAll('#ordenes-grid .ticket').forEach(ticket=>{
-    ticket.querySelector('.sm-order-audit-final')?.remove();
-    const m=(ticket.textContent||'').match(/#\s*(\d+)/); if(!m) return;
-    const o=(state.ordenes||[]).find(x=>String(x.numero)===m[1]);
-    const reg=o?.extra?.registradoPor; if(!reg) return;
-    const d=document.createElement('div');
-    d.className='sm-order-audit-final';
-    d.style.cssText='border-top:1px dashed var(--line);margin:8px 16px 12px;padding-top:8px;font-size:12px;line-height:1.5;color:var(--ink-soft)';
-    d.innerHTML='Registrado por: <strong>'+String(reg)+'</strong>'+(o.extra?.editadoPor&&o.extra.editadoPor!==reg?'<br>Editado por: <strong>'+String(o.extra.editadoPor)+'</strong>':'');
-    ticket.appendChild(d);
   });
 }
 
