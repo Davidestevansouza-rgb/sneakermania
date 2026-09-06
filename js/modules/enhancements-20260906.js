@@ -1,41 +1,600 @@
-import { state,todayISO,persist,esEmpleado,esAdmin } from '../state.js';
+import { state, todayISO, persist, esEmpleado } from '../state.js';
 import * as db from '../db.js';
 import * as storage from '../storage-manager.js';
-import { showToast,fmtMoney,fmtDate,clienteNombre,chipPago,logActivity } from '../ui.js';
-import { escHtml,escAttr } from '../sanitize.js';
+import { showToast, fmtMoney, fmtDate, clienteNombre, chipPago, logActivity } from '../ui.js';
+import { escHtml, escAttr } from '../sanitize.js';
 import { renderItemCardHTML } from './items.js';
 
-if(!window.__smOps0906){window.__smOps0906=1;queueMicrotask(init)}
-const own=r=>r&&((r.usuarioId&&state.session?.userId&&r.usuarioId===state.session.userId)||(!r.usuarioId&&(r.empleado||'')===(state.session?.user||'')));
-const range=(f,a,b)=>!!f&&(!a||f>=a)&&(!b||f<=b);
-const key=r=>(r.fecha||'')+'T'+(r.hora||'00:00');
-function css(){if(document.getElementById('smops-css'))return;let s=document.createElement('style');s.id='smops-css';s.textContent=`.sm-menu{position:relative;display:inline-block}.sm-pop{display:none;position:absolute;z-index:999;top:100%;left:0;min-width:205px;background:var(--paper,#fff);border:1px solid var(--line,#ddd);border-radius:10px;padding:5px;box-shadow:0 10px 30px #0003}.sm-pop.open{display:block}.sm-pop button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:9px;color:var(--ink,#111)}.sm-preview img{width:76px;height:76px;object-fit:cover;border-radius:8px;border:1px solid var(--line,#ddd)}.sm-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:10px 0}.sm-tools .field{margin:0;min-width:140px}.sm-brandbox{padding:12px;border:1px solid var(--line,#ddd);border-radius:12px;margin:0 0 14px}.sm-brandbox .row{display:flex;gap:8px;flex-wrap:wrap}#orden-detalle-items label[title="Agregar foto de este artículo"]{display:none!important}#orden-items-list .articulo-row{overflow:visible}#orden-items-list .articulo-row-fields{align-items:end}#tab-produccion .sm-u{order:1}#tab-produccion .sm-d{order:2}#tab-produccion .sm-c{order:3}#tab-produccion .sm-s{order:4}#tab-produccion .sm-w{order:5}@media(max-width:700px){.sm-pop{position:fixed;left:14px;right:14px;top:auto;bottom:18px}.sm-tools .field{flex:1 1 140px}#orden-items-list .articulo-row-fields{grid-template-columns:1fr!important}}`;document.head.appendChild(s)}
-function menu(cam,lib,file,cls=''){let w=document.createElement('div');w.className='sm-menu '+cls;let t=document.createElement('button');t.type='button';t.className='btn btn-ghost btn-sm';t.textContent='📷 Agregar foto';let p=document.createElement('div');p.className='sm-pop';[['📷 Tomar foto',cam],['🖼️ Fototeca',lib],['📁 Seleccionar archivo',file]].forEach(([x,fn])=>{let b=document.createElement('button');b.type='button';b.textContent=x;b.onclick=e=>{e.stopPropagation();p.classList.remove('open');fn()};p.appendChild(b)});t.onclick=e=>{e.stopPropagation();document.querySelectorAll('.sm-pop.open').forEach(x=>x!==p&&x.classList.remove('open'));p.classList.toggle('open')};w.append(t,p);return w}
-function fileInput(host,capture,accept,cb){let i=document.createElement('input');i.type='file';i.style.display='none';if(accept)i.accept=accept;if(capture)i.capture='environment';i.onchange=()=>{let f=i.files?.[0];if(f)cb(f,i)};host.appendChild(i);return i}
+/* Mejoras operativas 2026-09-06.
+ * Se carga como módulo lateral para mantener el cambio aislado y reversible.
+ * No modifica esquema, RLS, Edge Functions ni R2.
+ */
+if (!window.__smOps0906) {
+  window.__smOps0906 = true;
+  queueMicrotask(init);
+}
 
-function orderUI(){let g=document.getElementById('orden-registro-general');if(!g)return;let q=document.getElementById('orden-cantidad-pares');if(q&&!document.getElementById('orden-fecha-entrega-general')){let row=q.closest('div[style*="display:flex"]');if(row){let b=document.createElement('div');b.style.minWidth='170px';b.innerHTML='<label class="hint">Fecha de entrega</label><input type="date" id="orden-fecha-entrega-general" style="width:100%">';row.insertBefore(b,q.closest('div')?.nextSibling||null);let d=b.querySelector('input');d.value=((state.ordenes||[]).find(o=>o.id===document.getElementById('orden-id')?.value)?.fechaEstimada)||todayISO(3);d.onchange=()=>document.querySelectorAll('#orden-items-list .item-fecha-entrega-input').forEach(x=>x.value=d.value)}}let c=document.getElementById('orden-foto-general-camera'),l=document.getElementById('orden-foto-general-galeria');if(c&&l&&!g.querySelector('.sm-general')){let box=c.previousElementSibling;if(box){box.querySelectorAll('button').forEach(x=>x.style.display='none');box.appendChild(menu(()=>c.click(),()=>{l.accept='image/*';l.click()},()=>{l.removeAttribute('accept');l.click()},'sm-general'));l.addEventListener('change',()=>setTimeout(()=>l.accept='image/*'))}}
- document.querySelectorAll('#orden-items-list .articulo-row').forEach(r=>{if(r.dataset.smphoto)return;r.dataset.smphoto='1';let old=[...r.querySelectorAll('label')].find(x=>(x.textContent||'').includes('Agregar foto'));if(!old)return;old.style.display='none';let host=old.parentElement||r,prev=document.createElement('div');prev.className='sm-preview';host.appendChild(prev);let pick=(f,i)=>{if(!f.type?.startsWith('image/')&&!/\.(jpg|jpeg|png|webp|heic|heif)$/i.test(f.name||'')){showToast('Selecciona una imagen');i.value='';return}prev.innerHTML='<img src="'+URL.createObjectURL(f)+'"><span class="hint">Foto lista para guardar</span>';if(window.onFotoFilaItem)window.onFotoFilaItem(i)};let a=fileInput(r,true,'image/*',pick),b=fileInput(r,false,'image/*',pick),d=fileInput(r,false,'',pick);host.appendChild(menu(()=>a.click(),()=>b.click(),()=>d.click(),'sm-item'))})}
+const propio = r => !!r && (
+  (r.usuarioId && state.session?.userId && r.usuarioId === state.session.userId) ||
+  (!r.usuarioId && (r.empleado || '') === (state.session?.user || ''))
+);
+const enRango = (fecha, desde, hasta) => !!fecha && (!desde || fecha >= desde) && (!hasta || fecha <= hasta);
+const claveRegistro = r => (r.fecha || '') + 'T' + (r.hora || '00:00');
 
-async function isolatedItemPhoto(id,file){if(!file)return;let it=(state.ordenItems||[]).find(x=>x.id===id),o=it&&(state.ordenes||[]).find(x=>x.id===it.ordenId);if(!it||!o)return showToast('Artículo no encontrado');try{let f=await storage.uploadFoto(file,o.id,'item_inicial');f.item=it.codigo;f.itemId=it.id;f.categoria='item_inicial';o.extra=o.extra||{};o.extra.fotos=Array.isArray(o.extra.fotos)?o.extra.fotos:[];o.extra.fotos=o.extra.fotos.filter(x=>!(x.item===it.codigo&&(x.categoria==='item_inicial'||x.categoria==='todos_pares')));o.extra.fotos.push(f);await persist();await db.saveOrden(o);logActivity('Agregó foto al artículo '+it.codigo);showToast('✅ Foto guardada');let z=document.getElementById('orden-detalle-items');if(z&&window.renderItemsPanelHTML)z.innerHTML=window.renderItemsPanelHTML(it.ordenId)}catch(e){console.error(e);showToast('Error al guardar la foto')}}
+function instalarCSS() {
+  if (document.getElementById('smops-css')) return;
+  const s = document.createElement('style');
+  s.id = 'smops-css';
+  s.textContent = `
+    .sm-menu{position:relative;display:inline-block}
+    .sm-pop{display:none;position:absolute;z-index:999;top:calc(100% + 5px);left:0;min-width:210px;background:var(--paper,#fff);border:1px solid var(--line,#ddd);border-radius:10px;padding:5px;box-shadow:0 10px 30px #0003}
+    .sm-pop.open{display:block}
+    .sm-pop button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:9px;border-radius:7px;color:var(--ink,#111);cursor:pointer}
+    .sm-pop button:hover{background:rgba(127,127,127,.10)}
+    .sm-preview{display:flex;align-items:center;gap:8px;margin-top:7px}
+    .sm-preview img{width:76px;height:76px;object-fit:cover;border-radius:8px;border:1px solid var(--line,#ddd)}
+    .sm-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:10px 0}
+    .sm-tools .field{margin:0;min-width:140px}
+    .sm-brandbox{padding:12px;border:1px solid var(--line,#ddd);border-radius:12px;margin:0 0 14px}
+    .sm-brandbox .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    #orden-detalle-items label[title="Agregar foto de este artículo"]{display:none!important}
+    #orden-items-list .articulo-row{overflow:visible}
+    #orden-items-list .articulo-row-fields{align-items:end}
+    #tab-produccion .sm-u{order:1} #tab-produccion .sm-d{order:2} #tab-produccion .sm-c{order:3} #tab-produccion .sm-s{order:4} #tab-produccion .sm-w{order:5}
+    @media(max-width:700px){
+      .sm-pop{position:fixed;left:14px;right:14px;top:auto;bottom:18px}
+      .sm-tools .field{flex:1 1 140px}
+      #orden-items-list .articulo-row-fields{grid-template-columns:1fr!important}
+    }
+  `;
+  document.head.appendChild(s);
+}
 
-function ncoUI(){let list=document.getElementById('nco-items-list');if(!list)return;list.querySelectorAll('.co-par-row').forEach(r=>{if(r.dataset.smnco)return;let old=[...r.querySelectorAll('label')].find(x=>(x.textContent||'').includes('Foto del artículo'));if(!old)return;r.dataset.smnco='1';old.style.display='none';let id=r.dataset.rowId,pick=(f,i)=>{if(window.capturarFotoParCO)window.capturarFotoParCO(id,f);i.value=''};let a=fileInput(r,true,'image/*',pick),b=fileInput(r,false,'image/*',pick),c=fileInput(r,false,'',pick);old.parentElement?.insertBefore(menu(()=>a.click(),()=>b.click(),()=>c.click(),'sm-nco'),old)})}
-async function recatNew(before){let o=(state.ordenes||[]).find(x=>!before.has(x.id));if(!o?.extra?.fotos)return;let changed=false;for(let f of o.extra.fotos){if(f.categoria==='todos_pares'&&f.item){f.categoria='item_inicial';let it=(state.ordenItems||[]).find(x=>x.ordenId===o.id&&x.codigo===f.item);if(it)f.itemId=it.id;changed=true}}if(changed){await persist();await db.saveOrden(o)}}
+function crearMenuFoto(onCamara, onFototeca, onArchivo, clase='') {
+  const wrap = document.createElement('div');
+  wrap.className = 'sm-menu ' + clase;
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'btn btn-ghost btn-sm';
+  trigger.textContent = '📷 Agregar foto';
+  const pop = document.createElement('div');
+  pop.className = 'sm-pop';
+  [
+    ['📷 Tomar foto', onCamara],
+    ['🖼️ Fototeca', onFototeca],
+    ['📁 Seleccionar archivo', onArchivo]
+  ].forEach(([texto, fn]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = texto;
+    b.onclick = e => { e.stopPropagation(); pop.classList.remove('open'); fn(); };
+    pop.appendChild(b);
+  });
+  trigger.onclick = e => {
+    e.stopPropagation();
+    document.querySelectorAll('.sm-pop.open').forEach(x => { if (x !== pop) x.classList.remove('open'); });
+    pop.classList.toggle('open');
+  };
+  wrap.append(trigger, pop);
+  return wrap;
+}
 
-function whiteFor(r){let it=(state.ordenItems||[]).find(x=>x.codigo===r.codigo);return !!it?.registroServicios?.[r.servicio]?.blanqueamiento}
-function prodCard(r){let fs=Array.isArray(r.fotoUrls)?r.fotoUrls:(r.fotoUrl?[r.fotoUrl]:[]),img=fs[0]?'<img src="'+escAttr(fs[0])+'" loading="lazy" style="width:100%;max-height:180px;object-fit:cover;border-radius:8px">':'<div class="empty-state">Sin foto</div>';return '<div class="prod-card">'+img+'<div style="padding:6px"><div><strong>'+escHtml(r.empleado||'—')+'</strong>'+(r.codigo?' · <span class="mono">'+escHtml(r.codigo)+'</span>':'')+(r.servicio?' · '+escHtml(r.servicio):'')+'</div><div class="hint">'+fmtDate(r.fecha)+(r.hora?' · '+escHtml(r.hora):'')+'</div>'+(whiteFor(r)?'<div style="font-size:11px;font-weight:700;color:#9a3412">Blanqueamiento</div>':'')+(r.observacion?'<div class="hint">📝 '+escHtml(r.observacion)+'</div>':'')+'</div></div>'}
-function prodRange(){let out=document.getElementById('prod-historial');if(!out)return;let a=document.getElementById('sm-pdesde')?.value||todayISO(0),b=document.getElementById('sm-phasta')?.value||todayISO(0);if(a>b)return void(out.innerHTML='<div class="hint">Rango inválido</div>');let rs=(state.registroPares||[]).filter(r=>range(r.fecha,a,b));if(esEmpleado())rs=rs.filter(own);else{let e=document.getElementById('sm-pemp')?.value||'';if(e)rs=rs.filter(r=>r.empleado===e)}rs.sort((x,y)=>key(y).localeCompare(key(x)));out.innerHTML='<div class="hint" style="margin-bottom:8px">'+rs.length+' registro(s)</div>'+(rs.length?'<div class="prod-grid">'+rs.map(prodCard).join('')+'</div>':'<div class="hint">Sin registros en el rango.</div>')}
-function prodUI(){let tab=document.getElementById('tab-produccion');if(!tab)return;let u=document.getElementById('prod-empleado'),d=document.getElementById('prod-fecha'),c=document.getElementById('prod-codigo'),s=document.getElementById('prod-servicio'),w=document.getElementById('prod-blanqueamiento');u?.closest('.field')?.classList.add('sm-u');d?.closest('.field')?.classList.add('sm-d');c?.closest('.field')?.classList.add('sm-c');s?.closest('.field')?.classList.add('sm-s');w?.closest('.field')?.classList.add('sm-w');let cam=document.getElementById('prod-foto-camera'),gal=document.getElementById('prod-foto-galeria');if(cam&&gal&&!tab.querySelector('.sm-prodfoto')){let box=cam.previousElementSibling;box?.querySelectorAll('button').forEach(x=>x.style.display='none');box?.appendChild(menu(()=>cam.click(),()=>{gal.accept='image/*';gal.click()},()=>{gal.removeAttribute('accept');gal.click()},'sm-prodfoto'));gal.addEventListener('change',()=>setTimeout(()=>gal.accept='image/*'))}let p=document.getElementById('prod-historial-panel');if(p){p.style.display='';p.querySelector('.panel-head > div:last-child')?.style.setProperty('display','none');if(!document.getElementById('sm-prange')){let t=document.createElement('div');t.id='sm-prange';t.className='sm-tools';t.innerHTML='<div class="field"><label>Desde</label><input type="date" id="sm-pdesde"></div><div class="field"><label>Hasta</label><input type="date" id="sm-phasta"></div><div class="field" id="sm-pempwrap"><label>Usuario</label><select id="sm-pemp"></select></div><button class="btn btn-primary btn-sm" id="sm-pgo">Buscar</button>';p.querySelector('.panel-head')?.insertAdjacentElement('afterend',t);document.getElementById('sm-pdesde').value=todayISO(0);document.getElementById('sm-phasta').value=todayISO(0);document.getElementById('sm-pgo').onclick=prodRange;document.getElementById('sm-pemp').onchange=prodRange}let sel=document.getElementById('sm-pemp'),wrap=document.getElementById('sm-pempwrap');if(esEmpleado()){if(wrap)wrap.style.display='none'}else if(sel){wrap.style.display='';let cur=sel.value,n=[...new Set((state.registroPares||[]).map(r=>r.empleado).filter(Boolean))].sort();sel.innerHTML='<option value="">Todos los usuarios</option>'+n.map(x=>'<option>'+escHtml(x)+'</option>').join('');if(n.includes(cur))sel.value=cur}}if(tab.classList.contains('active')){let today=(state.registroPares||[]).filter(r=>r.fecha===todayISO(0));if(esEmpleado())today=today.filter(own);today.sort((x,y)=>key(y).localeCompare(key(x)));let list=document.getElementById('prod-lista');if(list)list.innerHTML=today.length?'<div class="prod-grid">'+today.map(prodCard).join('')+'</div>':'<div class="hint">Todavía no hay artículos registrados hoy.</div>';prodRange()}}
-async function persistWhite(code,service,checked){if(!checked)return;let it=(state.ordenItems||[]).find(x=>x.codigo===code);if(!it)return;it.registroServicios=it.registroServicios||{};it.registroServicios[service]=it.registroServicios[service]||{};it.registroServicios[service].blanqueamiento=true;await persist();await db.saveOrdenItem(it)}
+function crearFileInput(host, { capture=false, accept='image/*', multiple=false }={}, cb) {
+  const i = document.createElement('input');
+  i.type = 'file';
+  i.style.display = 'none';
+  if (accept !== null) i.accept = accept;
+  if (capture) i.capture = 'environment';
+  i.multiple = !!multiple;
+  i.onchange = () => {
+    const files = Array.from(i.files || []);
+    if (files.length) cb(files, i);
+  };
+  host.appendChild(i);
+  return i;
+}
 
-function payDate(o){return o.fechaPago||o.fechaIngreso||''}
-function financeRows(){let t=document.getElementById('finanzas-ordenes-table');if(!t)return;let a=document.getElementById('sm-fdesde')?.value||todayISO(0),b=document.getElementById('sm-fhasta')?.value||todayISO(0),os=(state.ordenes||[]).filter(o=>range(payDate(o),a,b)).sort((x,y)=>(payDate(y)+String(y.numero).padStart(8,'0')).localeCompare(payDate(x)+String(x.numero).padStart(8,'0')));t.innerHTML='<thead><tr><th>Fecha</th><th>Orden</th><th>Cliente</th><th>Precio</th><th>Pagado</th><th>Pendiente</th><th>Método</th><th>Estado</th></tr></thead><tbody>'+os.map(o=>{let v=Number(o.precio)-Number(o.descuento||0),p=Math.max(v-Number(o.pagado||0),0);return '<tr><td>'+fmtDate(payDate(o))+'</td><td class="mono">#'+escHtml(o.numero)+'</td><td>'+escHtml(clienteNombre(o.clienteId))+'</td><td>'+fmtMoney(v)+'</td><td>'+fmtMoney(o.pagado)+'</td><td>'+fmtMoney(p)+'</td><td>'+escHtml(o.metodoPago||'—')+'</td><td>'+chipPago(o.estadoPago)+'</td></tr>'}).join('')+'</tbody>'}
-function financeUI(){let t=document.getElementById('finanzas-ordenes-table');if(!t)return;let panel=t.closest('.panel');if(panel&&!document.getElementById('sm-frange')){let x=document.createElement('div');x.id='sm-frange';x.className='sm-tools';x.style.padding='0 20px 12px';x.innerHTML='<div class="field"><label>Desde</label><input type="date" id="sm-fdesde"></div><div class="field"><label>Hasta</label><input type="date" id="sm-fhasta"></div><button class="btn btn-primary btn-sm" id="sm-fgo">Buscar</button><button class="btn btn-ghost btn-sm" id="sm-ftoday">Hoy</button>';panel.querySelector('.panel-title')?.insertAdjacentElement('afterend',x);document.getElementById('sm-fdesde').value=todayISO(0);document.getElementById('sm-fhasta').value=todayISO(0);document.getElementById('sm-fgo').onclick=financeRows;document.getElementById('sm-ftoday').onclick=()=>{document.getElementById('sm-fdesde').value=todayISO(0);document.getElementById('sm-fhasta').value=todayISO(0);financeRows()}}if(document.getElementById('tab-finanzas')?.classList.contains('active'))financeRows()}
+function archivoImagenValido(file) {
+  return !!file && ((file.type || '').startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name || ''));
+}
 
-function gallerySearch(){let box=document.getElementById('sm-gbrand');if(!box)return;let q=(box.querySelector('input').value||'').trim().toLowerCase(),out=document.getElementById('sm-gresults');if(!q)return void(out.innerHTML='<div class="hint">Escribe una marca o modelo.</div>');let cut=new Date();cut.setMonth(cut.getMonth()-2);let iso=cut.getFullYear()+'-'+String(cut.getMonth()+1).padStart(2,'0')+'-'+String(cut.getDate()).padStart(2,'0');let ms=(state.ordenItems||[]).filter(it=>{let o=(state.ordenes||[]).find(x=>x.id===it.ordenId),f=it.fechaIngreso||o?.fechaIngreso||'';return f>=iso&&[it.marca,it.modelo,it.descripcion].filter(Boolean).join(' ').toLowerCase().includes(q)}).sort((a,b)=>(b.fechaIngreso||'').localeCompare(a.fechaIngreso||''));out.innerHTML=ms.length?'<div class="hint">'+ms.length+' coincidencia(s) en los últimos 2 meses.</div>'+ms.map(renderItemCardHTML).join(''):'<div class="hint">Sin coincidencias.</div>';out.querySelectorAll('label[title="Agregar foto de este artículo"]').forEach(x=>x.remove())}
-function galleryUI(){let content=document.getElementById('galeria-content');if(!content||document.getElementById('sm-gbrand'))return;let b=document.createElement('div');b.id='sm-gbrand';b.className='sm-brandbox';b.innerHTML='<strong>Buscar artículo por marca o modelo</strong><div class="hint">Busca solamente marca/modelo registrado, no cliente ni número de orden. Últimos 2 meses.</div><div class="row"><input class="input" placeholder="Ej: Nike Air Force 1"><button class="btn btn-primary btn-sm">Buscar</button></div><div id="sm-gresults"></div>';content.parentElement.insertBefore(b,content);b.querySelector('button').onclick=gallerySearch;b.querySelector('input').onkeydown=e=>e.key==='Enter'&&gallerySearch()}
-function hideInitials(fn){let bk=[];(state.ordenes||[]).forEach(o=>{if(!Array.isArray(o.extra?.fotos))return;let old=o.extra.fotos,n=old.filter(f=>!(f.categoria==='item_inicial'||(f.categoria==='todos_pares'&&f.item)));if(n.length!==old.length){bk.push([o,old]);o.extra.fotos=n}});try{return fn()}finally{bk.forEach(([o,x])=>o.extra.fotos=x)}}
+/* 1) ÓRDENES: fecha general, botón único y vista previa por artículo. */
+function mejorarOrdenUI() {
+  const general = document.getElementById('orden-registro-general');
+  if (!general) return;
 
-function report(){let s=document.getElementById('rep-resumen');if(!s)return;[['rep-qr','Ingresos por QR'],['rep-ef','Ingresos en efectivo']].forEach(([id,l])=>{if(!document.getElementById(id)){let c=document.createElement('div');c.className='panel';c.style='flex:1;min-width:180px';c.innerHTML='<div class="hint">'+l+'</div><div id="'+id+'" style="font-size:22px;font-weight:700">—</div>';s.appendChild(c)}});let a=document.getElementById('rep-desde')?.value||'',b=document.getElementById('rep-hasta')?.value||'',os=(state.ordenes||[]).filter(o=>!a&&!b||range(payDate(o),a,b));document.getElementById('rep-qr').textContent=fmtMoney(os.reduce((z,o)=>z+Number(o.pagadoQR||0),0));document.getElementById('rep-ef').textContent=fmtMoney(os.reduce((z,o)=>z+Number(o.pagadoEfectivo||0),0))}
-function after(name,cb){let f=window[name];if(typeof f!=='function'||f.__sm)return;let w=function(...a){let r=f.apply(this,a);if(r?.then)return r.then(async v=>{await cb(...a);scan();return v});cb(...a);scan();return r};w.__sm=1;window[name]=w}
-function init(){css();if(typeof window.agregarFotoItem==='function'){isolatedItemPhoto.__sm=1;window.agregarFotoItem=isolatedItemPhoto}after('openOrdenModal',orderUI);after('agregarFilaItemOrden',orderUI);after('sincronizarCantidadPares',orderUI);if(typeof window.saveOrden==='function'){let f=window.saveOrden;window.saveOrden=function(...a){let d=document.getElementById('orden-fecha-entrega-general')?.value;if(d)document.querySelectorAll('#orden-items-list .item-fecha-entrega-input').forEach(x=>x.value=d);return f.apply(this,a)}}after('openNuevoClienteOrdenModal',ncoUI);after('agregarFilaParCO',ncoUI);if(typeof window.guardarClienteOrden==='function'){let f=window.guardarClienteOrden;window.guardarClienteOrden=async function(...a){let before=new Set((state.ordenes||[]).map(x=>x.id)),r=await f.apply(this,a);await recatNew(before);scan();return r}}if(typeof window.registrarPares==='function'){let f=window.registrarPares;window.registrarPares=async function(...a){let c=document.getElementById('prod-codigo')?.value.trim(),s=document.getElementById('prod-servicio')?.value,w=!!document.getElementById('prod-blanqueamiento')?.checked,r=await f.apply(this,a);await persistWhite(c,s,w);scan();return r}}window.renderHistorialProduccion=prodRange;after('renderFinanzas',financeUI);after('renderReportes',report);after('setRepRange',report);['renderGaleria','seleccionarGaleriaOrden','seleccionarGaleriaItem','limpiarFiltroGaleriaItem'].forEach(n=>{let f=window[n];if(typeof f==='function'){let w=function(...a){return hideInitials(()=>f.apply(this,a))};w.__sm=1;window[n]=w}});if(typeof window.switchTab==='function'){let f=window.switchTab;window.switchTab=function(tab,...a){let r=tab==='galeria'?hideInitials(()=>f.call(this,tab,...a)):f.call(this,tab,...a);scan();return r}}document.addEventListener('click',e=>{if(!e.target.closest('.sm-menu'))document.querySelectorAll('.sm-pop.open').forEach(x=>x.classList.remove('open'))});new MutationObserver(scan).observe(document.body,{childList:true,subtree:true});scan()}
-let queued=0;function scan(){if(queued)return;queued=1;requestAnimationFrame(()=>{queued=0;orderUI();ncoUI();prodUI();financeUI();galleryUI();if(document.getElementById('tab-reportes')?.classList.contains('active'))report()})}
+  const cantidad = document.getElementById('orden-cantidad-pares');
+  if (cantidad && !document.getElementById('orden-fecha-entrega-general')) {
+    const fila = cantidad.closest('div[style*="display:flex"]');
+    if (fila) {
+      const box = document.createElement('div');
+      box.style.minWidth = '170px';
+      box.innerHTML = '<label class="hint">Fecha de entrega</label><input type="date" id="orden-fecha-entrega-general" style="width:100%">';
+      fila.insertBefore(box, cantidad.closest('div')?.nextSibling || null);
+      const input = box.querySelector('input');
+      const ordenId = document.getElementById('orden-id')?.value;
+      const orden = (state.ordenes || []).find(o => o.id === ordenId);
+      input.value = orden?.fechaEstimada || todayISO(3);
+      input.onchange = () => document.querySelectorAll('#orden-items-list .item-fecha-entrega-input').forEach(x => { x.value = input.value; });
+    }
+  }
+
+  const cam = document.getElementById('orden-foto-general-camera');
+  const gal = document.getElementById('orden-foto-general-galeria');
+  if (cam && gal && !general.querySelector('.sm-general')) {
+    const caja = cam.previousElementSibling;
+    if (caja) {
+      caja.querySelectorAll('button').forEach(b => { b.style.display = 'none'; });
+      const archivo = crearFileInput(caja, { accept: null, multiple: true }, (files, input) => {
+        const validas = files.filter(archivoImagenValido);
+        if (!validas.length) { showToast('Selecciona una imagen'); input.value = ''; return; }
+        if (window.agregarFotosGeneralesOrden) window.agregarFotosGeneralesOrden(validas);
+        input.value = '';
+      });
+      caja.appendChild(crearMenuFoto(
+        () => cam.click(),
+        () => { gal.accept = 'image/*'; gal.click(); },
+        () => archivo.click(),
+        'sm-general'
+      ));
+    }
+  }
+
+  document.querySelectorAll('#orden-items-list .articulo-row').forEach(row => {
+    if (row.dataset.smphoto) return;
+    const viejo = [...row.querySelectorAll('label')].find(x => (x.textContent || '').includes('Agregar foto'));
+    if (!viejo) return;
+    row.dataset.smphoto = '1';
+    viejo.style.display = 'none';
+    const host = viejo.parentElement || row;
+    const preview = document.createElement('div');
+    preview.className = 'sm-preview';
+    host.appendChild(preview);
+
+    const elegir = (files, input) => {
+      const file = files[0];
+      if (!archivoImagenValido(file)) { showToast('Selecciona una imagen'); input.value = ''; return; }
+      const url = URL.createObjectURL(file);
+      preview.innerHTML = '<img alt="Vista previa"><span class="hint">Foto lista para guardar</span>';
+      preview.querySelector('img').src = url;
+      if (window.onFotoFilaItem) window.onFotoFilaItem(input);
+    };
+    const a = crearFileInput(row, { capture:true }, elegir);
+    const b = crearFileInput(row, {}, elegir);
+    const c = crearFileInput(row, { accept:null }, elegir);
+    host.appendChild(crearMenuFoto(() => a.click(), () => b.click(), () => c.click(), 'sm-item'));
+  });
+}
+
+/* Foto individual aislada de "Todos los archivos". Se conserva en detalle. */
+async function guardarFotoItemAislada(itemId, file) {
+  if (!file) return;
+  const item = (state.ordenItems || []).find(it => it.id === itemId);
+  const orden = item && (state.ordenes || []).find(o => o.id === item.ordenId);
+  if (!item || !orden) { showToast('Artículo no encontrado'); return; }
+  try {
+    showToast('Subiendo foto del artículo...');
+    const foto = await storage.uploadFoto(file, orden.id, 'item_inicial');
+    foto.item = item.codigo;
+    foto.itemId = item.id;
+    foto.categoria = 'item_inicial';
+    orden.extra = orden.extra || {};
+    orden.extra.fotos = Array.isArray(orden.extra.fotos) ? orden.extra.fotos : [];
+    orden.extra.fotos = orden.extra.fotos.filter(f => !(f.item === item.codigo && (f.categoria === 'item_inicial' || f.categoria === 'todos_pares')));
+    orden.extra.fotos.push(foto);
+    await persist();
+    await db.saveOrden(orden);
+    logActivity('Agregó foto al artículo ' + item.codigo);
+    showToast('✅ Foto guardada');
+    const panel = document.getElementById('orden-detalle-items');
+    if (panel && window.renderItemsPanelHTML) panel.innerHTML = window.renderItemsPanelHTML(item.ordenId);
+  } catch (e) {
+    console.error(e);
+    showToast('Error al guardar la foto');
+  }
+}
+
+/* Modal fusionado Nuevo cliente + orden: un solo botón de foto por artículo. */
+function mejorarNuevoClienteOrdenUI() {
+  const list = document.getElementById('nco-items-list');
+  if (!list) return;
+  list.querySelectorAll('.co-par-row').forEach(row => {
+    if (row.dataset.smnco) return;
+    const viejo = [...row.querySelectorAll('label')].find(x => (x.textContent || '').includes('Foto del artículo'));
+    if (!viejo) return;
+    row.dataset.smnco = '1';
+    viejo.style.display = 'none';
+    const rowId = row.dataset.rowId;
+    const elegir = (files, input) => {
+      const file = files[0];
+      if (!archivoImagenValido(file)) { showToast('Selecciona una imagen'); input.value=''; return; }
+      if (window.capturarFotoParCO) window.capturarFotoParCO(rowId, file);
+      input.value = '';
+    };
+    const a = crearFileInput(row, { capture:true }, elegir);
+    const b = crearFileInput(row, {}, elegir);
+    const c = crearFileInput(row, { accept:null }, elegir);
+    viejo.parentElement?.insertBefore(crearMenuFoto(() => a.click(), () => b.click(), () => c.click(), 'sm-nco'), viejo);
+  });
+}
+
+async function recategorizarFotosNuevaOrden(idsAntes) {
+  const orden = (state.ordenes || []).find(o => !idsAntes.has(o.id));
+  if (!orden?.extra?.fotos) return;
+  let cambio = false;
+  for (const foto of orden.extra.fotos) {
+    if (foto.categoria === 'todos_pares' && foto.item) {
+      foto.categoria = 'item_inicial';
+      const item = (state.ordenItems || []).find(it => it.ordenId === orden.id && it.codigo === foto.item);
+      if (item) foto.itemId = item.id;
+      cambio = true;
+    }
+  }
+  if (cambio) { await persist(); await db.saveOrden(orden); }
+}
+
+/* 3) PRODUCCIÓN. */
+function tieneBlanqueamiento(reg) {
+  const item = (state.ordenItems || []).find(x => x.codigo === reg.codigo);
+  return !!item?.registroServicios?.[reg.servicio]?.blanqueamiento || !!item?.blanqueamiento;
+}
+
+function tarjetaProduccion(reg) {
+  const fotos = Array.isArray(reg.fotoUrls) ? reg.fotoUrls : (reg.fotoUrl ? [reg.fotoUrl] : []);
+  const foto = fotos[0]
+    ? '<img src="' + escAttr(fotos[0]) + '" loading="lazy" style="width:100%;max-height:180px;object-fit:cover;border-radius:8px">'
+    : '<div class="empty-state" style="padding:18px">Sin foto</div>';
+  return '<div class="prod-card">' + foto + '<div style="padding:6px">' +
+    '<div><strong>' + escHtml(reg.empleado || '—') + '</strong>' +
+      (reg.codigo ? ' · <span class="mono">' + escHtml(reg.codigo) + '</span>' : '') +
+      (reg.servicio ? ' · ' + escHtml(reg.servicio) : '') + '</div>' +
+    '<div class="hint">' + fmtDate(reg.fecha) + (reg.hora ? ' · ' + escHtml(reg.hora) : '') + '</div>' +
+    (tieneBlanqueamiento(reg) ? '<div style="font-size:11px;font-weight:800;margin-top:3px">Blanqueamiento: Sí</div>' : '') +
+    (reg.observacion ? '<div class="hint" style="white-space:pre-line">📝 ' + escHtml(reg.observacion) + '</div>' : '') +
+    '</div></div>';
+}
+
+function renderRangoProduccion() {
+  const out = document.getElementById('prod-historial');
+  if (!out) return;
+  const desde = document.getElementById('sm-pdesde')?.value || todayISO(0);
+  const hasta = document.getElementById('sm-phasta')?.value || todayISO(0);
+  if (desde > hasta) { out.innerHTML = '<div class="hint">Rango de fechas inválido.</div>'; return; }
+  let registros = (state.registroPares || []).filter(r => enRango(r.fecha, desde, hasta));
+  if (esEmpleado()) registros = registros.filter(propio);
+  else {
+    const empleado = document.getElementById('sm-pemp')?.value || '';
+    if (empleado) registros = registros.filter(r => r.empleado === empleado);
+  }
+  registros.sort((a,b) => claveRegistro(b).localeCompare(claveRegistro(a)));
+  out.innerHTML = '<div class="hint" style="margin-bottom:8px">' + registros.length + ' registro(s) · ' + fmtDate(desde) + ' → ' + fmtDate(hasta) + '</div>' +
+    (registros.length ? '<div class="prod-grid">' + registros.map(tarjetaProduccion).join('') + '</div>' : '<div class="hint">Sin registros en el rango.</div>');
+}
+
+function mejorarProduccionUI() {
+  const tab = document.getElementById('tab-produccion');
+  if (!tab) return;
+  const u = document.getElementById('prod-empleado');
+  const d = document.getElementById('prod-fecha');
+  const c = document.getElementById('prod-codigo');
+  const s = document.getElementById('prod-servicio');
+  const w = document.getElementById('prod-blanqueamiento');
+  u?.closest('.field')?.classList.add('sm-u');
+  d?.closest('.field')?.classList.add('sm-d');
+  c?.closest('.field')?.classList.add('sm-c');
+  s?.closest('.field')?.classList.add('sm-s');
+  w?.closest('.field')?.classList.add('sm-w');
+
+  const cam = document.getElementById('prod-foto-camera');
+  const gal = document.getElementById('prod-foto-galeria');
+  if (cam && gal && !tab.querySelector('.sm-prodfoto')) {
+    const box = cam.previousElementSibling;
+    if (box) {
+      box.querySelectorAll('button').forEach(x => { x.style.display = 'none'; });
+      const abrirGaleria = () => { gal.accept = 'image/*'; gal.click(); };
+      const abrirArchivo = () => { gal.removeAttribute('accept'); gal.click(); };
+      gal.addEventListener('change', () => { setTimeout(() => { gal.accept = 'image/*'; }, 0); });
+      box.appendChild(crearMenuFoto(
+        () => cam.click(),
+        abrirGaleria,
+        abrirArchivo,
+        'sm-prodfoto'
+      ));
+    }
+  }
+
+  const panel = document.getElementById('prod-historial-panel');
+  if (panel) {
+    panel.style.display = '';
+    const controlesViejos = panel.querySelector('.panel-head > div:last-child');
+    if (controlesViejos) controlesViejos.style.display = 'none';
+    if (!document.getElementById('sm-prange')) {
+      const tools = document.createElement('div');
+      tools.id = 'sm-prange';
+      tools.className = 'sm-tools';
+      tools.innerHTML = '<div class="field"><label>Desde</label><input type="date" id="sm-pdesde"></div>' +
+        '<div class="field"><label>Hasta</label><input type="date" id="sm-phasta"></div>' +
+        '<div class="field" id="sm-pempwrap"><label>Usuario</label><select id="sm-pemp"></select></div>' +
+        '<button class="btn btn-primary btn-sm" id="sm-pgo">Buscar</button>';
+      panel.querySelector('.panel-head')?.insertAdjacentElement('afterend', tools);
+      document.getElementById('sm-pdesde').value = todayISO(0);
+      document.getElementById('sm-phasta').value = todayISO(0);
+      document.getElementById('sm-pgo').onclick = renderRangoProduccion;
+      document.getElementById('sm-pemp').onchange = renderRangoProduccion;
+    }
+    const selector = document.getElementById('sm-pemp');
+    const wrap = document.getElementById('sm-pempwrap');
+    if (esEmpleado()) {
+      if (wrap) wrap.style.display = 'none';
+    } else if (selector) {
+      if (wrap) wrap.style.display = '';
+      const actual = selector.value;
+      const nombres = [...new Set((state.registroPares || []).map(r => r.empleado).filter(Boolean))].sort();
+      selector.innerHTML = '<option value="">Todos los usuarios</option>' + nombres.map(n => '<option value="' + escAttr(n) + '">' + escHtml(n) + '</option>').join('');
+      if (nombres.includes(actual)) selector.value = actual;
+    }
+  }
+
+  if (tab.classList.contains('active')) {
+    let hoy = (state.registroPares || []).filter(r => r.fecha === todayISO(0));
+    if (esEmpleado()) hoy = hoy.filter(propio);
+    hoy.sort((a,b) => claveRegistro(b).localeCompare(claveRegistro(a)));
+    const lista = document.getElementById('prod-lista');
+    if (lista) lista.innerHTML = hoy.length ? '<div class="prod-grid">' + hoy.map(tarjetaProduccion).join('') + '</div>' : '<div class="hint">Todavía no hay artículos registrados hoy.</div>';
+    renderRangoProduccion();
+  }
+}
+
+async function persistirBlanqueamientoSiCorresponde(codigo, servicio, marcado) {
+  if (!marcado || !codigo || !servicio) return;
+  const existeRegistro = (state.registroPares || []).some(r => r.codigo === codigo && r.servicio === servicio);
+  if (!existeRegistro) return;
+  const item = (state.ordenItems || []).find(x => x.codigo === codigo);
+  if (!item) return;
+  item.registroServicios = item.registroServicios || {};
+  item.registroServicios[servicio] = item.registroServicios[servicio] || {};
+  if (item.registroServicios[servicio].blanqueamiento === true) return;
+  item.registroServicios[servicio].blanqueamiento = true;
+  await persist();
+  await db.saveOrdenItem(item);
+}
+
+/* 4) FINANZAS: hoy por defecto + búsqueda por rango + fecha visible. */
+function fechaCobro(o) { return o.fechaPago || o.fechaIngreso || ''; }
+function renderCobrosFinanzas() {
+  const tabla = document.getElementById('finanzas-ordenes-table');
+  if (!tabla) return;
+  const desde = document.getElementById('sm-fdesde')?.value || todayISO(0);
+  const hasta = document.getElementById('sm-fhasta')?.value || todayISO(0);
+  if (desde > hasta) { tabla.innerHTML = '<tbody><tr><td>Rango de fechas inválido.</td></tr></tbody>'; return; }
+  const ordenes = (state.ordenes || [])
+    .filter(o => enRango(fechaCobro(o), desde, hasta))
+    .sort((a,b) => (fechaCobro(b) + String(b.numero).padStart(8,'0')).localeCompare(fechaCobro(a) + String(a.numero).padStart(8,'0')));
+  tabla.innerHTML = '<thead><tr><th>Fecha</th><th>Orden</th><th>Cliente</th><th>Precio</th><th>Pagado</th><th>Pendiente</th><th>Método</th><th>Estado</th></tr></thead><tbody>' +
+    ordenes.map(o => {
+      const total = Number(o.precio) - Number(o.descuento || 0);
+      const pendiente = Math.max(total - Number(o.pagado || 0), 0);
+      return '<tr><td data-label="Fecha">' + fmtDate(fechaCobro(o)) + '</td>' +
+        '<td class="mono" data-label="Orden">#' + escHtml(o.numero) + '</td>' +
+        '<td data-label="Cliente">' + escHtml(clienteNombre(o.clienteId)) + '</td>' +
+        '<td data-label="Precio">' + fmtMoney(total) + '</td>' +
+        '<td data-label="Pagado">' + fmtMoney(o.pagado) + '</td>' +
+        '<td data-label="Pendiente">' + fmtMoney(pendiente) + '</td>' +
+        '<td data-label="Método">' + escHtml(o.metodoPago || '—') + '</td>' +
+        '<td data-label="Estado">' + chipPago(o.estadoPago) + '</td></tr>';
+    }).join('') + '</tbody>';
+}
+function mejorarFinanzasUI() {
+  const tabla = document.getElementById('finanzas-ordenes-table');
+  if (!tabla) return;
+  const panel = tabla.closest('.panel');
+  if (panel && !document.getElementById('sm-frange')) {
+    const tools = document.createElement('div');
+    tools.id = 'sm-frange';
+    tools.className = 'sm-tools';
+    tools.style.padding = '0 20px 12px';
+    tools.innerHTML = '<div class="field"><label>Desde</label><input type="date" id="sm-fdesde"></div>' +
+      '<div class="field"><label>Hasta</label><input type="date" id="sm-fhasta"></div>' +
+      '<button class="btn btn-primary btn-sm" id="sm-fgo">Buscar</button>' +
+      '<button class="btn btn-ghost btn-sm" id="sm-ftoday">Hoy</button>';
+    panel.querySelector('.panel-title')?.insertAdjacentElement('afterend', tools);
+    document.getElementById('sm-fdesde').value = todayISO(0);
+    document.getElementById('sm-fhasta').value = todayISO(0);
+    document.getElementById('sm-fgo').onclick = renderCobrosFinanzas;
+    document.getElementById('sm-ftoday').onclick = () => {
+      document.getElementById('sm-fdesde').value = todayISO(0);
+      document.getElementById('sm-fhasta').value = todayISO(0);
+      renderCobrosFinanzas();
+    };
+  }
+  if (document.getElementById('tab-finanzas')?.classList.contains('active')) renderCobrosFinanzas();
+}
+
+/* 5) GALERÍA: buscador EXCLUSIVO por marca/modelo, últimos 2 meses. */
+function fechaHaceDosMeses() {
+  const d = new Date();
+  d.setMonth(d.getMonth() - 2);
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function buscarGaleriaMarcaModelo() {
+  const caja = document.getElementById('sm-gbrand');
+  if (!caja) return;
+  const q = (caja.querySelector('input')?.value || '').trim().toLowerCase();
+  const out = document.getElementById('sm-gresults');
+  if (!q) { out.innerHTML = '<div class="hint">Escribe una marca o modelo.</div>'; return; }
+  const corte = fechaHaceDosMeses();
+  const resultados = (state.ordenItems || []).filter(it => {
+    const orden = (state.ordenes || []).find(o => o.id === it.ordenId);
+    const fecha = it.fechaIngreso || orden?.fechaIngreso || '';
+    if (!fecha || fecha < corte) return false;
+    const texto = [it.marca, it.modelo, it.descripcion].filter(Boolean).join(' ').toLowerCase();
+    return texto.includes(q);
+  }).sort((a,b) => {
+    const oa = (state.ordenes || []).find(o => o.id === a.ordenId);
+    const ob = (state.ordenes || []).find(o => o.id === b.ordenId);
+    return (b.fechaIngreso || ob?.fechaIngreso || '').localeCompare(a.fechaIngreso || oa?.fechaIngreso || '');
+  });
+  out.innerHTML = resultados.length
+    ? '<div class="hint" style="margin:8px 0">' + resultados.length + ' coincidencia(s) en los últimos 2 meses.</div>' + resultados.map(renderItemCardHTML).join('')
+    : '<div class="hint" style="margin-top:8px">Sin coincidencias.</div>';
+  out.querySelectorAll('label[title="Agregar foto de este artículo"]').forEach(x => x.remove());
+}
+function mejorarGaleriaUI() {
+  const content = document.getElementById('galeria-content');
+  if (!content || document.getElementById('sm-gbrand')) return;
+  const box = document.createElement('div');
+  box.id = 'sm-gbrand';
+  box.className = 'sm-brandbox';
+  box.innerHTML = '<strong>Buscar artículo por marca o modelo</strong>' +
+    '<div class="hint">Busca solamente la marca/modelo del artículo registrado. No busca cliente ni número de orden. Muestra los últimos 2 meses.</div>' +
+    '<div class="row"><input class="input" placeholder="Ej: Nike Air Force 1"><button class="btn btn-primary btn-sm">Buscar</button></div>' +
+    '<div id="sm-gresults"></div>';
+  content.parentElement.insertBefore(box, content);
+  box.querySelector('button').onclick = buscarGaleriaMarcaModelo;
+  box.querySelector('input').onkeydown = e => { if (e.key === 'Enter') buscarGaleriaMarcaModelo(); };
+}
+
+/* Oculta solo en la Galería regular las fotos individuales viejas/nuevas. */
+function sinFotosIndividualesEnGaleria(fn) {
+  const backup = [];
+  (state.ordenes || []).forEach(o => {
+    if (!Array.isArray(o.extra?.fotos)) return;
+    const original = o.extra.fotos;
+    const visibles = original.filter(f => !(f.categoria === 'item_inicial' || (f.categoria === 'todos_pares' && f.item)));
+    if (visibles.length !== original.length) { backup.push([o, original]); o.extra.fotos = visibles; }
+  });
+  try { return fn(); }
+  finally { backup.forEach(([o, fotos]) => { o.extra.fotos = fotos; }); }
+}
+
+/* 6) REPORTES: QR y Efectivo dentro del mismo rango de fecha del reporte. */
+function actualizarResumenMetodosPago() {
+  const resumen = document.getElementById('rep-resumen');
+  if (!resumen) return;
+  [['rep-qr','Ingresos por QR'], ['rep-ef','Ingresos en efectivo']].forEach(([id,label]) => {
+    if (!document.getElementById(id)) {
+      const card = document.createElement('div');
+      card.className = 'panel';
+      card.style.cssText = 'flex:1;min-width:180px';
+      card.innerHTML = '<div class="hint">' + label + '</div><div id="' + id + '" style="font-size:22px;font-weight:700">—</div>';
+      resumen.appendChild(card);
+    }
+  });
+  const desde = document.getElementById('rep-desde')?.value || '';
+  const hasta = document.getElementById('rep-hasta')?.value || '';
+  const ordenes = (state.ordenes || []).filter(o => (!desde && !hasta) || enRango(o.fechaIngreso, desde, hasta));
+  document.getElementById('rep-qr').textContent = fmtMoney(ordenes.reduce((s,o) => s + Number(o.pagadoQR || 0), 0));
+  document.getElementById('rep-ef').textContent = fmtMoney(ordenes.reduce((s,o) => s + Number(o.pagadoEfectivo || 0), 0));
+}
+
+function envolver(nombre, despues) {
+  const original = window[nombre];
+  if (typeof original !== 'function' || original.__smOpsWrapped) return;
+  const wrapper = function(...args) {
+    const r = original.apply(this, args);
+    if (r && typeof r.then === 'function') {
+      return r.then(async valor => { await despues(...args); refrescarMejoras(); return valor; });
+    }
+    despues(...args);
+    refrescarMejoras();
+    return r;
+  };
+  wrapper.__smOpsWrapped = true;
+  window[nombre] = wrapper;
+}
+
+function init() {
+  instalarCSS();
+
+  if (typeof window.agregarFotoItem === 'function') {
+    guardarFotoItemAislada.__smOpsWrapped = true;
+    window.agregarFotoItem = guardarFotoItemAislada;
+  }
+
+  envolver('openOrdenModal', mejorarOrdenUI);
+  envolver('agregarFilaItemOrden', mejorarOrdenUI);
+  envolver('sincronizarCantidadPares', mejorarOrdenUI);
+
+  if (typeof window.saveOrden === 'function' && !window.saveOrden.__smOpsSave) {
+    const original = window.saveOrden;
+    const wrapper = function(...args) {
+      const fecha = document.getElementById('orden-fecha-entrega-general')?.value;
+      if (fecha) document.querySelectorAll('#orden-items-list .item-fecha-entrega-input').forEach(x => { x.value = fecha; });
+      return original.apply(this, args);
+    };
+    wrapper.__smOpsSave = true;
+    window.saveOrden = wrapper;
+  }
+
+  envolver('openNuevoClienteOrdenModal', mejorarNuevoClienteOrdenUI);
+  envolver('agregarFilaParCO', mejorarNuevoClienteOrdenUI);
+  if (typeof window.guardarClienteOrden === 'function' && !window.guardarClienteOrden.__smOpsSave) {
+    const original = window.guardarClienteOrden;
+    const wrapper = async function(...args) {
+      const antes = new Set((state.ordenes || []).map(o => o.id));
+      const r = await original.apply(this, args);
+      await recategorizarFotosNuevaOrden(antes);
+      refrescarMejoras();
+      return r;
+    };
+    wrapper.__smOpsSave = true;
+    window.guardarClienteOrden = wrapper;
+  }
+
+  if (typeof window.registrarPares === 'function' && !window.registrarPares.__smOpsProd) {
+    const original = window.registrarPares;
+    const wrapper = async function(...args) {
+      const codigo = document.getElementById('prod-codigo')?.value.trim() || '';
+      const servicio = document.getElementById('prod-servicio')?.value || '';
+      const blanqueamiento = !!document.getElementById('prod-blanqueamiento')?.checked;
+      const r = await original.apply(this, args);
+      await persistirBlanqueamientoSiCorresponde(codigo, servicio, blanqueamiento);
+      mejorarProduccionUI();
+      return r;
+    };
+    wrapper.__smOpsProd = true;
+    window.registrarPares = wrapper;
+  }
+  window.renderHistorialProduccion = renderRangoProduccion;
+
+  envolver('renderFinanzas', mejorarFinanzasUI);
+  envolver('renderReportes', actualizarResumenMetodosPago);
+  envolver('setRepRange', actualizarResumenMetodosPago);
+
+  ['renderGaleria','seleccionarGaleriaOrden','seleccionarGaleriaItem','limpiarFiltroGaleriaItem'].forEach(nombre => {
+    const original = window[nombre];
+    if (typeof original !== 'function' || original.__smOpsGallery) return;
+    const wrapper = function(...args) { return sinFotosIndividualesEnGaleria(() => original.apply(this,args)); };
+    wrapper.__smOpsGallery = true;
+    window[nombre] = wrapper;
+  });
+
+  if (typeof window.switchTab === 'function' && !window.switchTab.__smOpsTab) {
+    const original = window.switchTab;
+    const wrapper = function(tab, ...args) {
+      const r = tab === 'galeria'
+        ? sinFotosIndividualesEnGaleria(() => original.call(this, tab, ...args))
+        : original.call(this, tab, ...args);
+      refrescarMejoras(tab);
+      return r;
+    };
+    wrapper.__smOpsTab = true;
+    window.switchTab = wrapper;
+  }
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.sm-menu')) document.querySelectorAll('.sm-pop.open').forEach(x => x.classList.remove('open'));
+  });
+
+  // Sin MutationObserver: evita bucles de render y consumo de CPU en iPhone.
+  refrescarMejoras();
+}
+
+function refrescarMejoras(tabActual='') {
+  mejorarOrdenUI();
+  mejorarNuevoClienteOrdenUI();
+  if (tabActual === 'produccion' || document.getElementById('tab-produccion')?.classList.contains('active')) mejorarProduccionUI();
+  if (tabActual === 'finanzas' || document.getElementById('tab-finanzas')?.classList.contains('active')) mejorarFinanzasUI();
+  if (tabActual === 'galeria' || document.getElementById('tab-galeria')?.classList.contains('active')) mejorarGaleriaUI();
+  if (tabActual === 'reportes' || document.getElementById('tab-reportes')?.classList.contains('active')) actualizarResumenMetodosPago();
+}
