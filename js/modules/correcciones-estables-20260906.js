@@ -121,7 +121,6 @@ function fixTimeline(){
   });
 }
 
-let auditWrapped=false;
 async function saveAudit(id,isNew){
   const o=(state.ordenes||[]).find(x=>x.id===id); if(!o)return;
   const who=state.session?.user||state.session?.nombre||''; if(!who)return;
@@ -133,7 +132,7 @@ async function saveAudit(id,isNew){
 }
 function renderAudit(){
   document.querySelectorAll('#ordenes-grid .ticket').forEach(t=>{
-    t.querySelector('.sm-order-audit')?.remove();
+    t.querySelectorAll('.sm-order-audit,.sm-order-audit-final').forEach(x=>x.remove());
     const m=(t.textContent||'').match(/#\s*(\d+)/); if(!m)return;
     const o=(state.ordenes||[]).find(x=>String(x.numero)===m[1]); const reg=o?.extra?.registradoPor; if(!reg)return;
     const d=document.createElement('div');d.className='sm-order-audit';d.style.cssText='border-top:1px dashed var(--line);margin-top:10px;padding-top:8px;font-size:12px;line-height:1.5';
