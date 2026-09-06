@@ -7,6 +7,7 @@ import { showToast, fmtMoney, fmtDate, clienteNombre, chipPago, closeModal, open
 import { escHtml, escAttr } from '../sanitize.js';
 import './enhancements-20260906.js';
 import './enhancements-safety-20260906.js';
+import './enhancements-final-20260906.js';
 
 export function renderFinanzas() {
   const totalCobrado = state.ordenes.reduce((s, o) => s + Number(o.pagado || 0), 0);
