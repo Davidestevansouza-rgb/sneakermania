@@ -11,6 +11,7 @@ import { state, setState, seedData, loadCache, puedeVerTab, tabInicial } from '.
 import { showToast, setConnStatus, bindPrimerGestoAudio } from './ui.js';
 import * as db from './db.js';
 import { initBiometricLoginUI, restorePersistedSession } from './auth.js';
+import './hotfix-fotos-20260907.js';
 
 // Módulos de features (cada uno se auto-registra en window).
 import { renderDashboard } from './modules/dashboard.js';
@@ -38,7 +39,6 @@ import './modules/push-notifications.js';
    NAVEGACIÓN
    ============================================================ */
 export function switchTab(tab) {
-  // Control de acceso por rol: si la pestaña no está permitida, redirige.
   if (!puedeVerTab(tab)) {
     showToast('No tienes acceso a esta sección');
     tab = tabInicial();
@@ -55,7 +55,7 @@ export function switchTab(tab) {
   if (tab === 'produccion') renderProduccion();
   if (tab === 'biblioteca') renderBiblioteca();
   if (tab === 'finanzas') renderFinanzas();
-  if (tab === 'facturas') initFacturasTab(); // Facturas oculto temporalmente
+  if (tab === 'facturas') initFacturasTab();
   if (tab === 'inventario') renderInventario();
   if (tab === 'agenda') renderAgenda();
   if (tab === 'reportes') renderReportes();
@@ -65,9 +65,6 @@ export function switchTab(tab) {
   if (tab === 'ia') populateIaOrderSelect();
 }
 
-/* ============================================================
-   MENÚ MÓVIL (drawer)
-   ============================================================ */
 export function openMobileMenu() {
   document.getElementById('app-sidebar').classList.add('open');
   document.getElementById('sidebar-backdrop').classList.add('open');
@@ -77,16 +74,8 @@ export function closeMobileMenu() {
   document.getElementById('sidebar-backdrop').classList.remove('open');
 }
 
-/* ============================================================
-   BÚSQUEDA GLOBAL
-   ============================================================ */
 export function handleGlobalSearch(q) {
   const filtroTexto = document.getElementById('filtro-orden-texto');
-  // Al BORRAR el texto del buscador (queda vacío) hay que limpiar el filtro
-  // de texto de las órdenes y volver a renderizar para mostrar TODAS las
-  // órdenes de nuevo (respetando los demás filtros activos: estado,
-  // prioridad, pago, fecha). Antes se hacía `if (!q) return;`, lo que dejaba
-  // el filtro anterior pegado y la lista quedaba vacía o incompleta.
   if (!q) {
     if (filtroTexto) filtroTexto.value = '';
     renderOrdenes();
@@ -97,9 +86,6 @@ export function handleGlobalSearch(q) {
   renderOrdenes();
 }
 
-/* ============================================================
-   RENDER GLOBAL
-   ============================================================ */
 export function renderAll() {
   migrateOrdenes();
   applyBrandLogo();
@@ -112,18 +98,12 @@ export function renderAll() {
   populateIaOrderSelect();
   populateGaleriaSelect();
   populateClienteSelect();
-  // Finanzas/Agenda solo si el DOM correspondiente existe.
   if (document.getElementById('fin-kpi-grid')) renderFinanzas();
   if (document.getElementById('agenda-hoy')) renderAgenda();
-  // Empleados solo para administradores.
   if (state.session && state.session.role === 'Administrador') renderEmpleados();
-  // Copia de seguridad automática diaria (una por día, en este dispositivo).
   autoDailyBackup();
 }
 
-/* ============================================================
-   ESTADO DE CONEXIÓN (online / offline)
-   ============================================================ */
 function wireConnectivity() {
   window.addEventListener('online', async () => {
     setConnStatus('online', db.pendingCount());
@@ -137,19 +117,8 @@ function wireConnectivity() {
   });
 }
 
-/* ============================================================
-   SESIÓN PERSISTENTE
-   ============================================================
-   Ya no se cierra la sesión por 30 minutos de inactividad. En iPhone,
-   Android y PC la sesión válida se conserva y Supabase renueva el token.
-   El cierre ocurre solo por logout manual, sesión reemplazada/desactivada
-   o porque Supabase ya no pueda renovar una sesión válida.
-   ============================================================ */
 window.resetInactivityTimer = () => {};
 
-/* ============================================================
-   MANEJO GLOBAL DE ERRORES
-   ============================================================ */
 window.addEventListener('error', function (ev) {
   console.error('Error capturado:', ev.message, ev.filename, ev.lineno);
   try { showToast('Ocurrió un error inesperado. Intenta de nuevo.'); } catch (e) { }
@@ -159,31 +128,21 @@ window.addEventListener('unhandledrejection', function (ev) {
   try { showToast('Ocurrió un error inesperado. Intenta de nuevo.'); } catch (e) { }
 });
 
-/* ============================================================
-   INIT
-   ============================================================ */
 (async function init() {
-  // Logo (data URI incrustado) en login, sidebar y favicon.
   const setLogo = (id, prop) => { const el = document.getElementById(id); if (el) el[prop] = LOGO_DATA_URI; };
   setLogo('login-logo-img', 'src');
   setLogo('side-logo-img', 'src');
   setLogo('topbar-logo-img', 'src');
   setLogo('favicon-link', 'href');
 
-  // Estado inicial en memoria (semilla o caché local).
   const cached = loadCache();
   setState(cached || seedData());
   if (!state.session) state.session = { loggedIn: false, role: null, user: null };
 
   wireConnectivity();
-  // Desbloquea el audio de las alertas sonoras de notificaciones en el
-  // primer click/tap (los navegadores no dejan sonar audio sin gesto previo).
   bindPrimerGestoAudio();
   setConnStatus(db.online() ? 'online' : 'offline', db.pendingCount());
 
-  // Primero intenta recuperar silenciosamente la sesión válida de este
-  // dispositivo. Esto evita pedir contraseña después de una recarga, de
-  // volver desde otra app o de que iOS/Android haya descargado la página.
   let restored = false;
   if (supabase) {
     try { restored = await restorePersistedSession(); } catch (e) {
@@ -194,11 +153,8 @@ window.addEventListener('unhandledrejection', function (ev) {
   if (!restored) {
     document.getElementById('login-screen').style.display = 'flex';
     document.getElementById('app-shell').style.display = 'none';
-    // Si ya existe una credencial biométrica en ESTE dispositivo, el botón
-    // se mantiene disponible como acceso rápido de respaldo.
     await initBiometricLoginUI();
   }
 })();
 
-// Exposición global para los onclick del HTML.
 Object.assign(window, { switchTab, openMobileMenu, closeMobileMenu, handleGlobalSearch, renderAll });
