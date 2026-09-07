@@ -1,19 +1,43 @@
 /* Selector nativo de foto para artículos dentro de Nueva/Editar orden.
  * iPhone: un solo toque real sobre el input file abre el selector nativo.
  * No usa input.click() programático porque Safari puede requerir varios toques.
- * Reutiliza onFotoFilaItem() original para persistencia.
+ * Reutiliza onFotoFilaItem() original para persistencia y añade vista previa inmediata.
  */
-if (!window.__smFotoItemNativeFix0906v2) {
-  window.__smFotoItemNativeFix0906v2 = true;
+if (!window.__smFotoItemNativeFix0906v3) {
+  window.__smFotoItemNativeFix0906v3 = true;
   instalarFotoItemNativeFix();
 }
 
+function asegurarPreview(row, label) {
+  let preview = row.querySelector('.sm-item-native-preview');
+  if (preview) return preview;
+  preview = document.createElement('div');
+  preview.className = 'sm-item-native-preview';
+  preview.innerHTML = '<img alt="Vista previa de la foto"><span>Foto lista para guardar</span>';
+  label.insertAdjacentElement('beforebegin', preview);
+  return preview;
+}
+
+function mostrarPreview(row, label, file) {
+  if (!file) return;
+  const preview = asegurarPreview(row, label);
+  const img = preview.querySelector('img');
+  const anterior = preview.dataset.objectUrl || '';
+  if (anterior) {
+    try { URL.revokeObjectURL(anterior); } catch (_) {}
+  }
+  const url = URL.createObjectURL(file);
+  preview.dataset.objectUrl = url;
+  img.src = url;
+  preview.style.display = 'flex';
+}
+
 function convertirFila(row) {
-  if (!row || row.dataset.smNativePhotoV2 === '1') return;
+  if (!row || row.dataset.smNativePhotoV3 === '1') return;
   const menu = row.querySelector('.sm-item');
   if (!menu) return;
 
-  row.dataset.smNativePhotoV2 = '1';
+  row.dataset.smNativePhotoV3 = '1';
   menu.style.display = 'none';
 
   const label = document.createElement('label');
@@ -37,7 +61,11 @@ function convertirFila(row) {
   input.style.fontSize = '100px';
 
   input.addEventListener('change', () => {
-    if (!input.files || !input.files.length) return;
+    const file = input.files && input.files[0];
+    if (!file) return;
+    // La vista previa se crea ANTES de llamar a onFotoFilaItem(),
+    // porque esa función original limpia input.value inmediatamente.
+    mostrarPreview(row, label, file);
     if (typeof window.onFotoFilaItem === 'function') window.onFotoFilaItem(input);
   });
 
@@ -51,11 +79,14 @@ function convertirTodas() {
 
 function instalarFotoItemNativeFix() {
   const style = document.createElement('style');
-  style.id = 'sm-foto-item-native-fix-0906-v2';
+  style.id = 'sm-foto-item-native-fix-0906-v3';
   style.textContent = `
     #orden-items-list .sm-item{display:none!important}
     #orden-items-list .sm-item-native-label{display:inline-flex!important;align-items:center;justify-content:center;min-height:44px;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     #orden-items-list .sm-item-native-label input[type=file]{display:block!important}
+    #orden-items-list .sm-item-native-preview{display:none;align-items:center;gap:10px;margin:10px 0}
+    #orden-items-list .sm-item-native-preview img{width:86px;height:86px;object-fit:cover;border-radius:10px;border:1px solid var(--line,#ddd)}
+    #orden-items-list .sm-item-native-preview span{font-size:12px;font-weight:700;color:var(--muted,#666)}
   `;
   if (!document.getElementById(style.id)) document.head.appendChild(style);
 
@@ -68,13 +99,13 @@ function instalarFotoItemNativeFix() {
 
   ['openOrdenModal','agregarFilaItemOrden','sincronizarCantidadPares'].forEach(nombre => {
     const original = window[nombre];
-    if (typeof original !== 'function' || original.__smNativePhotoV2) return;
+    if (typeof original !== 'function' || original.__smNativePhotoV3) return;
     const w = function(...args) {
       const r = original.apply(this,args);
       Promise.resolve(r).finally(() => requestAnimationFrame(convertirTodas));
       return r;
     };
-    w.__smNativePhotoV2 = true;
+    w.__smNativePhotoV3 = true;
     window[nombre] = w;
   });
 }
