@@ -5,6 +5,7 @@ import { state, todayISO, setDateValue, persist } from '../state.js';
 import * as db from '../db.js';
 import { showToast, fmtMoney, fmtDate, clienteNombre, chipPago, closeModal, openModalEl, logActivity, lockBtn } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
+import './network-optimizer-20260907.js';
 import './enhancements-20260906.js';
 import './enhancements-safety-20260906.js';
 import './enhancements-final-20260906.js';
