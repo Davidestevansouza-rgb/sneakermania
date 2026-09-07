@@ -5,6 +5,7 @@ import { state, todayISO, setDateValue, persist } from '../state.js';
 import * as db from '../db.js';
 import { showToast, fmtMoney, fmtDate, clienteNombre, chipPago, closeModal, openModalEl, logActivity, lockBtn } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
+import '../hotfix-fotos-20260907.js';
 
 export function renderFinanzas() {
   const totalCobrado = state.ordenes.reduce((s, o) => s + Number(o.pagado || 0), 0);
