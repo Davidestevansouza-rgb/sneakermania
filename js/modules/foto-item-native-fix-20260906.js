@@ -3,8 +3,8 @@
  * No usa input.click() programático porque Safari puede requerir varios toques.
  * Reutiliza onFotoFilaItem() original para persistencia y añade vista previa inmediata.
  */
-if (!window.__smFotoItemNativeFix0906v3) {
-  window.__smFotoItemNativeFix0906v3 = true;
+if (!window.__smFotoItemNativeFix0906v4) {
+  window.__smFotoItemNativeFix0906v4 = true;
   instalarFotoItemNativeFix();
 }
 
@@ -33,11 +33,11 @@ function mostrarPreview(row, label, file) {
 }
 
 function convertirFila(row) {
-  if (!row || row.dataset.smNativePhotoV3 === '1') return;
+  if (!row || row.dataset.smNativePhotoV4 === '1') return;
   const menu = row.querySelector('.sm-item');
   if (!menu) return;
 
-  row.dataset.smNativePhotoV3 = '1';
+  row.dataset.smNativePhotoV4 = '1';
   menu.style.display = 'none';
 
   const label = document.createElement('label');
@@ -63,8 +63,10 @@ function convertirFila(row) {
   input.addEventListener('change', () => {
     const file = input.files && input.files[0];
     if (!file) return;
-    // La vista previa se crea ANTES de llamar a onFotoFilaItem(),
-    // porque esa función original limpia input.value inmediatamente.
+    // Guardamos una referencia adicional en la propia fila. El flujo original
+    // sigue usando onFotoFilaItem(); esta referencia sirve como verificación
+    // posterior al guardar para asegurar que un artículo NUEVO no pierda su foto.
+    row.__smPendingItemPhoto = file;
     mostrarPreview(row, label, file);
     if (typeof window.onFotoFilaItem === 'function') window.onFotoFilaItem(input);
   });
@@ -79,7 +81,7 @@ function convertirTodas() {
 
 function instalarFotoItemNativeFix() {
   const style = document.createElement('style');
-  style.id = 'sm-foto-item-native-fix-0906-v3';
+  style.id = 'sm-foto-item-native-fix-0906-v4';
   style.textContent = `
     #orden-items-list .sm-item{display:none!important}
     #orden-items-list .sm-item-native-label{display:inline-flex!important;align-items:center;justify-content:center;min-height:44px;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
@@ -99,13 +101,13 @@ function instalarFotoItemNativeFix() {
 
   ['openOrdenModal','agregarFilaItemOrden','sincronizarCantidadPares'].forEach(nombre => {
     const original = window[nombre];
-    if (typeof original !== 'function' || original.__smNativePhotoV3) return;
+    if (typeof original !== 'function' || original.__smNativePhotoV4) return;
     const w = function(...args) {
       const r = original.apply(this,args);
       Promise.resolve(r).finally(() => requestAnimationFrame(convertirTodas));
       return r;
     };
-    w.__smNativePhotoV3 = true;
+    w.__smNativePhotoV4 = true;
     window[nombre] = w;
   });
 }
