@@ -136,7 +136,17 @@ function instalar() {
     window.renderGaleria = wrappedGaleria;
   }
 
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver((mutations) => {
+    // Ignorar las mutaciones que produce este mismo módulo al quitar/agregar
+    // .sm-item-fotos-visible. Sin este guard, el observer vuelve a llamar al
+    // render y crea un ciclo continuo que hace parpadear las fotos.
+    const soloFotosPropias = mutations.length > 0 && mutations.every(m => {
+      const nodos = [...m.addedNodes, ...m.removedNodes].filter(n => n && n.nodeType === 1);
+      if (!nodos.length) return false;
+      return nodos.every(n => n.classList?.contains('sm-item-fotos-visible'));
+    });
+    if (soloFotosPropias) return;
+
     if (detalleOrdenActual && document.getElementById('orden-detalle-items')) {
       clearTimeout(observer.__t);
       observer.__t = setTimeout(() => renderFotosEnDetalle(detalleOrdenActual), 30);
