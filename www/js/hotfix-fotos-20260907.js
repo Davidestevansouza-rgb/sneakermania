@@ -16,7 +16,7 @@ import { state } from './state.js';
     for(const f of [...actuales,...anidadas,...directas]){if(!f||typeof f!=='object')continue;const key=f.path||f.url||JSON.stringify(f);if(seen.has(key))continue;seen.add(key);unicas.push(f);}
     o.extra.fotos=unicas;
   }
-  function normalizarTodas(){for(const o of state.ordenes||[])normalizarFotosOrden(o);}
+  function normalizarTodas(){if(!state||!Array.isArray(state.ordenes))return;for(const o of state.ordenes)normalizarFotosOrden(o);}
   async function resolverImagenR2(img){
     if(!img||resolviendo.has(img))return;const actual=img.getAttribute('src')||'';const original=actual.startsWith('r2://')?actual:(img.dataset.smR2Src||'');if(!original||!original.startsWith('r2://'))return;
     resolviendo.add(img);img.dataset.smR2Src=original;if(actual.startsWith('r2://'))img.setAttribute('src',PIXEL_TRANSPARENTE);
