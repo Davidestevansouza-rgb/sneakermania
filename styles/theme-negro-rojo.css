@@ -1,208 +1,149 @@
-/* SneakerMania Urban — visual-only reskin. No JS, data or behavior changes. */
+/* ============================================================
+   theme-negro-rojo.css — Paleta del sistema: fondo blanco, letras
+   negras, líneas/bordes rojo fosforescente. El menú (sidebar) se
+   deja como ya estaba: negro con letras blancas y borde rojo.
+   Se carga DESPUÉS de main.css y fixes.css.
+   ============================================================ */
 :root{
-  --paper:#08090b;
-  --paper-raised:#111318;
-  --ink:#f7f7f7;
-  --ink-soft:#c1c5cc;
-  --ink-faint:#858b95;
-  --line:#252932;
-  --teal:#ff2036;
-  --teal-deep:#c70b20;
-  --teal-tint:#2b1016;
-  --navy:#050608;
-  --gold:#ff2036;
-  --gold-deep:#c70b20;
-  --gold-tint:#2b1016;
-  --green:#24d39b;
-  --green-tint:#0f2d25;
-  --red:#ff2036;
-  --red-tint:#341118;
-  --amber:#ff9c3d;
-  --amber-tint:#332313;
-  --shadow:0 14px 40px rgba(0,0,0,.34),0 1px 0 rgba(255,255,255,.025) inset;
-  --urban-radius:16px;
+  /* Fondos: blanco (como pidió el cliente, para que las letras
+     se puedan leer bien). */
+  --paper:#F5F5F5;
+  --paper-raised:#FFFFFF;
+
+  /* Texto: negro. */
+  --ink:#0A0A0A;
+  --ink-soft:#3A3A3A;
+  --ink-faint:#6B6B6B;
+
+  /* Líneas y bordes: rojo fosforescente. */
+  --line:#FF1E2D;
+
+  /* Acento principal (antes celeste/teal) → rojo. */
+  --teal:#FF1E2D;
+  --teal-deep:#B00000;
+  --teal-tint:#FFE3E4;
+
+  /* Menú lateral: se mantiene negro (sin cambios). */
+  --navy:#000000;
+  --gold:#FF1E2D;
+  --gold-deep:#B00000;
+  --gold-tint:#FFE3E4;
+
+  /* Estados: se mantienen funcionales dentro de la familia
+     negro/rojo/blanco para no perder la distinción entre ellos. */
+  --green:#1E8A3C;
+  --green-tint:#E1F5E4;
+  --red:#D10000;
+  --red-tint:#FFE3E4;
+  --amber:#B4790A;
+  --amber-tint:#FFF0D6;
+
+  --shadow: 0 1px 2px rgba(0,0,0,0.08), 0 10px 26px rgba(0,0,0,0.10);
 }
 
-html,body{background:#07080a!important;color:var(--ink)!important;}
-body{
-  background:
-    radial-gradient(circle at 85% 8%,rgba(255,32,54,.10),transparent 28%),
-    radial-gradient(circle at 8% 90%,rgba(255,32,54,.06),transparent 30%),
-    #07080a!important;
-}
+/* Fondo general de la app */
+body{ background:var(--paper); color:var(--ink); }
 
-/* Login */
-#login-screen{
-  background:
-    linear-gradient(180deg,rgba(0,0,0,.18),rgba(0,0,0,.78)),
-    radial-gradient(circle at 50% 25%,rgba(255,32,54,.14),transparent 34%),
-    #060709!important;
-}
-.login-card{
-  background:linear-gradient(180deg,rgba(19,21,26,.96),rgba(10,11,14,.98))!important;
-  border:1px solid #282c35!important;
-  border-radius:24px!important;
-  box-shadow:0 26px 70px rgba(0,0,0,.55),0 0 0 1px rgba(255,32,54,.06)!important;
-}
-.login-brand .mark-img{max-height:110px!important;width:auto!important;object-fit:contain!important;background:transparent!important;box-shadow:none!important;}
-.login-brand .name{color:#fff!important;letter-spacing:-.03em;}
-.login-sub{color:#9ca2ad!important;letter-spacing:.07em;text-transform:uppercase;font-size:11px!important;}
-
-/* App chrome */
-.shell-grid{background:transparent!important;}
+/* ---------- MENÚ (sidebar): tal como está — negro, letras blancas, borde rojo fosforescente ---------- */
 .sidebar{
-  background:linear-gradient(180deg,#08090b 0%,#050608 100%)!important;
-  color:#fff!important;
-  border-right:1px solid #1f2229!important;
-  box-shadow:18px 0 50px rgba(0,0,0,.28)!important;
+  background:#000 !important;
+  color:#FFFFFF !important;
+  border-right:2px solid #FF1E2D;
+  box-shadow: 0 0 10px rgba(255,30,45,0.55);
 }
-.side-brand{padding-top:20px!important;padding-bottom:18px!important;}
-.side-brand .mark,.side-brand .mark-img{background:transparent!important;box-shadow:none!important;max-height:74px!important;width:auto!important;object-fit:contain!important;}
-.nav-label{color:#686e79!important;font-size:10px!important;letter-spacing:.16em!important;text-transform:uppercase!important;}
-.nav-item{color:#c9cdd4!important;border:1px solid transparent!important;border-radius:12px!important;margin:2px 8px!important;transition:.18s ease!important;}
-.nav-item .ic{color:#aeb3bc!important;}
-.nav-item:hover{background:#12151a!important;color:#fff!important;transform:translateX(2px);}
+.side-foot{ border-top:1px solid #FF1E2D; }
+.nav-label{ color:#FF9C9C !important; }
+.nav-item{ color:#FFFFFF !important; }
+.nav-item:hover{ background:rgba(255,30,45,0.22) !important; color:#FFFFFF !important; }
 .nav-item.active{
-  background:linear-gradient(90deg,rgba(255,32,54,.24),rgba(255,32,54,.08))!important;
-  color:#fff!important;
-  border-color:rgba(255,32,54,.34)!important;
-  box-shadow:inset 3px 0 0 #ff2036!important;
+  background:#FF1E2D !important; color:#FFFFFF !important;
+  box-shadow: inset 0 0 0 1px #FFFFFF;
 }
-.nav-item.active .ic{color:#ff2036!important;}
-.side-foot{border-top:1px solid #20232a!important;background:#07080a!important;}
-.side-user{color:#fff!important;}
-.side-user .dot{background:#24d39b!important;box-shadow:0 0 0 3px rgba(36,211,155,.13)!important;}
-.side-legal{color:#565c66!important;}
-
-.main{background:transparent!important;}
-.topbar{
-  background:rgba(9,10,13,.92)!important;
-  color:#fff!important;
-  border-bottom:1px solid #1f232a!important;
-  border-color:#1f232a!important;
-  box-shadow:0 10px 32px rgba(0,0,0,.18)!important;
-  backdrop-filter:blur(18px);
-  -webkit-backdrop-filter:blur(18px);
-}
-.topbar input.search,.search,.toolbar input,.toolbar select{
-  background:#14171c!important;
-  color:#f6f7f8!important;
-  border:1px solid #2a2e37!important;
-  box-shadow:none!important;
-}
-.topbar input.search:focus,.search:focus,.toolbar input:focus,.toolbar select:focus,
-.field input:focus,.field select:focus,.field textarea:focus{
-  border-color:#ff2036!important;
-  box-shadow:0 0 0 3px rgba(255,32,54,.13)!important;
-  outline:none!important;
-}
-.topbar-brand{color:#fff!important;}
-.menu-btn,.bell-btn{
-  background:#14171c!important;color:#fff!important;border:1px solid #282c34!important;box-shadow:none!important;border-radius:12px!important;
-}
-.bell-badge{background:#ff2036!important;color:#fff!important;}
-
-.page{background:transparent!important;}
-.page-head{margin-bottom:18px!important;}
-.page-title{color:#fff!important;text-shadow:none!important;letter-spacing:-.035em!important;font-weight:900!important;}
-.page-sub,.hint{color:#8e949e!important;}
-
-/* Universal surfaces */
-.kpi-card,.panel,.ticket,.mini-order,.modal,.combo-list,.drop-zone,.gallery-add,.firma-preview,
-.card,.agenda-card,.notification-card,.report-card,.inventory-card,.order-card,.cliente-card{
-  background:linear-gradient(180deg,#13161b,#0f1115)!important;
-  color:#f5f5f5!important;
-  border:1px solid #252932!important;
-  border-radius:var(--urban-radius)!important;
-  box-shadow:var(--shadow)!important;
-}
-.kpi-card{position:relative;overflow:hidden;}
-.kpi-card:after{content:"";position:absolute;inset:auto -25% -55% 40%;height:95px;background:radial-gradient(circle,rgba(255,32,54,.16),transparent 70%);pointer-events:none;}
-.kpi-label{color:#959ba5!important;text-transform:uppercase;letter-spacing:.06em;font-size:11px!important;}
-.kpi-value,.modal-title,.ticket-num,.panel-title{color:#fff!important;text-shadow:none!important;}
-.panel-title{font-weight:800!important;letter-spacing:-.015em!important;}
-.ticket-shoe,.ticket-meta-row,.field label,.ia-field-row label{color:#a3a9b2!important;}
-.ticket::before{border-top-color:#30343d!important;}
-
-/* Forms */
-.field input,.field select,.field textarea,.role-opt,#signature-canvas{
-  background:#111419!important;
-  color:#f6f6f6!important;
-  border:1px solid #2a2e36!important;
-  box-shadow:none!important;
-  border-radius:12px!important;
-}
-.field input::placeholder,.field textarea::placeholder,.toolbar input::placeholder,.search::placeholder{color:#666d78!important;}
-.role-opt{color:#b7bcc5!important;}
-.role-opt.active{background:#241116!important;border-color:#ff2036!important;color:#fff!important;box-shadow:inset 0 0 0 1px rgba(255,32,54,.2)!important;}
-.combo-list{box-shadow:0 20px 55px rgba(0,0,0,.46)!important;}
-.combo-item{border-color:#252932!important;color:#e9eaec!important;}
-.combo-item:hover{background:#1a1d23!important;}
-
-/* Buttons */
-.btn{border-radius:12px!important;font-weight:800!important;transition:transform .16s ease,filter .16s ease,background .16s ease!important;}
-.btn:active{transform:scale(.985);}
-.btn-primary,.btn-teal{
-  background:linear-gradient(180deg,#ff263c,#eb142a)!important;
-  color:#fff!important;
-  border:1px solid #ff4254!important;
-  box-shadow:0 10px 24px rgba(255,32,54,.22)!important;
-}
-.btn-primary:hover,.btn-teal:hover{filter:brightness(1.07);}
-.btn-ghost{background:#13161a!important;color:#d7dae0!important;border:1px solid #30343d!important;}
-.btn-ghost:hover{background:#1b1f25!important;color:#fff!important;}
-.btn-danger{background:#281015!important;color:#ff5263!important;border:1px solid #6b202b!important;}
-.btn-orden-masiva{background:#13161a!important;color:#fff!important;border:1px solid #30343d!important;}
-.btn-orden-masiva.active{background:#ff2036!important;color:#fff!important;border-color:#ff2036!important;}
-
-/* Tables and lists */
-table.data{background:transparent!important;color:#e9eaec!important;}
-table.data tr{background:#101216!important;color:#e9eaec!important;}
-table.data th{background:#0d0f12!important;color:#8f96a0!important;border-color:#272b33!important;text-transform:uppercase;letter-spacing:.05em;font-size:11px!important;}
-table.data td{border-color:#242830!important;color:#e4e6e9!important;}
-table.data tbody tr:hover{background:#16191f!important;}
-
-/* Status chips — keep semantic distinction */
-.chip{border:1px solid #343842!important;border-radius:999px!important;font-weight:800!important;box-shadow:none!important;}
-.chip-recibido-y-registrado,.chip-biblioteca,.pri-baja{background:#1c2026!important;color:#c8ccd2!important;border-color:#343943!important;}
-.chip-lavado{background:#1a1730!important;color:#9aa8ff!important;border-color:#383568!important;}
-.chip-secado-y-detallado,.chip-control-de-calidad,.chip-parcial,.pri-media{background:#302113!important;color:#ffb15d!important;border-color:#65411e!important;}
-.chip-pintado-y-personalizado{background:#26162e!important;color:#e28cff!important;border-color:#53305f!important;}
-.chip-listo-para-retirar,.chip-finalizado,.chip-entregado,.chip-pagado{background:#102b23!important;color:#4be0ae!important;border-color:#1f604d!important;}
-.chip-pendiente,.pri-alta{background:#321117!important;color:#ff6575!important;border-color:#6d2630!important;}
-.chip-toggle.checked{background:#2a1117!important;border-color:#ff2036!important;color:#fff!important;}
-
-/* Gallery / imagery */
-.gallery-add,.drop-zone{border-style:dashed!important;border-color:#3a3f49!important;}
-.gallery-add:hover,.drop-zone:hover{border-color:#ff2036!important;background:#171013!important;}
-img{image-rendering:auto;}
-
-/* Modals */
-.modal-backdrop{background:rgba(0,0,0,.76)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);}
-.modal{box-shadow:0 30px 90px rgba(0,0,0,.7)!important;}
-.modal-close{color:#aeb3bc!important;background:#16191e!important;border-radius:10px!important;}
-.modal-foot{border-color:#292d35!important;}
-
-/* Accents */
-a{color:#ff5364;}
-hr{border-color:#272b33!important;}
-::-webkit-scrollbar{width:8px;height:8px;}
-::-webkit-scrollbar-track{background:#08090b;}
-::-webkit-scrollbar-thumb{background:#30343d!important;border-radius:999px;}
-::-webkit-scrollbar-thumb:hover{background:#ff2036!important;}
-::selection{background:#ff2036;color:white;}
-
-/* Mobile: retain existing structure, improve visual rhythm only */
-@media (max-width:900px){
-  .sidebar{box-shadow:24px 0 80px rgba(0,0,0,.68)!important;}
-  .page{padding-left:14px!important;padding-right:14px!important;}
-  .topbar{padding-left:12px!important;padding-right:12px!important;}
-  .login-card{border-radius:22px!important;margin:14px!important;}
-  .kpi-card,.panel,.ticket,.mini-order{border-radius:15px!important;}
+.side-user{ color:#FFFFFF !important; }
+.side-brand .mark, .side-brand .mark-img{
+  background:#FF1E2D !important;
+  box-shadow:0 0 0 2px #000, 0 0 0 3px #FF1E2D !important;
 }
 
-/* Preserve print clarity */
-@media print{
-  body{background:#fff!important;color:#000!important;}
-  .panel,.ticket,.modal,table.data tr{background:#fff!important;color:#000!important;box-shadow:none!important;}
+/* ---------- Resto de la interfaz: fondo blanco, letras negras ---------- */
+.combo-list,
+.field input, .field select, .field textarea,
+.role-opt,
+.btn-ghost:hover,
+.topbar,
+.topbar input.search,
+.bell-btn,
+.toolbar input, .toolbar select,
+.modal,
+.drop-zone,
+.gallery-add,
+.mini-order,
+.firma-preview,
+#signature-canvas,
+.menu-btn,
+table.data tr,
+.kpi-card, .panel, .ticket{
+  background:var(--paper-raised) !important;
+  color:var(--ink);
 }
+
+/* ---------- Líneas y bordes: rojo fosforescente, bien visible ---------- */
+.field input, .field select, .field textarea, .role-opt,
+.combo-list, .combo-item, .toolbar input, .toolbar select,
+.topbar input.search, table.data th, table.data td,
+.ticket, .kpi-card, .panel, .drop-zone,
+.gallery-add, .mini-order, .modal, .menu-btn, .bell-btn,
+#signature-canvas, .topbar{
+  border-color:var(--line) !important;
+  box-shadow: 0 0 4px rgba(255,30,45,0.35);
+}
+table.data td{ border-bottom:1px solid var(--line); }
+.ticket::before{ border-top:2px dashed var(--line); }
+hr, .side-foot, .modal-foot{ border-color:var(--line); }
+
+/* Texto secundario en gris oscuro (sigue siendo legible sobre blanco) */
+.field label, .kpi-label, .ticket-shoe, .ticket-meta-row, .modal-close,
+.ia-field-row label, .page-sub, .hint{
+  color:var(--ink-soft) !important;
+}
+
+/* Títulos con un leve resplandor rojo, para que se note el acento
+   fosforescente sin perder legibilidad del texto negro. */
+.kpi-value, .modal-title, .ticket-num, .page-title{
+  color:var(--ink) !important;
+  text-shadow:0 0 3px rgba(255,30,45,0.25);
+}
+.topbar-brand{ color:var(--ink) !important; }
+.topbar-brand .accent{ color:var(--teal) !important; }
+
+/* Botones y acentos en rojo/negro */
+.btn-primary{ background:#000; color:#FFFFFF; border:1px solid #FF1E2D; }
+.btn-primary:hover{ background:#1a0000; }
+.btn-teal{ background:var(--teal); color:#FFFFFF; }
+.btn-teal:hover{ background:var(--teal-deep); }
+.btn-ghost{ color:var(--ink-soft); border:1px solid var(--line); }
+.btn-danger{ background:#FFFFFF; color:#D10000; border:1px solid #D10000; }
+.btn-orden-masiva{ background:var(--panel,#1a1a1a); color:#FFFFFF; border:1.5px solid var(--line); }
+.btn-orden-masiva:hover{ background:#242424; }
+.btn-orden-masiva.active{ background:#fff; color:#000; border-color:#000; }
+.chip-toggle.checked{ background:var(--red-tint,#FFE3E4) !important; border-color:var(--red,#D10000) !important; color:var(--ink) !important; }
+
+/* Chips de estado: familia negro/rojo/blanco, cada uno bien legible */
+.chip{ border:1px solid var(--line); }
+.chip-recibido-y-registrado{ background:#F0F0F0; color:var(--ink); }
+.chip-lavado{ background:var(--teal-tint); color:var(--teal-deep); }
+.chip-secado-y-detallado{ background:var(--gold-tint); color:var(--gold-deep); }
+.chip-pintado-y-personalizado{ background:#F0F0F0; color:var(--ink); }
+.chip-control-de-calidad{ background:var(--gold-tint); color:var(--gold-deep); }
+.chip-biblioteca{ background:#F0F0F0; color:var(--ink); }
+.chip-listo-para-retirar{ background:var(--green-tint); color:var(--green); }
+.chip-finalizado{ background:var(--green-tint); color:var(--green); }
+.chip-entregado, .chip-pagado{ background:var(--green-tint); color:var(--green); }
+.chip-parcial{ background:var(--amber-tint); color:var(--amber); }
+.chip-pendiente{ background:var(--red-tint); color:var(--red); }
+.pri-alta{ background:var(--red-tint); color:var(--red); }
+.pri-media{ background:var(--amber-tint); color:var(--amber); }
+.pri-baja{ background:#F0F0F0; color:var(--ink-soft); }
+
+::-webkit-scrollbar-thumb{ background:#FF1E2D !important; }
+.modal-backdrop{ background:rgba(0,0,0,0.55); }
