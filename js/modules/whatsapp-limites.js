@@ -7,28 +7,17 @@ import { showToast } from '../ui.js';
 
 const CONTADOR_KEY = 'ses-whatsapp-mensual';
 
-/**
- * Obtiene el contador mensual de mensajes WhatsApp.
- */
 function getContador() {
   try {
     const data = JSON.parse(localStorage.getItem(CONTADOR_KEY) || '{}');
-    const mesActual = new Date().toISOString().slice(0, 7); // YYYY-MM
-    
-    if (data.mes !== mesActual) {
-      // Nuevo mes: reiniciar contador
-      return { mes: mesActual, enviados: 0 };
-    }
-    
+    const mesActual = new Date().toISOString().slice(0, 7);
+    if (data.mes !== mesActual) return { mes: mesActual, enviados: 0 };
     return data;
   } catch (e) {
     return { mes: new Date().toISOString().slice(0, 7), enviados: 0 };
   }
 }
 
-/**
- * Incrementa el contador de mensajes enviados.
- */
 function incrementarContador() {
   const contador = getContador();
   contador.enviados++;
@@ -36,21 +25,15 @@ function incrementarContador() {
   return contador.enviados;
 }
 
-/**
- * Verifica si se puede enviar un mensaje WhatsApp.
- * Retorna { permitido: boolean, mensaje: string }
- */
 export function verificarLimiteWhatsApp() {
-  const limite = Number(state.config?.whatsapp_limite_mensual) || 100; // default 100
+  const limite = Number(state.config?.whatsapp_limite_mensual) || 100;
   const contador = getContador();
-  
   if (contador.enviados >= limite) {
     return {
       permitido: false,
       mensaje: `⚠️ Límite mensual alcanzado (${contador.enviados}/${limite}). Cambia el límite en Configuración o espera al próximo mes.`
     };
   }
-  
   const restante = limite - contador.enviados;
   return {
     permitido: true,
@@ -58,37 +41,31 @@ export function verificarLimiteWhatsApp() {
   };
 }
 
-/**
- * Envía un mensaje WhatsApp si el límite lo permite.
- */
 export function enviarWhatsApp(numero, mensaje) {
   const check = verificarLimiteWhatsApp();
-  
   if (!check.permitido) {
     showToast(check.mensaje);
     return false;
   }
-  
-  // Abrir WhatsApp
-  const url = `https://wa.me/${numero.replace(/\D/g, '')}?text=${encodeURIComponent(mensaje)}`;
+  const tel = String(numero || '').replace(/\D/g, '');
+  if (!tel) {
+    showToast('El cliente no tiene un número de WhatsApp válido');
+    return false;
+  }
+  const url = `https://wa.me/${tel}?text=${encodeURIComponent(mensaje)}`;
   window.open(url, '_blank');
-  
-  // Incrementar contador
   const total = incrementarContador();
   const limite = Number(state.config?.whatsapp_limite_mensual) || 100;
-  
   showToast(`Mensaje enviado (${total}/${limite} este mes)`, 'info');
   return true;
 }
 
 /**
- * Envía un mensaje WhatsApp CON una foto adjunta, de forma que el texto y
- * la imagen viajen JUNTOS en el mismo mensaje (usa la API nativa de
- * compartir del teléfono para elegir WhatsApp). Respeta el mismo límite
- * mensual que enviarWhatsApp(). Si el dispositivo/navegador no soporta
- * compartir archivos (p. ej. en computadora), se comporta como
- * enviarWhatsApp() —solo texto— y además descarga la foto para adjuntarla
- * a mano, igual que ya hace "Comprobante → Compartir" en Órdenes.
+ * Flujo directo al número guardado del cliente.
+ * Si existe una foto, la prepara/descarga y después abre el chat exacto
+ * del cliente con el texto completo de la orden. Se evita navigator.share
+ * porque ese panel no conserva el destinatario y obligaba a volver a elegir
+ * el contacto manualmente.
  */
 export async function enviarWhatsAppConFoto(numero, mensaje, file) {
   const check = verificarLimiteWhatsApp();
@@ -97,52 +74,56 @@ export async function enviarWhatsAppConFoto(numero, mensaje, file) {
     return false;
   }
 
+  const tel = String(numero || '').replace(/\D/g, '');
+  if (!tel) {
+    showToast('El cliente no tiene un número de WhatsApp válido');
+    return false;
+  }
+
   try {
-    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], text: mensaje });
-    } else {
-      if (file) {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(file);
-        a.download = file.name || 'foto.jpg';
-        document.body.appendChild(a); a.click();
-        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
-      }
-      const url = `https://wa.me/${numero.replace(/\D/g, '')}?text=${encodeURIComponent(mensaje + (file ? '\n\n(adjunta la foto que se acaba de descargar)' : ''))}`;
-      window.open(url, '_blank');
+    if (file) {
+      const a = document.createElement('a');
+      const objectUrl = URL.createObjectURL(file);
+      a.href = objectUrl;
+      a.download = file.name || 'foto-orden.jpg';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        URL.revokeObjectURL(objectUrl);
+        a.remove();
+      }, 2000);
     }
+
+    const texto = mensaje + (file ? '\n\n📷 Foto de la orden preparada para adjuntar en este chat.' : '');
+    const url = `https://wa.me/${tel}?text=${encodeURIComponent(texto)}`;
+    window.open(url, '_blank');
   } catch (e) {
-    // El usuario cerró el panel de compartir sin elegir nada: no es un error.
-    if (e && e.name === 'AbortError') return false;
-    console.error('Error al compartir por WhatsApp:', e);
-    showToast('No se pudo compartir por WhatsApp');
+    console.error('Error al abrir WhatsApp:', e);
+    showToast('No se pudo abrir WhatsApp');
     return false;
   }
 
   const total = incrementarContador();
   const limite = Number(state.config?.whatsapp_limite_mensual) || 100;
-  showToast(`Mensaje enviado (${total}/${limite} este mes)`, 'info');
+  showToast(file
+    ? `WhatsApp abierto en el cliente correcto. Foto preparada (${total}/${limite})`
+    : `Mensaje enviado (${total}/${limite} este mes)`, 'info');
   return true;
 }
 
-/**
- * Muestra el panel de control de límites WhatsApp en Configuración.
- */
 export function renderWhatsAppLimites() {
   const limite = Number(state.config?.whatsapp_limite_mensual) || 100;
   const contador = getContador();
   const porcentaje = Math.round((contador.enviados / limite) * 100);
-  
   const html = `
     <div class="panel">
       <div class="panel-title">Control de WhatsApp</div>
       <div class="hint" style="margin-bottom:12px;">Limita los mensajes mensuales para evitar sobrecostos.</div>
-      
       <div class="field">
         <label>Límite mensual de mensajes</label>
         <input type="number" id="cfg-whatsapp-limite" value="${limite}" min="10" max="10000" style="width:120px;">
       </div>
-      
       <div style="margin-top:16px;">
         <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;">
           <span>Mensajes enviados este mes (${contador.mes})</span>
@@ -153,27 +134,19 @@ export function renderWhatsAppLimites() {
         </div>
         ${porcentaje >= 90 ? '<div class="hint" style="color:var(--red);margin-top:6px;">⚠️ Límite casi alcanzado</div>' : ''}
       </div>
-      
       <button class="btn btn-primary" style="margin-top:16px;" onclick="guardarLimiteWhatsApp()">Guardar límite</button>
     </div>
   `;
-  
   return html;
 }
 
-/**
- * Guarda el límite configurado en state.config y persiste.
- */
 export async function guardarLimiteWhatsApp() {
   const valor = Number(document.getElementById('cfg-whatsapp-limite').value) || 100;
-  
   if (valor < 10) {
     showToast('El límite mínimo es 10 mensajes');
     return;
   }
-  
   state.config.whatsapp_limite_mensual = valor;
-  
   try {
     await persist();
     if (window.db && window.db.saveConfig) await window.db.saveConfig(state.config);
@@ -184,10 +157,10 @@ export async function guardarLimiteWhatsApp() {
   }
 }
 
-Object.assign(window, { 
-  verificarLimiteWhatsApp, 
-  enviarWhatsApp, 
+Object.assign(window, {
+  verificarLimiteWhatsApp,
+  enviarWhatsApp,
   enviarWhatsAppConFoto,
-  renderWhatsAppLimites, 
-  guardarLimiteWhatsApp 
+  renderWhatsAppLimites,
+  guardarLimiteWhatsApp
 });
