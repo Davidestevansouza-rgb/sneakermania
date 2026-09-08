@@ -46,14 +46,16 @@ function actualizarMapaCapacidad() {
     const cod = celda.querySelector('.biblioteca-celda-cod');
     if (!cod) return;
     const espacio = cod.textContent.trim();
-    const cantidad = ocupacionEstante(espacio).length;
+    const items = ocupacionEstante(espacio);
+    const cantidad = items.length;
     celda.classList.remove('libre', 'ocupada');
     if (cantidad >= CAPACIDAD_POR_ESTANTE) celda.classList.add('ocupada');
     else celda.classList.add('libre');
     const itemTxt = celda.querySelector('.biblioteca-celda-item');
-    const codigos = ocupacionEstante(espacio).map(x => x.codigo).join(', ');
+    const codigos = items.map(x => x.codigo).join(', ');
     if (cantidad > 0) {
-      if (itemTxt) itemTxt.textContent = codigos + ' · ' + cantidad + '/4';
+      const nuevoTexto = codigos + ' · ' + cantidad + '/4';
+      if (itemTxt && itemTxt.textContent !== nuevoTexto) itemTxt.textContent = nuevoTexto;
       celda.title = espacio + ' · ' + cantidad + '/4 pares' + (cantidad >= CAPACIDAD_POR_ESTANTE ? ' · lleno' : ' · disponible');
     } else {
       celda.title = espacio + ' libre · 0/4 pares';
