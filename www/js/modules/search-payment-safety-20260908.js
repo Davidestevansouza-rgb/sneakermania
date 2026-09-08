@@ -4,7 +4,7 @@
    - Galería: "todos los pares" abre la vista consolidada y agrega Buscar.
    - Pagos: NO intercepta los confirmadores; evita bloquear cobros válidos.
    ============================================================ */
-import './biblioteca-capacidad-20260908.js';
+import './biblioteca-capacidad-v2-20260908.js';
 import { state } from '../state.js';
 import { clienteNombre, ordenById } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
