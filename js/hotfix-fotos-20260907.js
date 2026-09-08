@@ -27,7 +27,8 @@ import { state } from './state.js';
   }
 
   function normalizarTodas() {
-    for (const o of state.ordenes || []) normalizarFotosOrden(o);
+    if (!state || !Array.isArray(state.ordenes)) return;
+    for (const o of state.ordenes) normalizarFotosOrden(o);
   }
 
   async function resolverImagenR2(img) {
@@ -121,6 +122,7 @@ import { state } from './state.js';
     window.__smFotoHotfixInstalled = true;
     return true;
   };
+
   if (!tryInstall()) {
     const timer = setInterval(() => { normalizarTodas(); if (tryInstall()) clearInterval(timer); }, 100);
     setTimeout(() => clearInterval(timer), 15000);
