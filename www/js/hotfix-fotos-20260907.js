@@ -41,9 +41,13 @@ import { state } from './state.js';
     if (actual.startsWith('r2://')) img.setAttribute('src', PIXEL_TRANSPARENTE);
     try {
       const signed = await storageManager.resolveImageUrl(original);
-      if (signed && !signed.startsWith('r2://')) {
+      if (signed) {
         img.setAttribute('src', signed);
         img.removeAttribute('data-sm-r2-src');
+        img.removeAttribute('data-sm-r2-unavailable');
+      } else {
+        img.setAttribute('src', PIXEL_TRANSPARENTE);
+        img.dataset.smR2Unavailable = 'true';
       }
     } catch (e) { console.warn('Hotfix fotos: error resolviendo R2', e); }
     finally { resolviendo.delete(img); }

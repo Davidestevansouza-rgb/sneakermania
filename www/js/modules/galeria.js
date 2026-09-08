@@ -15,7 +15,9 @@ const PIXEL_TRANSPARENTE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAA
 let _galeriaRenderGen = 0;
 
 function fotoUrlNavegable(foto) {
-  const url = foto && (foto.resolvedUrl || foto.url) ? (foto.resolvedUrl || foto.url) : '';
+  if (!foto) return PIXEL_TRANSPARENTE;
+  if (foto.url && foto.url.startsWith('r2://') && foto.resolvedUrl == null) return PIXEL_TRANSPARENTE;
+  const url = foto.resolvedUrl || foto.url || '';
   return url && !url.startsWith('r2://') ? url : PIXEL_TRANSPARENTE;
 }
 
@@ -188,7 +190,7 @@ async function renderGaleriaTodos(miGen) {
         const src = fotoUrlNavegable(foto);
         const isStorage = !!(foto.url && (foto.url.startsWith('http') || foto.url.startsWith('r2://')));
         const badge = isStorage ? ' <span class="storage-badge" title="Almacenada en la nube">☁️</span>' : '';
-        return '<div class="gallery-thumb-wrap"><img src="' + escAttr(src) + '" loading="lazy" decoding="async" onclick="ampliarImagen(\'' + String(foto.url || '').replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' + badge + '</div>';
+        return '<div class="gallery-thumb-wrap"><img src="' + escAttr(src) + '" loading="lazy" decoding="async" onclick="ampliarImagen(\'' + String(src || '').replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' + badge + '</div>';
       }).join('') +
       '</div></div>';
   }
@@ -255,7 +257,7 @@ export async function renderGaleria() {
           const isStorage = !!(foto.url && (foto.url.startsWith('http') || foto.url.startsWith('r2://')));
           const badge = isStorage ? ' <span class="storage-badge" title="Almacenada en la nube">☁️</span>' : '';
           return '<div class="gallery-thumb-wrap">' +
-            '<img src="' + escAttr(src) + '" loading="lazy" decoding="async" onclick="ampliarImagen(\'' + String(foto.url || '').replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' +
+            '<img src="' + escAttr(src) + '" loading="lazy" decoding="async" onclick="ampliarImagen(\'' + String(src || '').replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' +
             badge +
             (puedeBorrar ? '<button class="gallery-delete-btn" onclick="eliminarFoto(\'' + escAttr(o.id) + '\',' + idx + ',\'' + key + '\',\'' + escAttr(itemFiltrado ? itemFiltrado.id : '') + '\')" title="Eliminar">×</button>' : '') +
           '</div>';

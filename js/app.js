@@ -52,7 +52,7 @@ export function switchTab(tab) {
   if (tab === 'clientes') renderClientes();
   if (tab === 'ordenes') renderOrdenes();
   if (tab === 'galeria') renderGaleria();
-  if (tab === 'produccion') renderProduccion();
+  if (tab === 'produccion') void renderProduccion();
   if (tab === 'biblioteca') renderBiblioteca();
   if (tab === 'finanzas') renderFinanzas();
   if (tab === 'facturas') initFacturasTab();

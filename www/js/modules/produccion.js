@@ -19,6 +19,7 @@ import { SERVICIO_A_GALERIA_CAT, vincularFotoGaleria } from './galeria.js';
 
 const META_DIARIA = 50;
 const MAX_FOTOS_POR_REGISTRO = 100;
+let _produccionRenderGen = 0;
 
 /** ¿Este registro de pares pertenece al usuario en sesión?
  *  Se compara por id de usuario y, como respaldo (registros antiguos
@@ -29,40 +30,33 @@ export function esRegistroPropio(r) {
   return (r.empleado || '') === (s.user || '');
 }
 
-export function renderProduccion() {
+export async function renderProduccion() {
+  const miGen = ++_produccionRenderGen;
   const fechaEl = document.getElementById('prod-fecha');
   if (fechaEl && !fechaEl.value) fechaEl.value = todayISO(0);
   const histEl = document.getElementById('prod-historial-fecha');
   if (histEl && !histEl.value) histEl.value = todayISO(0);
-
-  // La producción siempre queda a nombre del usuario que está registrando.
-  // El campo es solo informativo y no se puede editar ni sustituir por otro nombre.
   const empEl = document.getElementById('prod-empleado');
   if (empEl) {
     empEl.value = (state.session && state.session.user) || '';
     empEl.readOnly = true;
   }
-
   const hoy = todayISO(0);
   let registrosHoy = (state.registroPares || []).filter(r => r.fecha === hoy);
-  // El empleado solo ve SUS propios registros de HOY (no los de otros ni de
-  // otros días). Supervisor y administrador ven todo.
   if (esEmpleado()) registrosHoy = registrosHoy.filter(esRegistroPropio);
-  // Vista de "hoy": se ven las fotos de los registros del día. El nombre del
-  // empleado que registró es visible siempre para el administrador (y para el
-  // propio empleado, que solo ve lo suyo); para el supervisor queda oculto en
-  // esta vista y solo aparece cuando filtra por una fecha en el historial.
-  renderResumenPares('prod-kpi-grid', 'prod-lista', registrosHoy, {
+  await renderResumenPares('prod-kpi-grid', 'prod-lista', registrosHoy, {
     permitirEliminar: true,
     tituloVacio: 'Todavía no hay artículos registrados hoy.',
     mostrarFotos: true,
     mostrarEmpleado: puedeVerEmpleadoProd(false)
-  });
-
-  // El historial por fecha (respaldo de pagos) es solo para supervisor/admin.
+  }, miGen);
+  if (miGen !== _produccionRenderGen) return;
   const histPanel = document.getElementById('prod-historial-panel');
   if (histPanel) histPanel.style.display = esEmpleado() ? 'none' : '';
-  if (!esEmpleado()) { poblarFiltroEmpleadoProduccion(); renderHistorialProduccion(); }
+  if (!esEmpleado()) {
+    poblarFiltroEmpleadoProduccion();
+    await renderHistorialProduccion(miGen);
+  }
 }
 
 /** Llena el selector "Todos los empleados" del historial con los nombres
@@ -97,23 +91,26 @@ function puedeVerEmpleadoProd(hayFecha) {
  *    de fotos de las tarjetas (se sigue mostrando el resto de la info).
  *  opts.mostrarEmpleado (default true): si es false, oculta el nombre del
  *    empleado que registró (tarjetas y ranking por usuario). */
-function renderResumenPares(kpiElId, listaElId, registros, opts) {
+async function renderResumenPares(kpiElId, listaElId, registros, opts, miGen = null) {
   opts = opts || {};
   const mostrarFotos = opts.mostrarFotos !== false;
   const mostrarEmpleado = opts.mostrarEmpleado !== false;
   const total = registros.reduce((sum, r) => sum + Number(r.pares || 0), 0);
   const totalFotos = registros.reduce((sum, r) => sum + (Array.isArray(r.fotoUrls) ? r.fotoUrls.length : 0), 0);
-
   const porEmpleado = {};
   registros.forEach(r => { porEmpleado[r.empleado] = (porEmpleado[r.empleado] || 0) + Number(r.pares || 0); });
   const rankingHtml = !mostrarEmpleado
     ? '<div class="hint">Elige una fecha para ver el detalle por empleado.</div>'
     : (Object.keys(porEmpleado).length
-      ? Object.entries(porEmpleado).sort((a, b) => b[1] - a[1]).map(([nombre, cant]) =>
-          '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span>' + escHtml(nombre) + '</span><strong>' + cant + '</strong></div>'
-        ).join('')
+      ? Object.entries(porEmpleado).sort((a, b) => b[1] - a[1]).map(([nombre, cant]) => '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span>' + escHtml(nombre) + '</span><strong>' + cant + '</strong></div>').join('')
       : '<div class="hint">Sin registros por empleado.</div>');
-
+  const registrosRender = await Promise.all(registros.slice().reverse().map(async r => {
+    const fotos = Array.isArray(r.fotoUrls) ? r.fotoUrls : (r.fotoUrl ? [r.fotoUrl] : []);
+    const fotosResueltas = !mostrarFotos ? [] : await storageManager.resolveImageUrls(fotos.map(url => ({ url })));
+    const urlsNavegables = fotosResueltas.map(f => f.resolvedUrl).filter(url => typeof url === 'string' && !url.startsWith('r2://'));
+    return { r, fotos, urlsNavegables };
+  }));
+  if (miGen !== null && miGen !== _produccionRenderGen) return false;
   const kpiGrid = kpiElId && document.getElementById(kpiElId);
   if (kpiGrid) {
     kpiGrid.innerHTML =
@@ -121,34 +118,29 @@ function renderResumenPares(kpiElId, listaElId, registros, opts) {
       '<div class="kpi-card"><div class="kpi-label">Fotos de respaldo</div><div class="kpi-value">' + totalFotos + '</div></div>' +
       '<div class="kpi-card"><div class="kpi-label">Por usuario</div><div style="padding-top:4px;">' + rankingHtml + '</div></div>';
   }
-
   const lista = listaElId && document.getElementById(listaElId);
   if (lista) {
-    lista.innerHTML = registros.length ? '<div class="prod-grid">' + registros.slice().reverse().map(r => {
-      const fotos = Array.isArray(r.fotoUrls) ? r.fotoUrls : (r.fotoUrl ? [r.fotoUrl] : []);
-      const primeraFoto = fotos[0];
-      const extra = fotos.length > 1 ? '<div class="hint" style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,.6);color:#fff;border-radius:4px;padding:1px 6px;">+' + (fotos.length - 1) + '</div>' : '';
-      // Bloque de foto: solo se muestra si mostrarFotos está activo (vista de
-      // "hoy" o historial filtrado por una fecha específica). En los resúmenes
-      // de rango (semana/mes) las miniaturas quedan ocultas.
+    const tarjetas = registrosRender.map(({ r, fotos, urlsNavegables }) => {
+      const primeraFoto = urlsNavegables[0] || null;
+      const extra = urlsNavegables.length > 1 ? '<div class="hint" style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,.6);color:#fff;border-radius:4px;padding:1px 6px;">+' + (urlsNavegables.length - 1) + '</div>' : '';
       const bloqueFoto = !mostrarFotos
         ? '<div class="empty-state" style="padding:20px;"><div class="big">📅</div><div class="hint">— (filtrá por fecha para ver fotos)</div></div>'
         : (primeraFoto
-          ? '<div style="position:relative;"><img src="' + escHtml(primeraFoto) + '" loading="lazy" onclick="ampliarImagen(\'' + escHtml(primeraFoto) + '\', ' + escAttr(JSON.stringify(fotos)) + ')">' + extra + '</div>'
-          : '<div class="empty-state" style="padding:20px;"><div class="big">👟</div>Sin foto</div>');
+          ? '<div style="position:relative;"><img src="' + escAttr(primeraFoto) + '" loading="lazy" onclick="ampliarImagen(\'' + escAttr(primeraFoto) + '\', ' + escAttr(JSON.stringify(urlsNavegables)) + ')">' + extra + '</div>'
+          : (fotos.length ? '<div class="empty-state" style="padding:20px;"><div class="big">👟</div>Foto temporalmente no disponible</div>' : '<div class="empty-state" style="padding:20px;"><div class="big">👟</div>Sin foto</div>'));
       const empleadoHTML = mostrarEmpleado ? '<strong>' + escHtml(r.empleado) + '</strong>' : '<strong>Artículo registrado</strong>';
-      return '<div class="prod-card">' +
-        bloqueFoto +
-        '<div style="padding:6px 4px;">' +
-          '<div>' + empleadoHTML + (r.codigo ? ' · <span class="mono">' + escHtml(r.codigo) + '</span>' : '') + (r.servicio ? ' · ' + escHtml(r.servicio) : '') + '</div>' +
-          '<div class="hint">' + r.pares + ' ' + (Number(r.pares) === 1 ? 'artículo' : 'artículos') + ' · ' + fmtDate(r.fecha) + (fotos.length ? ' · ' + fotos.length + ' foto(s)' : '') + '</div>' +
-          (r.hora ? '<div class="hint">Hora: ' + escHtml(r.hora) + '</div>' : '') +
-          (r.observacion ? '<div class="hint" style="white-space:pre-line;">📝 ' + escHtml(r.observacion) + '</div>' : '') +
-          (opts.permitirEliminar && state.session && state.session.role === 'Administrador' ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);margin-top:4px;" onclick="eliminarRegistroPar(\'' + r.id + '\')">Eliminar</button>' : '') +
-        '</div>' +
-      '</div>';
-    }).join('') + '</div>' : '<div class="hint">' + (opts.tituloVacio || 'Sin registros.') + '</div>';
+      return '<div class="prod-card">' + bloqueFoto + '<div style="padding:6px 4px;">' +
+        '<div>' + empleadoHTML + (r.codigo ? ' · <span class="mono">' + escHtml(r.codigo) + '</span>' : '') + (r.servicio ? ' · ' + escHtml(r.servicio) : '') + '</div>' +
+        '<div class="hint">' + r.pares + ' ' + (Number(r.pares) === 1 ? 'artículo' : 'artículos') + ' · ' + fmtDate(r.fecha) + (fotos.length ? ' · ' + fotos.length + ' foto(s)' : '') + '</div>' +
+        (r.hora ? '<div class="hint">Hora: ' + escHtml(r.hora) + '</div>' : '') +
+        (r.observacion ? '<div class="hint" style="white-space:pre-line;">📝 ' + escHtml(r.observacion) + '</div>' : '') +
+        (opts.permitirEliminar && state.session && state.session.role === 'Administrador' ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);margin-top:4px;" onclick="eliminarRegistroPar(\'' + r.id + '\')">Eliminar</button>' : '') +
+        '</div></div>';
+    }).join('');
+    if (miGen !== null && miGen !== _produccionRenderGen) return false;
+    lista.innerHTML = registros.length ? '<div class="prod-grid">' + tarjetas + '</div>' : '<div class="hint">' + (opts.tituloVacio || 'Sin registros.') + '</div>';
   }
+  return true;
 }
 
 /** Muestra cuántas fotos se eligieron antes de registrar (feedback al lavador
@@ -250,7 +242,7 @@ async function integrarObservacionEnRegistro(registroExistente, notaNueva, btn) 
     if (hintEl) hintEl.textContent = '';
     mostrarInfoArticuloProduccion();
 
-    renderProduccion();
+    await renderProduccion();
     showToast('Observación agregada ✓');
   } catch (e) {
     console.error('Error al integrar la observación:', e);
@@ -374,7 +366,7 @@ export async function registrarPares(btn) {
         if (galInput) galInput.value = '';
         const conteoEl2 = document.getElementById('prod-foto-conteo');
         if (conteoEl2) conteoEl2.textContent = '';
-        renderProduccion();
+        await renderProduccion();
         if (window.renderOrdenes) window.renderOrdenes();
         showToast('📷 Foto(s) agregada(s) al registro existente ✓');
       } catch (e) {
@@ -436,7 +428,7 @@ export async function registrarPares(btn) {
       state.registroPares = state.registroPares.filter(r => r.id !== registro.id);
       await persist();
       showToast('El artículo ' + registro.codigo + ' ya fue registrado para "' + servicio + '" (lo hizo otra persona justo antes). Elige otro servicio.');
-      renderProduccion();
+      await renderProduccion();
       return;
     }
 
@@ -502,7 +494,7 @@ export async function registrarPares(btn) {
     if (conteoEl) conteoEl.textContent = '';
     mostrarInfoArticuloProduccion(); // limpia el panel de info del artículo ya registrado
 
-    renderProduccion();
+    await renderProduccion();
     showToast('Artículos registrados ✓');
 
     // Aviso al llegar a 50 pares en el día (solo una vez, cuando se cruza el umbral).
@@ -530,11 +522,11 @@ export async function eliminarRegistroPar(id) {
   if (!Array.isArray(state.registroPares)) state.registroPares = [];
   const backup = state.registroPares.slice();
   state.registroPares = state.registroPares.filter(r => r.id !== id);
-  renderProduccion();
+  void renderProduccion();
   const res = await db.deleteRegistroPar(id);
   if (res && res.error && !res.queued) {
     state.registroPares = backup;
-    renderProduccion();
+    await renderProduccion();
     showToast('No se pudo eliminar: ' + (res.error.message || 'error del servidor'));
     return;
   }
@@ -546,7 +538,8 @@ export async function eliminarRegistroPar(id) {
    Respaldo para el administrador: elegir cualquier fecha (o los
    últimos 7 días) y ver cuántos pares se registraron, por quién, con
    sus fotos — para pagar la semana o el mes con ese respaldo. */
-export function renderHistorialProduccion() {
+export async function renderHistorialProduccion(miGen = null) {
+  const gen = miGen === null ? ++_produccionRenderGen : miGen;
   const fechaEl = document.getElementById('prod-historial-fecha');
   const empEl = document.getElementById('prod-historial-empleado');
   const cont = document.getElementById('prod-historial');
@@ -567,13 +560,14 @@ export function renderHistorialProduccion() {
   // función retorna antes si no la hay), así que se muestran las miniaturas.
   const hayFechaActiva = !!(fechaEl && fechaEl.value);
   cont.innerHTML = '<div style="margin-bottom:8px;font-weight:700;">' + fmtDate(fecha) + (empleado ? ' · ' + escHtml(empleado) : '') + '</div><div id="prod-historial-kpi" class="kpi-grid" style="margin-bottom:12px;"></div><div id="prod-historial-lista"></div>';
-  renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en esta fecha' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: hayFechaActiva, mostrarEmpleado: puedeVerEmpleadoProd(true) });
+  await renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en esta fecha' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: hayFechaActiva, mostrarEmpleado: puedeVerEmpleadoProd(true) }, gen);
 }
 
 /** Atajo: junta los últimos 7 días (incluyendo hoy) en un solo resumen,
  *  útil para el pago de fin de semana. Respeta el empleado elegido en el
  *  filtro, si hay uno. */
-export function verSemanaProduccion() {
+export async function verSemanaProduccion() {
+  const miGen = ++_produccionRenderGen;
   const cont = document.getElementById('prod-historial');
   if (!cont) return;
   const dias = [];
@@ -586,13 +580,14 @@ export function verSemanaProduccion() {
   const fechaEl = document.getElementById('prod-historial-fecha');
   if (fechaEl) fechaEl.value = '';
   cont.innerHTML = '<div style="margin-bottom:8px;font-weight:700;">Últimos 7 días (' + fmtDate(dias[0]) + ' — ' + fmtDate(dias[dias.length - 1]) + ')' + (empleado ? ' · ' + escHtml(empleado) : '') + '</div><div id="prod-historial-kpi" class="kpi-grid" style="margin-bottom:12px;"></div><div id="prod-historial-lista"></div>';
-  renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en los últimos 7 días' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: false, mostrarEmpleado: puedeVerEmpleadoProd(false) });
+  await renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en los últimos 7 días' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: false, mostrarEmpleado: puedeVerEmpleadoProd(false) }, miGen);
 }
 
 /** Atajo: junta los últimos 31 días (incluyendo hoy) en un solo resumen,
  *  útil para pagar a empleados que cobran por mes o por quincena. Respeta
  *  el empleado elegido en el filtro, si hay uno. */
-export function verMesProduccion() {
+export async function verMesProduccion() {
+  const miGen = ++_produccionRenderGen;
   const cont = document.getElementById('prod-historial');
   if (!cont) return;
   const dias = [];
@@ -605,7 +600,7 @@ export function verMesProduccion() {
   const fechaEl = document.getElementById('prod-historial-fecha');
   if (fechaEl) fechaEl.value = '';
   cont.innerHTML = '<div style="margin-bottom:8px;font-weight:700;">Últimos 31 días (' + fmtDate(dias[0]) + ' — ' + fmtDate(dias[dias.length - 1]) + ')' + (empleado ? ' · ' + escHtml(empleado) : '') + '</div><div id="prod-historial-kpi" class="kpi-grid" style="margin-bottom:12px;"></div><div id="prod-historial-lista"></div>';
-  renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en los últimos 31 días' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: false, mostrarEmpleado: puedeVerEmpleadoProd(false) });
+  await renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en los últimos 31 días' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: false, mostrarEmpleado: puedeVerEmpleadoProd(false) }, miGen);
 }
 
 Object.assign(window, {

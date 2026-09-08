@@ -31,8 +31,9 @@ function extraerPathR2(url) {
  */
 export async function resolveImageUrl(url, path = null) {
   if (!url || typeof url !== 'string') return url;
+  const esReferenciaR2 = url.startsWith('r2://');
   const objectPath = path || extraerPathR2(url);
-  if (!objectPath) return url;
+  if (!objectPath) return esReferenciaR2 ? null : url;
   const cached = SIGNED_URL_CACHE.get(objectPath);
   if (cached && cached.expiresAt > Date.now()) return cached.url;
   try {
@@ -45,16 +46,25 @@ export async function resolveImageUrl(url, path = null) {
       SIGNED_URL_CACHE.set(objectPath, { url: data.url, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
       return data.url;
     }
+    if (esReferenciaR2) {
+      console.warn('No se pudo resolver referencia R2:', objectPath, error || 'respuesta sin URL firmada');
+      return null;
+    }
   } catch (e) {
+    if (esReferenciaR2) {
+      console.warn('No se pudo resolver referencia R2:', objectPath, e);
+      return null;
+    }
     console.warn('No se pudo obtener URL firmada; se mantiene URL existente:', e);
   }
-  return url;
+  return esReferenciaR2 ? null : url;
 }
 
 export async function resolveImageUrls(fotos) {
   if (!Array.isArray(fotos)) return [];
   // Todas las firmas se piden EN PARALELO (Promise.all), no una tras otra, para
   // que la galería de una orden cargue de golpe y no foto por foto.
+  // resolvedUrl puede ser null si una referencia r2:// no pudo resolverse.
   return Promise.all(fotos.map(async f => ({ ...f, resolvedUrl: await resolveImageUrl(f.url, f.path) })));
 }
 
@@ -91,7 +101,13 @@ export async function secureImageUrlsInDom(root = document) {
     if (!img.hasAttribute('loading')) img.setAttribute('loading', 'lazy');
     const src = img.getAttribute('src');
     const signed = await resolveImageUrl(src);
-    if (signed && signed !== src) img.setAttribute('src', signed);
+    if (signed && signed !== src) {
+      img.setAttribute('src', signed);
+      img.removeAttribute('data-r2-unavailable');
+    } else if (!signed && src && src.startsWith('r2://')) {
+      img.removeAttribute('src');
+      img.dataset.r2Unavailable = 'true';
+    }
   }));
 }
 

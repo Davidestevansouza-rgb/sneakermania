@@ -119,6 +119,7 @@ async function fotoUrlAFile(foto, nombreArchivo) {
   if (!foto || !foto.url) return null;
   try {
     const secureUrl = await storageManager.resolveImageUrl(foto.url, foto.path);
+    if (!secureUrl) return null;
     const resp = await fetch(secureUrl);
     if (!resp.ok) return null;
     const blob = await resp.blob();
@@ -587,11 +588,11 @@ export async function openOrdenModal(id) {
   // Registro General de los Pares: número (real si ya existe, o el que
   // le tocará a la próxima orden) y fotos.
   document.getElementById('orden-numero-general').textContent = '#' + (id ? o.numero : state.nextOrderNum);
-  fotosGeneralesPendientes = [];
+  limpiarFotosGeneralesPendientes();
   fotosGeneralesExistentes = id && o.extra && Array.isArray(o.extra.fotos)
     ? o.extra.fotos.filter(f => f.categoria === 'todos_pares')
     : [];
-  renderFotosGeneralesPreview();
+  await renderFotosGeneralesPreview();
 
   // Resetear el label de estado de pago según si es nueva orden o edición.
   const pagoLabel = document.getElementById('orden-pago-estado-label');
@@ -702,7 +703,7 @@ export async function saveOrden(btn, opts = {}) {
           target.extra.fotos.push(fotoData);
         } catch (e) { console.error('No se pudo subir una foto general:', e); }
       }
-      fotosGeneralesPendientes = [];
+      limpiarFotosGeneralesPendientes();
     }
     await persist();
     await db.saveOrden(target);
@@ -1564,18 +1565,32 @@ function generarParesMasivos(n) {
 // subirlas a Storage). Se suben recién al guardar, junto con el resto.
 let fotosGeneralesPendientes = [];
 let fotosGeneralesExistentes = [];
+let _fotosGeneralesRenderGen = 0;
 
-function renderFotosGeneralesPreview() {
+function limpiarFotosGeneralesPendientes() {
+  for (const f of fotosGeneralesPendientes) {
+    if (f && typeof f.previewUrl === 'string' && f.previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(f.previewUrl);
+    }
+  }
+  fotosGeneralesPendientes = [];
+}
+
+async function renderFotosGeneralesPreview() {
   const cont = document.getElementById('orden-fotos-generales-preview');
   if (!cont) return;
-  // Un solo click en cualquier miniatura abre la foto ampliada (con
-  // navegación entre todas las existentes de la orden).
-  const allUrls = JSON.stringify(fotosGeneralesExistentes.map(f => f.url));
-  const existentesHTML = fotosGeneralesExistentes.map(f =>
-    '<div class="foto-general-thumb"><img src="' + f.url + '" style="cursor:pointer;" onclick="ampliarImagen(\'' + escAttr(f.url) + '\',' + escAttr(allUrls) + ')"></div>'
-  ).join('');
+  const miGen = ++_fotosGeneralesRenderGen;
+  const existentesResueltas = await storageManager.resolveImageUrls(fotosGeneralesExistentes);
+  if (miGen !== _fotosGeneralesRenderGen) return;
+  const navegables = existentesResueltas.filter(f => typeof f.resolvedUrl === 'string' && !f.resolvedUrl.startsWith('r2://'));
+  const allUrls = JSON.stringify(navegables.map(f => f.resolvedUrl));
+  const existentesHTML = existentesResueltas.map(f => {
+    const src = typeof f.resolvedUrl === 'string' && !f.resolvedUrl.startsWith('r2://') ? f.resolvedUrl : null;
+    if (!src) return '<div class="foto-general-thumb"><div class="hint" style="padding:12px;text-align:center;">Foto temporalmente no disponible</div></div>';
+    return '<div class="foto-general-thumb"><img src="' + escAttr(src) + '" style="cursor:pointer;" onclick="ampliarImagen(\'' + escAttr(src) + '\',' + escAttr(allUrls) + ')"></div>';
+  }).join('');
   const pendientesHTML = fotosGeneralesPendientes.map((f, i) =>
-    '<div class="foto-general-thumb"><img src="' + f.previewUrl + '" style="cursor:pointer;" onclick="ampliarImagen(this.src)">' +
+    '<div class="foto-general-thumb"><img src="' + escAttr(f.previewUrl) + '" style="cursor:pointer;" onclick="ampliarImagen(this.src)">' +
       '<button type="button" class="quitar-foto" title="Quitar" onclick="quitarFotoGeneralPendiente(' + i + ')">✕</button>' +
     '</div>'
   ).join('');
@@ -1583,17 +1598,20 @@ function renderFotosGeneralesPreview() {
 }
 
 /** Agrega fotos a la cola pendiente (se suben al guardar la orden). */
-export function agregarFotosGeneralesOrden(fileList) {
+export async function agregarFotosGeneralesOrden(fileList) {
   Array.from(fileList || []).forEach(file => {
     if (!file.type || !file.type.startsWith('image/')) return;
-    fotosGeneralesPendientes.push({ file, previewUrl: URL.createObjectURL(file) });
+    const objectUrl = URL.createObjectURL(file);
+    fotosGeneralesPendientes.push({ file, previewUrl: objectUrl });
   });
-  renderFotosGeneralesPreview();
+  await renderFotosGeneralesPreview();
 }
 
-export function quitarFotoGeneralPendiente(i) {
+export async function quitarFotoGeneralPendiente(i) {
+  const pendiente = fotosGeneralesPendientes[i];
+  if (pendiente && typeof pendiente.previewUrl === 'string' && pendiente.previewUrl.startsWith('blob:')) URL.revokeObjectURL(pendiente.previewUrl);
   fotosGeneralesPendientes.splice(i, 1);
-  renderFotosGeneralesPreview();
+  await renderFotosGeneralesPreview();
 }
 
 /** Sincroniza los ítems reales (Supabase) con lo que quedó cargado en el
