@@ -1,8 +1,10 @@
-/* WhatsApp de órdenes: respuesta inmediata y sin descarga previa de la foto. */
+/* WhatsApp de órdenes: respuesta visible inmediata y navegación sin popup bloqueable. */
 import { state } from '../state.js';
 import { showToast } from '../ui.js';
 import * as storageManager from '../storage-manager.js';
 import { ordenQrText } from './ordenes.js';
+
+const fotoUrlCache = new Map();
 
 function clienteDeOrden(o) {
   return (state.clientes || []).find(c => c.id === o.clienteId) || null;
@@ -13,18 +15,55 @@ function primeraFotoOrden(o) {
   return fotos.find(f => f.categoria === 'todos_pares') || fotos.find(f => f.itemId || f.item) || fotos[0] || null;
 }
 
-async function urlFotoConTimeout(foto, ms = 3500) {
+function overlayWhatsApp(mostrar) {
+  let el = document.getElementById('sm-whatsapp-opening');
+  if (!mostrar) {
+    if (el) el.remove();
+    return;
+  }
+  if (el) return;
+  el = document.createElement('div');
+  el.id = 'sm-whatsapp-opening';
+  el.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;padding:24px;';
+  el.innerHTML = '<div style="background:#fff;border-radius:14px;padding:20px 22px;max-width:320px;width:100%;text-align:center;font-family:Arial,sans-serif;box-shadow:0 12px 40px rgba(0,0,0,.25)"><div style="font-size:30px;margin-bottom:8px">💬</div><strong>Abriendo WhatsApp…</strong><div style="font-size:13px;color:#666;margin-top:7px">Preparando la información de la orden.</div></div>';
+  document.body.appendChild(el);
+}
+
+async function resolverFotoOrden(o, ms = 4000) {
+  if (!o) return null;
+  if (fotoUrlCache.has(o.id)) return fotoUrlCache.get(o.id);
+  const foto = primeraFotoOrden(o);
   if (!foto) return null;
-  if (foto.url && /^https?:\/\//i.test(foto.url)) return foto.url;
+  if (foto.resolvedUrl && /^https?:\/\//i.test(foto.resolvedUrl)) {
+    fotoUrlCache.set(o.id, foto.resolvedUrl);
+    return foto.resolvedUrl;
+  }
+  if (foto.url && /^https?:\/\//i.test(foto.url)) {
+    fotoUrlCache.set(o.id, foto.url);
+    return foto.url;
+  }
   try {
-    return await Promise.race([
+    const url = await Promise.race([
       storageManager.resolveImageUrl(foto.url, foto.path),
       new Promise(resolve => setTimeout(() => resolve(null), ms))
     ]);
-  } catch (_) { return null; }
+    if (url && /^https?:\/\//i.test(url)) fotoUrlCache.set(o.id, url);
+    return url || null;
+  } catch (_) {
+    return null;
+  }
 }
 
-export function enviarWhatsAppOrdenRapido(ordenId) {
+function idOrdenDesdeContexto(btn) {
+  const modal = document.getElementById('modal-forma-pago');
+  const oculto = document.getElementById('orden-id');
+  return (btn && btn.dataset && btn.dataset.ordenId) ||
+    (modal && modal.dataset && modal.dataset.ordenId) ||
+    window.__smFormaPagoOrdenId ||
+    (oculto && oculto.value) || '';
+}
+
+export async function enviarWhatsAppOrdenRapido(ordenId) {
   const o = (state.ordenes || []).find(x => x.id === ordenId);
   if (!o) { showToast('Orden no encontrada'); return false; }
   const c = clienteDeOrden(o);
@@ -32,61 +71,74 @@ export function enviarWhatsAppOrdenRapido(ordenId) {
   const tel = String(c.whatsapp || c.telefono || '').replace(/\D/g, '');
   if (!tel) { showToast('El cliente no tiene un número de WhatsApp válido'); return false; }
 
+  overlayWhatsApp(true);
   const baseMsg = 'Hola ' + (c.nombre || '') + ' 👟\n\n' + ordenQrText(o) + '\n\n¡Gracias por tu confianza!';
-  const popup = window.open('about:blank', '_blank');
-  if (!popup) {
-    showToast('El navegador bloqueó WhatsApp. Habilita ventanas emergentes para SneakerMania.');
+  const fotoUrl = await resolverFotoOrden(o, 4000);
+  const msg = baseMsg + (fotoUrl ? '\n\n📷 Foto del artículo:\n' + fotoUrl : '');
+  const wa = 'https://api.whatsapp.com/send?phone=' + tel + '&text=' + encodeURIComponent(msg);
+
+  try {
+    window.location.assign(wa);
+  } catch (e) {
+    overlayWhatsApp(false);
+    console.error('No se pudo abrir WhatsApp:', e);
+    showToast('No se pudo abrir WhatsApp');
     return false;
   }
-  try {
-    popup.document.write('<!doctype html><title>WhatsApp</title><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:Arial;padding:24px">Abriendo WhatsApp…</body>');
-  } catch (_) {}
-
-  const foto = primeraFotoOrden(o);
-  void (async () => {
-    const fotoUrl = await urlFotoConTimeout(foto);
-    const msg = baseMsg + (fotoUrl && /^https?:\/\//i.test(fotoUrl) ? '\n\n📷 Foto del artículo:\n' + fotoUrl : '');
-    const wa = 'https://wa.me/' + tel + '?text=' + encodeURIComponent(msg);
-    try { popup.location.replace(wa); }
-    catch (_) { popup.location.href = wa; }
-  })();
-
-  showToast(foto ? 'Abriendo WhatsApp con la información y la foto…' : 'Abriendo WhatsApp…');
   return true;
 }
 
-// Botones inline (Detalle de orden) usan window.enviarWhatsAppOrden.
 window.enviarWhatsAppOrden = enviarWhatsAppOrdenRapido;
 window.enviarWhatsAppOrdenRapido = enviarWhatsAppOrdenRapido;
 
-// El chooser de forma de pago vuelve a asignar onclick con la función lexical vieja.
-// Capturamos antes de ese onclick para usar siempre el flujo rápido.
+// Captura el botón del modal de forma de pago ANTES del onclick viejo.
 document.addEventListener('click', (ev) => {
   const btn = ev.target && ev.target.closest ? ev.target.closest('#forma-pago-whatsapp-btn') : null;
   if (!btn) return;
-  const modal = btn.closest('#modal-forma-pago');
-  if (!modal) return;
   ev.preventDefault();
   ev.stopImmediatePropagation();
-  const id = modal.dataset.ordenId || btn.dataset.ordenId || window.__smFormaPagoOrdenId;
-  if (id) enviarWhatsAppOrdenRapido(id);
+  const id = idOrdenDesdeContexto(btn);
+  if (!id) {
+    showToast('No se pudo identificar la orden para WhatsApp');
+    return;
+  }
+  void enviarWhatsAppOrdenRapido(id);
 }, true);
 
-// Wrapping del chooser para recordar el id sin cambiar pagos.
-if (typeof window.openFormaPagoChooser === 'function' && !window.openFormaPagoChooser.__smWaFast) {
+// Cuando se abre el registro de pago desde la orden, recordamos el ID y preparamos la foto.
+document.addEventListener('click', (ev) => {
+  const el = ev.target && ev.target.closest ? ev.target.closest('[onclick*="openFormaPagoChooser"], [onclick*="abrirRegistroPagoDesdeModal"]') : null;
+  if (!el) return;
+  let id = '';
+  const txt = el.getAttribute('onclick') || '';
+  const m = txt.match(/openFormaPagoChooser\(['\"]([^'\"]+)['\"]\)/);
+  if (m) id = m[1];
+  if (!id) id = (document.getElementById('orden-id') || {}).value || '';
+  if (!id) return;
+  window.__smFormaPagoOrdenId = id;
+  const modal = document.getElementById('modal-forma-pago');
+  if (modal) modal.dataset.ordenId = id;
+  const o = (state.ordenes || []).find(x => x.id === id);
+  if (o) void resolverFotoOrden(o, 5000);
+}, true);
+
+// Wrapping adicional para llamadas globales al chooser.
+if (typeof window.openFormaPagoChooser === 'function' && !window.openFormaPagoChooser.__smWaFast2) {
   const originalChooser = window.openFormaPagoChooser;
   const wrapped = function(id, ...args) {
     window.__smFormaPagoOrdenId = id;
     const modal = document.getElementById('modal-forma-pago');
     if (modal) modal.dataset.ordenId = id || '';
+    const o = (state.ordenes || []).find(x => x.id === id);
+    if (o) void resolverFotoOrden(o, 5000);
     return originalChooser.call(this, id, ...args);
   };
-  wrapped.__smWaFast = true;
+  wrapped.__smWaFast2 = true;
   window.openFormaPagoChooser = wrapped;
 }
 
-// Nueva orden fusionada: evita el envío viejo lento y dispara el rápido al terminar.
-if (typeof window.guardarClienteOrden === 'function' && !window.guardarClienteOrden.__smWaFast) {
+// Nueva orden fusionada: evita el envío viejo y usa el flujo nuevo al terminar.
+if (typeof window.guardarClienteOrden === 'function' && !window.guardarClienteOrden.__smWaFast2) {
   const originalGuardar = window.guardarClienteOrden;
   const wrappedGuardar = async function(...args) {
     const chk = document.getElementById('nco-enviar-whatsapp');
@@ -97,13 +149,13 @@ if (typeof window.guardarClienteOrden === 'function' && !window.guardarClienteOr
       const r = await originalGuardar.apply(this, args);
       if (quiereWA) {
         const nueva = (state.ordenes || []).filter(o => !idsAntes.has(o.id)).sort((a,b) => Number(b.numero || 0) - Number(a.numero || 0))[0];
-        if (nueva) enviarWhatsAppOrdenRapido(nueva.id);
+        if (nueva) void enviarWhatsAppOrdenRapido(nueva.id);
       }
       return r;
     } finally {
       if (chk) chk.checked = quiereWA;
     }
   };
-  wrappedGuardar.__smWaFast = true;
+  wrappedGuardar.__smWaFast2 = true;
   window.guardarClienteOrden = wrappedGuardar;
 }
