@@ -105,8 +105,6 @@ Deno.serve(async (req: Request) => {
       });
       if (!uploadResp.ok) return jsonResponse({ error: "No se pudo subir el archivo a R2" }, 502);
 
-      // Nunca devolver ni persistir una URL pública del bucket. La BD guarda
-      // una referencia privada y la app obtiene una URL firmada al visualizar.
       return jsonResponse({ url: privateRef(cleanPath), path: cleanPath });
     }
 
@@ -128,7 +126,7 @@ Deno.serve(async (req: Request) => {
       const requested = Number(payload.expires);
       const expires = Number.isFinite(requested)
         ? Math.max(60, Math.min(MAX_SIGNED_URL_SECONDS, Math.floor(requested)))
-        : 600;
+        : MAX_SIGNED_URL_SECONDS;
       const objectUrl = `${R2_ENDPOINT.replace(/\/+$/, "")}/${R2_BUCKET}/${cleanPath}`;
       const signed = await aws.sign(new Request(objectUrl, { method: "GET" }), {
         aws: { signQuery: true, expires },
