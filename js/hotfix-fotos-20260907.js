@@ -1,5 +1,5 @@
 /* Hotfix producción 2026-09-07
-   Corrige dos problemas únicamente visuales de las fotos de órdenes:
+   Corrige problemas únicamente visuales de las fotos:
    1) después de guardar/actualizar, el modal podía quedar mostrando un estado viejo;
    2) una foto R2 podía renderizarse temporalmente como src="r2://...", esquema que
       el navegador no entiende, en vez de usar primero su URL HTTPS firmada.
@@ -20,7 +20,6 @@ import * as storageManager from './storage-manager.js';
 
     resolviendo.add(img);
     img.dataset.smR2Src = original;
-    // Evita que el navegador siga intentando navegar al esquema r2://.
     if (actual.startsWith('r2://')) img.setAttribute('src', PIXEL_TRANSPARENTE);
 
     try {
@@ -45,7 +44,33 @@ import * as storageManager from './storage-manager.js';
     imgs.forEach(resolverImagenR2);
   }
 
-  // Cubre cualquier pantalla que inserte una foto R2 directamente en el DOM.
+  function modalOrdenVisible() {
+    const modal = document.getElementById('modal-orden');
+    if (!modal) return false;
+    const cs = getComputedStyle(modal);
+    return modal.classList.contains('open') || modal.classList.contains('active') ||
+      modal.getAttribute('aria-hidden') === 'false' ||
+      (cs.display !== 'none' && cs.visibility !== 'hidden');
+  }
+
+  async function refrescarModalOrden(id) {
+    if (!id || !modalOrdenVisible() || typeof window.openOrdenModal !== 'function') return;
+    const modal = document.getElementById('modal-orden');
+    const scrollEl = modal?.querySelector('.modal-content');
+    const scrollTop = scrollEl ? scrollEl.scrollTop : 0;
+    try {
+      await window.openOrdenModal(id);
+      resolverR2En(modal || document);
+      if (storageManager.secureImageUrlsInDom) await storageManager.secureImageUrlsInDom(modal || document);
+      requestAnimationFrame(() => {
+        const c = document.querySelector('#modal-orden .modal-content');
+        if (c) c.scrollTop = scrollTop;
+      });
+    } catch (e) {
+      console.warn('Hotfix fotos: no se pudo refrescar el modal', e);
+    }
+  }
+
   const observer = new MutationObserver(mutations => {
     for (const m of mutations) {
       if (m.type === 'attributes' && m.target?.tagName === 'IMG') resolverImagenR2(m.target);
@@ -73,34 +98,26 @@ import * as storageManager from './storage-manager.js';
 
     const originalSaveOrden = window.saveOrden;
     window.saveOrden = async function (...args) {
-      const modal = document.getElementById('modal-orden');
       const result = await originalSaveOrden.apply(this, args);
-      if (!result) return result;
-
-      const sigueAbierto = !!modal && (
-        modal.classList.contains('open') ||
-        modal.classList.contains('active') ||
-        modal.getAttribute('aria-hidden') === 'false' ||
-        (getComputedStyle(modal).display !== 'none' && getComputedStyle(modal).visibility !== 'hidden')
-      );
-
-      if (sigueAbierto) {
-        try {
-          await window.openOrdenModal(result);
-          resolverR2En(modal);
-          if (storageManager.secureImageUrlsInDom) {
-            await storageManager.secureImageUrlsInDom(modal);
-          }
-        } catch (e) {
-          console.warn('Hotfix fotos: no se pudo refrescar el modal', e);
-        }
-      } else {
-        // El guardado normal cierra el modal; resolvemos cualquier vista que se
-        // haya repintado inmediatamente después del save.
-        resolverR2En(document);
-      }
+      if (result && modalOrdenVisible()) await refrescarModalOrden(result);
+      else resolverR2En(document);
       return result;
     };
+
+    // El botón "Guardar orden" del modal usa saveOrdenYMantener(), que llama al
+    // binding local de saveOrden y por eso no pasa por window.saveOrden. Se envuelve
+    // explícitamente este camino para refrescar las fotos después de keepOpen.
+    if (typeof window.saveOrdenYMantener === 'function' && !window.saveOrdenYMantener.__smFotoKeepOpenV1) {
+      const originalSaveOrdenYMantener = window.saveOrdenYMantener;
+      const wrapped = async function (...args) {
+        const result = await originalSaveOrdenYMantener.apply(this, args);
+        const id = document.getElementById('orden-id')?.value || '';
+        if (id && modalOrdenVisible()) await refrescarModalOrden(id);
+        return result;
+      };
+      wrapped.__smFotoKeepOpenV1 = true;
+      window.saveOrdenYMantener = wrapped;
+    }
 
     window.__smFotoHotfixInstalled = true;
     return true;
