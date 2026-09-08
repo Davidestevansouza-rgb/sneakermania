@@ -282,7 +282,7 @@ export async function agregarFotoItem(itemId, file) {
     const fotoData = await storageManager.uploadFoto(file, orden.id, 'todos_pares');
     fotoData.item = item.codigo;
     if (!orden.extra) orden.extra = {};
-    if (!Array.isArray(orden.extra.fotos)) orden.extra.fotos = [];
+    orden.extra.fotos = storageManager.normalizarExtraFotos(orden.extra.fotos);
     // Reemplazar foto anterior de este artículo si ya había una
     orden.extra.fotos = orden.extra.fotos.filter(f => f.item !== item.codigo);
     orden.extra.fotos.push(fotoData);

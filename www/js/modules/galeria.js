@@ -58,9 +58,12 @@ function migrateLegacyFotos(o) {
     }
   }
   
-  // Asegurar que extra.fotos existe
+  // Asegurar que extra.fotos existe y es un array (algunas órdenes viejas
+  // quedaron con extra.fotos en formato legacy por buckets
+  // {antes:[],durante:[],...} en vez de array plano; normalizarExtraFotos
+  // aplana eso sin descartar ningún dato).
   if (!o.extra) o.extra = {};
-  if (!o.extra.fotos) o.extra.fotos = [];
+  o.extra.fotos = storageManager.normalizarExtraFotos(o.extra.fotos);
 }
 
 export function populateGaleriaSelect() {

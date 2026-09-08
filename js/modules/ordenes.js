@@ -588,8 +588,8 @@ export async function openOrdenModal(id) {
   // le tocará a la próxima orden) y fotos.
   document.getElementById('orden-numero-general').textContent = '#' + (id ? o.numero : state.nextOrderNum);
   fotosGeneralesPendientes = [];
-  fotosGeneralesExistentes = id && o.extra && Array.isArray(o.extra.fotos)
-    ? o.extra.fotos.filter(f => f.categoria === 'todos_pares')
+  fotosGeneralesExistentes = id && o.extra
+    ? storageManager.normalizarExtraFotos(o.extra.fotos).filter(f => f.categoria === 'todos_pares')
     : [];
   renderFotosGeneralesPreview();
 
@@ -694,7 +694,9 @@ export async function saveOrden(btn, opts = {}) {
     // suben a Storage recién ahora, que ya existe un ID real de orden.
     if (fotosGeneralesPendientes.length) {
       if (!target.extra) target.extra = {};
-      if (!target.extra.fotos) target.extra.fotos = [];
+      // Normaliza (sin descartar nada) por si extra.fotos venía en el
+      // formato legacy de buckets {antes:[],durante:[],...} en vez de array.
+      target.extra.fotos = storageManager.normalizarExtraFotos(target.extra.fotos);
       fotoGeneralParaWhatsApp = fotosGeneralesPendientes[0].file; // se guarda antes de subir/limpiar
       for (const f of fotosGeneralesPendientes) {
         try {

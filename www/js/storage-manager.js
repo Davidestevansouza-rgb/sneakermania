@@ -327,3 +327,31 @@ export async function listOrdenFiles(ordenId) {
 
   return data.files || [];
 }
+
+/**
+ * Normaliza `orden.extra.fotos` al formato array plano [{url, categoria, ...}]
+ * que espera todo el código actual (ordenes.js, galeria.js, items.js).
+ *
+ * Órdenes antiguas quedaron guardadas en Supabase con `extra.fotos` en el
+ * formato legacy por buckets: {antes:[], durante:[], despues:[], detalle:[],
+ * suela:[], laterales:[], todos_pares:[]}. Esta función NO borra ni descarta
+ * ningún dato: si encuentra ese formato, aplana cada bucket no vacío en
+ * entradas {url, categoria}; si ya es array, lo devuelve tal cual; si está
+ * vacío/ausente, devuelve un array vacío nuevo (nunca muta el original).
+ * @param {*} fotosField - el valor crudo de orden.extra.fotos
+ * @returns {Array} array plano de fotos, nunca null/undefined
+ */
+export function normalizarExtraFotos(fotosField) {
+  if (Array.isArray(fotosField)) return fotosField;
+  if (!fotosField || typeof fotosField !== 'object') return [];
+  // Formato legacy por buckets: {categoria: [urls o {url,...}]}
+  const aplanado = [];
+  for (const [categoria, valores] of Object.entries(fotosField)) {
+    if (!Array.isArray(valores)) continue;
+    for (const v of valores) {
+      if (v && typeof v === 'object') aplanado.push({ categoria, ...v });
+      else if (v) aplanado.push({ url: v, categoria });
+    }
+  }
+  return aplanado;
+}
