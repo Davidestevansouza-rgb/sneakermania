@@ -98,6 +98,6 @@ function instalar(){
   css();
   ['openOrdenModal','agregarFilaItemOrden','openNuevoClienteOrdenModal','agregarFilaParCO','renderProduccion','renderGaleria','renderIA','viewOrdenDetalle','renderOrdenes','switchTab'].forEach(n=>wrap(n,refrescar));
   const f=window.saveOrden;if(typeof f==='function'&&!f.__smAudit){const w=async function(...a){const eraNueva=!document.getElementById('orden-id')?.value;const id=await f.apply(this,a);if(id)await guardarAuditoria(id,eraNueva);refrescar();return id;};w.__smAudit=true;window.saveOrden=w;}
-  document.addEventListener('click',()=>setTimeout(refrescar,0),true); document.addEventListener('change',()=>setTimeout(refrescar,0),true);
+  document.addEventListener('click',e=>{if(e.target&&e.target.tagName==='SELECT')return;setTimeout(refrescar,0);},true); document.addEventListener('change',()=>setTimeout(refrescar,0),true);
   refrescar();
 }
