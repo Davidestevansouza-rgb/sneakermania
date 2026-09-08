@@ -14,6 +14,7 @@ import {
 } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
 import * as storageManager from '../storage-manager.js';
+import { supabase } from '../config.js';
 import { ensureEmpleadosCache, getEmpleadosCache } from './empleados.js';
 import { renderItemsPanelHTML } from './items.js';
 import { limpiarCombo } from '../combo-search.js';
@@ -118,6 +119,24 @@ function primeraFotoGeneralOrden(o) {
 async function fotoUrlAFile(foto, nombreArchivo) {
   if (!foto || !foto.url) return null;
   try {
+    const esR2 = typeof foto.url === 'string' && foto.url.startsWith('r2://');
+    const objectPath = foto.path || (esR2 ? foto.url.slice(5).replace(/^\/+/, '') : null);
+
+    if (objectPath) {
+      const tid = tenantId();
+      const { data, error } = await supabase.functions.invoke('r2-storage', {
+        body: { action: 'download', path: objectPath },
+        headers: tid ? { 'x-tenant-id': tid } : {}
+      });
+      if (error || !(data instanceof Blob) || data.size <= 0) {
+        console.warn('No se pudo descargar la foto R2 para WhatsApp:', objectPath, error || 'respuesta vacía');
+        return null;
+      }
+      const lower = objectPath.toLowerCase();
+      const mime = lower.endsWith('.png') ? 'image/png' : lower.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+      return new File([data], nombreArchivo || 'foto.jpg', { type: mime });
+    }
+
     const secureUrl = await storageManager.resolveImageUrl(foto.url, foto.path);
     if (!secureUrl) return null;
     const resp = await fetch(secureUrl);

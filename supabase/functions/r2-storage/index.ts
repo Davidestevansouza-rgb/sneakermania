@@ -10,7 +10,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const MAX_SIGNED_URL_SECONDS = 600;
+const MAX_SIGNED_URL_SECONDS = 3000;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -134,6 +134,32 @@ Deno.serve(async (req: Request) => {
         aws: { signQuery: true, expires },
       });
       return jsonResponse({ url: signed.url, path: cleanPath, expiresIn: expires });
+    }
+
+    if (action === "download") {
+      if (typeof payload.path !== "string" || !payload.path) {
+        return jsonResponse({ error: "Falta 'path'" }, 400);
+      }
+      const cleanPath = limpiarPath(payload.path);
+      if (primerSegmento(cleanPath) !== tenant) {
+        return jsonResponse({ error: "No autorizado para leer ese path" }, 403);
+      }
+      if (cleanPath.length > 500 || /[\r\n]/.test(cleanPath)) {
+        return jsonResponse({ error: "Path invalido" }, 400);
+      }
+      const objectUrl = `${R2_ENDPOINT.replace(/\/+$/, "")}/${R2_BUCKET}/${cleanPath}`;
+      const resp = await aws.fetch(objectUrl, { method: "GET" });
+      if (resp.status === 404) return jsonResponse({ error: "Archivo no encontrado" }, 404);
+      if (!resp.ok || !resp.body) return jsonResponse({ error: "No se pudo descargar el archivo de R2" }, 502);
+      return new Response(resp.body, {
+        status: 200,
+        headers: {
+          ...CORS_HEADERS,
+          "Content-Type": "application/octet-stream",
+          "Cache-Control": "private, no-store",
+          "Content-Disposition": "inline",
+        },
+      });
     }
 
     if (action === "delete") {
