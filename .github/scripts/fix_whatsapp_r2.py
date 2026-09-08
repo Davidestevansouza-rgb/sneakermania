@@ -1,0 +1,107 @@
+from pathlib import Path
+
+
+def replace_once(text, old, new, label):
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: esperado 1 match, encontrados {count}")
+    return text.replace(old, new, 1)
+
+
+for rel in ["js/modules/ordenes.js", "www/js/modules/ordenes.js"]:
+    p = Path(rel)
+    s = p.read_text(encoding="utf-8")
+    s = replace_once(
+        s,
+        "import * as storageManager from '../storage-manager.js';",
+        "import * as storageManager from '../storage-manager.js';\nimport { supabase } from '../config.js';",
+        f"{rel}: import supabase",
+    )
+
+    old = """async function fotoUrlAFile(foto, nombreArchivo) {
+  if (!foto || !foto.url) return null;
+  try {
+    const secureUrl = await storageManager.resolveImageUrl(foto.url, foto.path);
+    if (!secureUrl) return null;
+    const resp = await fetch(secureUrl);
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
+    return new File([blob], nombreArchivo || 'foto.jpg', { type: blob.type || 'image/jpeg' });
+  } catch (e) {
+    console.error('No se pudo preparar la foto para WhatsApp:', e);
+    return null;
+  }
+}"""
+
+    new = """async function fotoUrlAFile(foto, nombreArchivo) {
+  if (!foto || !foto.url) return null;
+  try {
+    const esR2 = typeof foto.url === 'string' && foto.url.startsWith('r2://');
+    const objectPath = foto.path || (esR2 ? foto.url.slice(5).replace(/^\\/+/, '') : null);
+
+    if (objectPath) {
+      const tid = tenantId();
+      const { data, error } = await supabase.functions.invoke('r2-storage', {
+        body: { action: 'download', path: objectPath },
+        headers: tid ? { 'x-tenant-id': tid } : {}
+      });
+      if (error || !(data instanceof Blob) || data.size <= 0) {
+        console.warn('No se pudo descargar la foto R2 para WhatsApp:', objectPath, error || 'respuesta vacía');
+        return null;
+      }
+      const lower = objectPath.toLowerCase();
+      const mime = lower.endsWith('.png') ? 'image/png' : lower.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+      return new File([data], nombreArchivo || 'foto.jpg', { type: mime });
+    }
+
+    const secureUrl = await storageManager.resolveImageUrl(foto.url, foto.path);
+    if (!secureUrl) return null;
+    const resp = await fetch(secureUrl);
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
+    return new File([blob], nombreArchivo || 'foto.jpg', { type: blob.type || 'image/jpeg' });
+  } catch (e) {
+    console.error('No se pudo preparar la foto para WhatsApp:', e);
+    return null;
+  }
+}"""
+    s = replace_once(s, old, new, f"{rel}: fotoUrlAFile")
+    p.write_text(s, encoding="utf-8")
+
+edge = Path("supabase/functions/r2-storage/index.ts")
+s = edge.read_text(encoding="utf-8")
+if "const MAX_SIGNED_URL_SECONDS = 600;" in s:
+    s = s.replace("const MAX_SIGNED_URL_SECONDS = 600;", "const MAX_SIGNED_URL_SECONDS = 3000;", 1)
+
+if 'if (action === "download")' not in s:
+    marker = '    if (action === "delete") {'
+    block = '''    if (action === "download") {
+      if (typeof payload.path !== "string" || !payload.path) {
+        return jsonResponse({ error: "Falta 'path'" }, 400);
+      }
+      const cleanPath = limpiarPath(payload.path);
+      if (primerSegmento(cleanPath) !== tenant) {
+        return jsonResponse({ error: "No autorizado para leer ese path" }, 403);
+      }
+      if (cleanPath.length > 500 || /[\\r\\n]/.test(cleanPath)) {
+        return jsonResponse({ error: "Path invalido" }, 400);
+      }
+      const objectUrl = `${R2_ENDPOINT.replace(/\\/+$/, "")}/${R2_BUCKET}/${cleanPath}`;
+      const resp = await aws.fetch(objectUrl, { method: "GET" });
+      if (resp.status === 404) return jsonResponse({ error: "Archivo no encontrado" }, 404);
+      if (!resp.ok || !resp.body) return jsonResponse({ error: "No se pudo descargar el archivo de R2" }, 502);
+      return new Response(resp.body, {
+        status: 200,
+        headers: {
+          ...CORS_HEADERS,
+          "Content-Type": "application/octet-stream",
+          "Cache-Control": "private, no-store",
+          "Content-Disposition": "inline",
+        },
+      });
+    }
+
+'''
+    s = replace_once(s, marker, block + marker, "edge: download action")
+
+edge.write_text(s, encoding="utf-8")
