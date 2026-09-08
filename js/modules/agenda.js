@@ -111,6 +111,17 @@ export function verOrdenDesdeAgenda(ordenId) {
   if (window.viewOrdenDetalle) window.viewOrdenDetalle(ordenId);
 }
 
+function ordenEliminadaDesdeFila(row) {
+  let cur = row;
+  const seen = new Set();
+  for (let i = 0; i < 8 && cur && typeof cur === 'object' && !Array.isArray(cur) && !seen.has(cur); i++) {
+    if (cur.eliminada === true) return true;
+    seen.add(cur);
+    cur = (cur.extra && typeof cur.extra === 'object' && !Array.isArray(cur.extra)) ? cur.extra : null;
+  }
+  return false;
+}
+
 /** Convierte la fila snake_case de Postgres al formato camelCase del state. */
 function mapOrdenRealtime(row) {
   if (!row) return null;
@@ -121,7 +132,8 @@ function mapOrdenRealtime(row) {
     fechaEstimada: row.fecha_estimada ?? row.fechaEstimada,
     estadoPago: row.estado_pago ?? row.estadoPago,
     totalPares: row.total_pares ?? row.totalPares,
-    tenantId: row.tenant_id ?? row.tenantId
+    tenantId: row.tenant_id ?? row.tenantId,
+    eliminada: ordenEliminadaDesdeFila(row)
   };
 }
 
@@ -152,7 +164,6 @@ function applyOrdenRealtime(payload) {
 
   const mapped = mapOrdenRealtime(raw);
 
-  // Soft-delete: debe vivir SOLO en Papelera, nunca volver a la lista activa.
   if (mapped.eliminada === true) {
     if (idxActivo >= 0) state.ordenes.splice(idxActivo, 1);
     if (idxPapelera >= 0) state.ordenesEliminadas[idxPapelera] = { ...state.ordenesEliminadas[idxPapelera], ...mapped };
@@ -160,7 +171,6 @@ function applyOrdenRealtime(payload) {
     return;
   }
 
-  // Orden activa/restaurada: quitar cualquier copia de Papelera y upsert activo.
   if (idxPapelera >= 0) state.ordenesEliminadas.splice(idxPapelera, 1);
   const idxActual = state.ordenes.findIndex(o => o.id === raw.id);
   if (idxActual >= 0) state.ordenes[idxActual] = { ...state.ordenes[idxActual], ...mapped };
@@ -195,7 +205,7 @@ export function startRealtimeAgenda() {
           if (window.renderPapeleras) window.renderPapeleras();
 
           if (payload.eventType === 'INSERT') showToast('Nueva orden agregada', 'info');
-          else if (payload.eventType === 'UPDATE' && payload.new?.eliminada !== true) showToast('Orden actualizada', 'info');
+          else if (payload.eventType === 'UPDATE' && mapOrdenRealtime(payload.new)?.eliminada !== true) showToast('Orden actualizada', 'info');
         }
       )
       .subscribe((status) => {
