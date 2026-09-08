@@ -148,7 +148,7 @@ function init(){
   ['openOrdenModal','agregarFilaItemOrden','openNuevoClienteOrdenModal','agregarFilaParCO','renderProduccion','renderGaleria','renderIA','viewOrdenDetalle','renderSeguimientoItemSeleccionado','renderOrdenes','switchTab'].forEach(wrap);
   const save=window.saveOrden;
   if(typeof save==='function'&&!save.__smStableAudit){const w=async function(...a){const isNew=!document.getElementById('orden-id')?.value;const id=await save.apply(this,a);if(id)await saveAudit(id,isNew);setTimeout(apply,0);return id;};w.__smStableAudit=true;window.saveOrden=w;}
-  document.addEventListener('click',()=>setTimeout(apply,0),true);
+  document.addEventListener('click',e=>{if(e.target&&e.target.tagName==='SELECT')return;setTimeout(apply,0);},true);
   document.addEventListener('change',()=>setTimeout(apply,0),true);
   document.addEventListener('touchmove',e=>{const back=document.querySelector('.modal-backdrop.open');if(back&&!e.target.closest('.modal'))e.preventDefault();},{passive:false,capture:true});
   apply();
