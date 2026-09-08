@@ -703,6 +703,11 @@ export async function saveOrden(btn, opts = {}) {
         } catch (e) { console.error('No se pudo subir una foto general:', e); }
       }
       fotosGeneralesPendientes = [];
+      // Reconstruir el estado "existentes" con las fotos recién subidas
+      // (mismo patrón que al abrir el modal) para que no desaparezcan del
+      // preview hasta cerrar y reabrir la orden.
+      fotosGeneralesExistentes = target.extra.fotos.filter(f => f.categoria === 'todos_pares');
+      renderFotosGeneralesPreview();
     }
     await persist();
     await db.saveOrden(target);
