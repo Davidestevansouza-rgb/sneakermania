@@ -4,7 +4,7 @@
    - Galería: "todos los pares" fuerza la vista consolidada real.
    - Pagos: NO intercepta confirmarPagoQR/confirmarPagoEfectivo.
    ============================================================ */
-import './biblioteca-capacidad-20260908.js';
+import './biblioteca-capacidad-v2-20260908.js';
 import { state } from '../state.js';
 import { clienteNombre, ordenById } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
