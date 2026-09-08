@@ -36,6 +36,7 @@ import './modules/whatsapp-limites.js';
 import './modules/push-notifications.js';
 import './modules/search-payment-safety-20260908.js';
 import './modules/orden-item-photo-deferred-20260908.js';
+import './modules/item-photo-visibility-fix-20260908.js';
 
 /* ============================================================
    NAVEGACIÓN
