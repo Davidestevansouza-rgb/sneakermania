@@ -127,24 +127,43 @@ function mapOrdenRealtime(row) {
 
 /**
  * Aplica solamente la fila de orden recibida por Realtime al estado local.
- * No ejecuta loadAllData() ni hace ninguna consulta adicional.
+ * IMPORTANTE: borrar una orden en la app es un soft-delete (eliminada=true),
+ * por lo que Supabase emite UPDATE, no DELETE. Si ese UPDATE se trata como
+ * una orden normal, Realtime vuelve a insertarla en state.ordenes justo
+ * después de enviarla a la papelera. Aquí se separan correctamente las
+ * órdenes activas de las eliminadas/restauradas.
  */
 function applyOrdenRealtime(payload) {
   if (!Array.isArray(state.ordenes)) state.ordenes = [];
+  if (!Array.isArray(state.ordenesEliminadas)) state.ordenesEliminadas = [];
 
   const eventType = payload?.eventType;
   const raw = eventType === 'DELETE' ? payload.old : payload.new;
   if (!raw?.id) return;
 
-  const idx = state.ordenes.findIndex(o => o.id === raw.id);
+  const idxActivo = state.ordenes.findIndex(o => o.id === raw.id);
+  const idxPapelera = state.ordenesEliminadas.findIndex(o => o.id === raw.id);
 
   if (eventType === 'DELETE') {
-    if (idx >= 0) state.ordenes.splice(idx, 1);
+    if (idxActivo >= 0) state.ordenes.splice(idxActivo, 1);
+    if (idxPapelera >= 0) state.ordenesEliminadas.splice(idxPapelera, 1);
     return;
   }
 
   const mapped = mapOrdenRealtime(raw);
-  if (idx >= 0) state.ordenes[idx] = { ...state.ordenes[idx], ...mapped };
+
+  // Soft-delete: debe vivir SOLO en Papelera, nunca volver a la lista activa.
+  if (mapped.eliminada === true) {
+    if (idxActivo >= 0) state.ordenes.splice(idxActivo, 1);
+    if (idxPapelera >= 0) state.ordenesEliminadas[idxPapelera] = { ...state.ordenesEliminadas[idxPapelera], ...mapped };
+    else state.ordenesEliminadas.push(mapped);
+    return;
+  }
+
+  // Orden activa/restaurada: quitar cualquier copia de Papelera y upsert activo.
+  if (idxPapelera >= 0) state.ordenesEliminadas.splice(idxPapelera, 1);
+  const idxActual = state.ordenes.findIndex(o => o.id === raw.id);
+  if (idxActual >= 0) state.ordenes[idxActual] = { ...state.ordenes[idxActual], ...mapped };
   else state.ordenes.push(mapped);
 }
 
@@ -171,9 +190,12 @@ export function startRealtimeAgenda() {
 
           const agendaTab = document.getElementById('tab-agenda');
           if (agendaTab && agendaTab.classList.contains('active')) renderAgenda();
+          const ordenesTab = document.getElementById('tab-ordenes');
+          if (ordenesTab && ordenesTab.classList.contains('active') && window.renderOrdenes) window.renderOrdenes();
+          if (window.renderPapeleras) window.renderPapeleras();
 
           if (payload.eventType === 'INSERT') showToast('Nueva orden agregada', 'info');
-          else if (payload.eventType === 'UPDATE') showToast('Orden actualizada', 'info');
+          else if (payload.eventType === 'UPDATE' && payload.new?.eliminada !== true) showToast('Orden actualizada', 'info');
         }
       )
       .subscribe((status) => {

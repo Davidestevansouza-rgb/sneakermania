@@ -1,7 +1,6 @@
 /* ============================================================
    MÓDULO: NOTIFICACIONES
-   Fase 2: Notificaciones calculadas automáticamente y almacenadas
-   en la tabla notificaciones de Supabase.
+   Optimizado para reducir consultas y no golpear Supabase sin conexión.
    ============================================================ */
 import { state, todayISO } from '../state.js';
 import { clienteNombre, reproducirSonidoNotificacion } from '../ui.js';
@@ -9,15 +8,16 @@ import { escHtml } from '../sanitize.js';
 import { supabase } from '../config.js';
 import * as db from '../db.js';
 
-/**
- * Calcula notificaciones automáticas basadas en el estado actual.
- * Tipos: 'd' (entrega), 'a' (atrasado), 's' (stock), 'p' (pago)
- */
+const NOTIF_SYNC_MS = 5 * 60 * 1000; // 5 min; antes 60 s
+
+function onlineNow() {
+  return typeof navigator === 'undefined' || navigator.onLine !== false;
+}
+
 export function computeNotifications() {
   const today = todayISO(0);
   const notifs = [];
 
-  // Entregas hoy
   state.ordenes.filter(o => o.fechaEstimada === today && o.estado !== 'Entregado').forEach(o =>
     notifs.push({
       type: 'd',
@@ -27,7 +27,6 @@ export function computeNotifications() {
     })
   );
 
-  // Servicios atrasados
   state.ordenes.filter(o => o.fechaEstimada < today && o.estado !== 'Entregado').forEach(o =>
     notifs.push({
       type: 'a',
@@ -37,7 +36,6 @@ export function computeNotifications() {
     })
   );
 
-  // Stock bajo
   state.inventario.filter(i => Number(i.cantidad) <= Number(i.stockMinimo)).forEach(i =>
     notifs.push({
       type: 's',
@@ -47,7 +45,6 @@ export function computeNotifications() {
     })
   );
 
-  // Pagos pendientes
   state.ordenes.filter(o => o.estadoPago === 'Pendiente' || o.estadoPago === 'Parcial').forEach(o =>
     notifs.push({
       type: 'p',
@@ -60,14 +57,9 @@ export function computeNotifications() {
   return notifs;
 }
 
-/**
- * Refresca SOLO la tabla notificaciones. Antes syncNotifications() llamaba
- * db.loadAllData(), lo que descargaba clientes, órdenes, inventario, gastos,
- * facturas, registro_pares, orden_items, etc. cada minuto.
- */
 async function reloadNotificationsOnly() {
   const tenant = state.session?.tenantId;
-  if (!supabase || !tenant) return;
+  if (!supabase || !tenant || !onlineNow()) return false;
 
   const { data, error } = await supabase
     .from('notificaciones')
@@ -88,39 +80,32 @@ async function reloadNotificationsOnly() {
     inventarioId: n.inventario_id || null,
     fecha: n.created_at
   }));
+  return true;
 }
 
 let notifSyncRunning = false;
 
-/**
- * Sincroniza las notificaciones calculadas con la base de datos.
- * Elimina notificaciones resueltas y crea nuevas.
- */
 export async function syncNotifications() {
-  if (notifSyncRunning || !state.session?.loggedIn) return;
+  if (notifSyncRunning || !state.session?.loggedIn || !onlineNow()) return;
   notifSyncRunning = true;
 
   try {
-    // Primero refrescar únicamente notificaciones para evitar duplicados entre
-    // dispositivos sin descargar el resto de las tablas del tenant.
     await reloadNotificationsOnly();
 
     const computed = computeNotifications();
     const computedTexts = computed.map(n => n.texto);
-
     if (!Array.isArray(state.notificaciones)) state.notificaciones = [];
 
-    // Marcar como leídas las notificaciones que ya no aplican.
     const resolved = state.notificaciones.filter(n => !n.leida && !computedTexts.includes(n.texto));
     for (const n of resolved) {
+      if (!onlineNow()) break;
       await db.markNotificationRead(n.id);
     }
 
-    // Crear notificaciones nuevas que no existen en la DB.
     const existingTexts = state.notificaciones.map(n => n.texto);
     const nuevas = computed.filter(n => !existingTexts.includes(n.texto));
-
     for (const n of nuevas) {
+      if (!onlineNow()) break;
       await db.createNotification({
         tipo: n.type,
         texto: n.texto,
@@ -131,48 +116,44 @@ export async function syncNotifications() {
       });
     }
 
-    // No se usa loadAllData(): las funciones anteriores ya actualizan el
-    // estado local y solo refrescamos esta tabla si hubo escrituras.
-    if (resolved.length || nuevas.length) await reloadNotificationsOnly();
+    // No hacemos una segunda lectura: markNotificationRead/createNotification
+    // ya actualizan el estado local. Así evitamos GET duplicados.
     updateBell();
-
   } catch (e) {
-    console.error('Error al sincronizar notificaciones:', e);
+    if (onlineNow()) console.error('Error al sincronizar notificaciones:', e);
   } finally {
     notifSyncRunning = false;
   }
 }
 
 export async function renderNotificaciones() {
-  // Sincronizar notificaciones primero
-  await syncNotifications();
+  if (onlineNow()) await syncNotifications();
 
-  // Renderizar desde state.notificaciones (ya sincronizadas)
   const notifs = (state.notificaciones || []).filter(n => !n.leida);
   const esAdmin = state.session && state.session.role === 'Administrador';
+  const list = document.getElementById('notif-list');
+  if (!list) return;
 
-  document.getElementById('notif-list').innerHTML = notifs.length ? notifs.map(n => {
+  list.innerHTML = notifs.length ? notifs.map(n => {
     const icon = ({ d: '📦', a: '⚠', s: '▥', p: '$' }[n.tipo] || '🔔');
     const prioClass = n.prioridad === 'Alta' ? ' alta' : (n.prioridad === 'Baja' ? ' baja' : '');
-    // El botón de eliminar solo se muestra al Administrador. Los demás solo visualizan.
     const btn = esAdmin ? '<button class="notif-dismiss" onclick="dismissNotification(\'' + n.id + '\')">×</button>' : '';
     return '<div class="notif-item' + prioClass + '">' +
       '<div class="notif-ic ' + n.tipo + '">' + icon + '</div>' +
-      '<div class="notif-text">' + escHtml(n.texto) + '</div>' +
-      btn +
-    '</div>';
+      '<div class="notif-text">' + escHtml(n.texto) + '</div>' + btn + '</div>';
   }).join('') : '<div class="hint">No hay notificaciones pendientes.</div>';
 
-  // Al abrir el panel se marcan como vistas y el contador rojo vuelve a cero
-  // (las notificaciones NO se eliminan).
   marcarNotifsVistas();
   updateBell();
 }
 
 export async function dismissNotification(id) {
-  // Solo el Administrador puede eliminar notificaciones.
   if (!(state.session && state.session.role === 'Administrador')) {
     if (window.showToast) window.showToast('Solo el Administrador puede eliminar notificaciones');
+    return;
+  }
+  if (!onlineNow()) {
+    if (window.showToast) window.showToast('Sin conexión. Intenta nuevamente cuando vuelva internet.');
     return;
   }
   try {
@@ -183,8 +164,6 @@ export async function dismissNotification(id) {
   }
 }
 
-/* ---- Contador rojo: solo sube con notificaciones nuevas y solo vuelve a
-   cero cuando el usuario abre el panel (no disminuye automáticamente). ---- */
 const NOTIF_KNOWN_KEY = 'ses-notif-known';
 const NOTIF_BADGE_KEY = 'ses-notif-badge';
 
@@ -199,9 +178,6 @@ function registrarNuevas() {
   if (nuevas > 0) {
     badge += nuevas;
     localStorage.setItem(NOTIF_BADGE_KEY, String(badge));
-    // Alerta sonora: antes las notificaciones nuevas solo actualizaban el
-    // contador de la campanita en silencio. Suena una vez por tanda nueva
-    // (no una vez por notificación) para no saturar si llegan varias juntas.
     reproducirSonidoNotificacion();
   }
   localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify([...knownSet]));
@@ -221,28 +197,34 @@ export function updateBell() {
   el.style.display = count > 0 ? 'flex' : 'none';
 }
 
-/**
- * Auto-sync cada 60 segundos. Mantiene la frecuencia funcional existente,
- * pero ahora cada ciclo consulta únicamente notificaciones.
- */
 let notifSyncInterval = null;
+let onlineHandlerInstalled = false;
+
+function onBackOnline() {
+  if (state.session?.loggedIn) syncNotifications();
+}
 
 export function startNotificationSync() {
+  if (!onlineHandlerInstalled && typeof window !== 'undefined') {
+    window.addEventListener('online', onBackOnline);
+    onlineHandlerInstalled = true;
+  }
   if (notifSyncInterval) return;
 
-  // Sync inmediato
-  syncNotifications();
-
-  // Sync cada 60 segundos
+  if (onlineNow()) syncNotifications();
   notifSyncInterval = setInterval(() => {
-    syncNotifications();
-  }, 60000);
+    if (onlineNow() && document.visibilityState !== 'hidden') syncNotifications();
+  }, NOTIF_SYNC_MS);
 }
 
 export function stopNotificationSync() {
   if (notifSyncInterval) {
     clearInterval(notifSyncInterval);
     notifSyncInterval = null;
+  }
+  if (onlineHandlerInstalled && typeof window !== 'undefined') {
+    window.removeEventListener('online', onBackOnline);
+    onlineHandlerInstalled = false;
   }
   notifSyncRunning = false;
 }
