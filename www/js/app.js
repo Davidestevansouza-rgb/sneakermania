@@ -38,6 +38,7 @@ import './modules/search-payment-safety-20260908.js';
 import './modules/orden-item-photo-deferred-20260908.js';
 import './modules/item-photo-visibility-fix-20260908.js';
 import './modules/modal-ver-close-fix-20260908.js';
+import './modules/whatsapp-order-fast-20260908.js';
 
 export function switchTab(tab) {
   if (!puedeVerTab(tab)) {
