@@ -129,8 +129,19 @@ function instalar() {
     }
   };
 
-  const observer = new MutationObserver(() => {
-    if (document.getElementById('biblioteca-mapa')) requestAnimationFrame(refrescarMapa);
+  let rafMapa = 0;
+  const observer = new MutationObserver((mutations) => {
+    if (!document.getElementById('biblioteca-mapa')) return;
+    const relevante = mutations.some(m => {
+      const t = m.target;
+      return !(t instanceof Element && t.closest('#biblioteca-mapa'));
+    });
+    if (!relevante) return;
+    if (rafMapa) cancelAnimationFrame(rafMapa);
+    rafMapa = requestAnimationFrame(() => {
+      rafMapa = 0;
+      refrescarMapa();
+    });
   });
   observer.observe(document.body, { childList: true, subtree: true });
 }
