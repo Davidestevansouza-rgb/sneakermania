@@ -111,7 +111,17 @@ export function verOrdenDesdeAgenda(ordenId) {
   if (window.viewOrdenDetalle) window.viewOrdenDetalle(ordenId);
 }
 
-/** Convierte la fila snake_case de Postgres al formato camelCase del state. */
+function ordenEliminadaDesdeFila(row) {
+  let cur = row;
+  const seen = new Set();
+  for (let i = 0; i < 8 && cur && typeof cur === 'object' && !Array.isArray(cur) && !seen.has(cur); i++) {
+    if (cur.eliminada === true) return true;
+    seen.add(cur);
+    cur = (cur.extra && typeof cur.extra === 'object' && !Array.isArray(cur.extra)) ? cur.extra : null;
+  }
+  return false;
+}
+
 function mapOrdenRealtime(row) {
   if (!row) return null;
   return {
@@ -121,18 +131,11 @@ function mapOrdenRealtime(row) {
     fechaEstimada: row.fecha_estimada ?? row.fechaEstimada,
     estadoPago: row.estado_pago ?? row.estadoPago,
     totalPares: row.total_pares ?? row.totalPares,
-    tenantId: row.tenant_id ?? row.tenantId
+    tenantId: row.tenant_id ?? row.tenantId,
+    eliminada: ordenEliminadaDesdeFila(row)
   };
 }
 
-/**
- * Aplica solamente la fila de orden recibida por Realtime al estado local.
- * IMPORTANTE: borrar una orden en la app es un soft-delete (eliminada=true),
- * por lo que Supabase emite UPDATE, no DELETE. Si ese UPDATE se trata como
- * una orden normal, Realtime vuelve a insertarla en state.ordenes justo
- * después de enviarla a la papelera. Aquí se separan correctamente las
- * órdenes activas de las eliminadas/restauradas.
- */
 function applyOrdenRealtime(payload) {
   if (!Array.isArray(state.ordenes)) state.ordenes = [];
   if (!Array.isArray(state.ordenesEliminadas)) state.ordenesEliminadas = [];
@@ -152,7 +155,6 @@ function applyOrdenRealtime(payload) {
 
   const mapped = mapOrdenRealtime(raw);
 
-  // Soft-delete: debe vivir SOLO en Papelera, nunca volver a la lista activa.
   if (mapped.eliminada === true) {
     if (idxActivo >= 0) state.ordenes.splice(idxActivo, 1);
     if (idxPapelera >= 0) state.ordenesEliminadas[idxPapelera] = { ...state.ordenesEliminadas[idxPapelera], ...mapped };
@@ -160,14 +162,12 @@ function applyOrdenRealtime(payload) {
     return;
   }
 
-  // Orden activa/restaurada: quitar cualquier copia de Papelera y upsert activo.
   if (idxPapelera >= 0) state.ordenesEliminadas.splice(idxPapelera, 1);
   const idxActual = state.ordenes.findIndex(o => o.id === raw.id);
   if (idxActual >= 0) state.ordenes[idxActual] = { ...state.ordenes[idxActual], ...mapped };
   else state.ordenes.push(mapped);
 }
 
-/** Inicia una única suscripción a cambios de órdenes del tenant actual. */
 export function startRealtimeAgenda() {
   if (realtimeChannel) return;
 
@@ -195,7 +195,7 @@ export function startRealtimeAgenda() {
           if (window.renderPapeleras) window.renderPapeleras();
 
           if (payload.eventType === 'INSERT') showToast('Nueva orden agregada', 'info');
-          else if (payload.eventType === 'UPDATE' && payload.new?.eliminada !== true) showToast('Orden actualizada', 'info');
+          else if (payload.eventType === 'UPDATE' && mapOrdenRealtime(payload.new)?.eliminada !== true) showToast('Orden actualizada', 'info');
         }
       )
       .subscribe((status) => {
@@ -211,7 +211,6 @@ export function startRealtimeAgenda() {
   }
 }
 
-/** Detiene la suscripción actual exactamente una vez. */
 export function stopRealtimeAgenda() {
   const channel = realtimeChannel;
   if (!channel) return;
