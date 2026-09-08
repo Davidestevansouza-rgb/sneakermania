@@ -1,0 +1,66 @@
+name: One-shot R2 render fix v4
+
+on:
+  push:
+    branches:
+      - release/sneakermania-final-20260907
+    paths:
+      - .github/workflows/one-shot-r2-render-fix-v4.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/sneakermania-final-20260907
+          fetch-depth: 0
+
+      - name: Extract and run validated patch script
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          src = Path('.github/workflows/one-shot-r2-render-fix-v3.yml').read_text(encoding='utf-8').splitlines()
+          start = next(i for i, line in enumerate(src) if "python <<'PY'" in line) + 1
+          end = next(i for i in range(start, len(src)) if src[i].strip() == 'PY')
+          code = []
+          for line in src[start:end]:
+              code.append(line[10:] if line.startswith('          ') else line)
+          Path('/tmp/r2_patch.py').write_text('\n'.join(code) + '\n', encoding='utf-8')
+          PY
+          python /tmp/r2_patch.py
+
+          for f in \
+            js/storage-manager.js www/js/storage-manager.js \
+            js/modules/ordenes.js www/js/modules/ordenes.js \
+            js/modules/produccion.js www/js/modules/produccion.js \
+            js/modules/galeria.js www/js/modules/galeria.js \
+            js/hotfix-fotos-20260907.js www/js/hotfix-fotos-20260907.js \
+            js/app.js www/js/app.js; do
+            node --check "$f"
+          done
+          git diff --check
+
+      - name: Commit patch and remove temporary workflows
+        shell: bash
+        run: |
+          git config user.name "SneakerMania Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git rm \
+            .github/workflows/one-shot-r2-render-fix.yml \
+            .github/workflows/one-shot-r2-render-fix-v2.yml \
+            .github/workflows/one-shot-r2-render-fix-v3.yml \
+            .github/workflows/one-shot-r2-render-fix-v4.yml
+          git add \
+            js/storage-manager.js www/js/storage-manager.js \
+            js/modules/ordenes.js www/js/modules/ordenes.js \
+            js/modules/produccion.js www/js/modules/produccion.js \
+            js/modules/galeria.js www/js/modules/galeria.js \
+            js/hotfix-fotos-20260907.js www/js/hotfix-fotos-20260907.js \
+            js/app.js www/js/app.js
+          git commit -m "fix: blindar render R2 y carreras de Producción"
+          git push origin HEAD:release/sneakermania-final-20260907
