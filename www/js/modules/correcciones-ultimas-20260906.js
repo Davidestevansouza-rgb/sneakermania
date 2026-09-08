@@ -192,7 +192,7 @@ function wrap(name){
 function init(){
   ['openOrdenModal','agregarFilaItemOrden','renderProduccion','viewOrdenDetalle','renderSeguimientoItemSeleccionado','renderOrdenes','renderBiblioteca','switchTab'].forEach(wrap);
   prepararCompartirFotoNuevaOrden();
-  document.addEventListener('click',()=>setTimeout(apply,0),true);
+  document.addEventListener('click',e=>{if(e.target&&e.target.tagName==='SELECT')return;setTimeout(apply,0);},true);
   document.addEventListener('change',()=>setTimeout(apply,0),true);
   apply();
 }
