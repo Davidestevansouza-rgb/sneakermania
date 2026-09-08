@@ -1572,16 +1572,30 @@ function generarParesMasivos(n) {
 let fotosGeneralesPendientes = [];
 let fotosGeneralesExistentes = [];
 
-function renderFotosGeneralesPreview() {
+let _fotosGeneralesRenderGen = 0;
+
+async function renderFotosGeneralesPreview() {
   const cont = document.getElementById('orden-fotos-generales-preview');
   if (!cont) return;
+
+  // Snapshot + número de generación: si se llama de nuevo antes de que
+  // termine de resolver (p. ej. el usuario agrega otra foto rapidísimo),
+  // descartamos este render en vez de pisar el DOM con datos viejos.
+  const miGen = ++_fotosGeneralesRenderGen;
+  const pendientesSnapshot = fotosGeneralesPendientes;
+  const existentesSnapshot = fotosGeneralesExistentes;
+
+  const existentesResueltas = await storageManager.resolveImageUrls(existentesSnapshot);
+
+  if (miGen !== _fotosGeneralesRenderGen) return;
+
   // Un solo click en cualquier miniatura abre la foto ampliada (con
   // navegación entre todas las existentes de la orden).
-  const allUrls = JSON.stringify(fotosGeneralesExistentes.map(f => f.url));
-  const existentesHTML = fotosGeneralesExistentes.map(f =>
-    '<div class="foto-general-thumb"><img src="' + f.url + '" style="cursor:pointer;" onclick="ampliarImagen(\'' + escAttr(f.url) + '\',' + escAttr(allUrls) + ')"></div>'
+  const allUrls = JSON.stringify(existentesResueltas.map(f => f.resolvedUrl));
+  const existentesHTML = existentesResueltas.map(f =>
+    '<div class="foto-general-thumb"><img src="' + escAttr(f.resolvedUrl) + '" style="cursor:pointer;" onclick="ampliarImagen(\'' + escAttr(f.resolvedUrl) + '\',' + escAttr(allUrls) + ')"></div>'
   ).join('');
-  const pendientesHTML = fotosGeneralesPendientes.map((f, i) =>
+  const pendientesHTML = pendientesSnapshot.map((f, i) =>
     '<div class="foto-general-thumb"><img src="' + f.previewUrl + '" style="cursor:pointer;" onclick="ampliarImagen(this.src)">' +
       '<button type="button" class="quitar-foto" title="Quitar" onclick="quitarFotoGeneralPendiente(' + i + ')">✕</button>' +
     '</div>'
