@@ -31,7 +31,7 @@ function instalarNormalizacionWhatsApp() {
 
 function mensajeOrden(o) {
   const c = clienteById(o?.clienteId) || {};
-  const items = (state.ordenItems || []).filter(it => it.ordenId === o?.id);
+  const items = (state?.ordenItems || []).filter(it => it.ordenId === o?.id);
   const lineas = [
     'Hola ' + (c.nombre || '') + ' 👋',
     'Tu orden #' + (o?.numero || '') + ' fue registrada correctamente.',
@@ -43,13 +43,17 @@ function mensajeOrden(o) {
   return lineas.join('\n');
 }
 
-function fotoGeneral(o) { return o?.extra?.fotos?.find(f => f && f.categoria === 'todos_pares') || null; }
+function fotoGeneral(o) {
+  const fotos = o?.extra && Array.isArray(o.extra.fotos) ? o.extra.fotos : [];
+  return fotos.find(f => f && f.categoria === 'todos_pares') || null;
+}
 
 async function prepararFotoGeneral(o) {
   const f = fotoGeneral(o);
   if (!f) return null;
   const key = o.id + ':' + (f.path || f.url || 'foto');
   if (fotoFileCache.has(key)) return fotoFileCache.get(key);
+  if ((typeof f.url === 'string' && f.url.startsWith('r2://')) || f.path) return null;
   try {
     const u = await storage.resolveImageUrl(f.url, f.path);
     const r = await fetch(u);
@@ -58,7 +62,10 @@ async function prepararFotoGeneral(o) {
     const file = new File([blob], 'orden-' + o.numero + '.jpg', { type: blob.type || 'image/jpeg' });
     fotoFileCache.set(key, file);
     return file;
-  } catch (e) { console.error('No se pudo preparar la foto general:', e); return null; }
+  } catch (e) {
+    console.warn('No se pudo preparar la foto general para compartir; se continúa con texto.');
+    return null;
+  }
 }
 
 async function compartirOrdenConFoto(o) {
@@ -72,7 +79,6 @@ async function compartirOrdenConFoto(o) {
   }
   if (numero && typeof window.enviarWhatsApp === 'function') {
     window.enviarWhatsApp(numero, msg);
-    if (file) showToast('WhatsApp abrió con el texto. iPhone no permitió adjuntar la foto automáticamente en este intento.');
     return !file;
   }
   return false;
@@ -81,7 +87,7 @@ async function compartirOrdenConFoto(o) {
 function reemplazarEnviarWhatsAppOrden() {
   if (window.enviarWhatsAppOrden?.__smCoreFinalShare) return;
   const w = async function(id) {
-    const o = (state.ordenes || []).find(x => x.id === id);
+    const o = (state?.ordenes || []).find(x => x.id === id);
     if (!o) return;
     return compartirOrdenConFoto(o);
   };
@@ -90,14 +96,12 @@ function reemplazarEnviarWhatsAppOrden() {
 }
 
 function capturarFotosNuevasPorFila() {
-  return Array.from(document.querySelectorAll('#orden-items-list .orden-item-row')).map((row,index) => ({
-    row,index,itemIdAntes:row.dataset.itemId || '',file:row.__smPendingItemPhoto || null
-  })).filter(x => x.file);
+  return Array.from(document.querySelectorAll('#orden-items-list .orden-item-row')).map((row,index) => ({ row,index,itemIdAntes:row.dataset.itemId || '',file:row.__smPendingItemPhoto || null })).filter(x => x.file);
 }
 
 async function asegurarFotosItemsNuevos(ordenId, antesIds, capturadas) {
   if (!capturadas.length || !ordenId) return;
-  const nuevos = (state.ordenItems || []).filter(it => it.ordenId === ordenId && !antesIds.has(it.id)).sort((a,b) => Number(a.numeroItem || 0) - Number(b.numeroItem || 0));
+  const nuevos = (state?.ordenItems || []).filter(it => it.ordenId === ordenId && !antesIds.has(it.id)).sort((a,b) => Number(a.numeroItem || 0) - Number(b.numeroItem || 0));
   const pendientesNuevos = capturadas.filter(x => !x.itemIdAntes);
   for (let i=0;i<pendientesNuevos.length;i++) {
     const item=nuevos[i]; if(!item) continue;
@@ -114,7 +118,7 @@ function envolverSaveOrden() {
   const w=async function(...args){
     const eraNueva=!document.getElementById('orden-id')?.value;
     const capturadas=capturarFotosNuevasPorFila();
-    const antesIds=new Set((state.ordenItems||[]).map(it=>it.id));
+    const antesIds=new Set((state?.ordenItems||[]).map(it=>it.id));
     const r=await original.apply(this,args);
     const ordenId=typeof r==='string'?r:document.getElementById('orden-id')?.value;
     if(!ordenId)return r;
@@ -122,9 +126,9 @@ function envolverSaveOrden() {
     if(modalOrdenAbierto()&&typeof window.openOrdenModal==='function'){
       try{await window.openOrdenModal(ordenId);}catch(e){console.error(e);}
     }
-    const o=(state.ordenes||[]).find(x=>x.id===ordenId);
+    const o=(state?.ordenes||[]).find(x=>x.id===ordenId);
     if(o) prepararFotoGeneral(o);
-    if(eraNueva&&o&&fotoGeneral(o)) showToast('✅ Orden guardada con foto. Usa WhatsApp para enviar foto + información juntas.');
+    if(eraNueva&&o&&fotoGeneral(o)) showToast('✅ Orden guardada con foto.');
     return r;
   };
   w.__smCoreFinalSave=true;
@@ -135,7 +139,7 @@ function precargarFotosAlAbrir(){
   ['viewOrdenDetalle','openOrdenModal'].forEach(nombre=>{
     const original=window[nombre];
     if(typeof original!=='function'||original.__smPreloadFotoOrden)return;
-    const w=function(id,...rest){const r=original.call(this,id,...rest);const o=(state.ordenes||[]).find(x=>x.id===id);if(o)prepararFotoGeneral(o);return r;};
+    const w=function(id,...rest){return original.call(this,id,...rest);};
     w.__smPreloadFotoOrden=true;window[nombre]=w;
   });
 }
