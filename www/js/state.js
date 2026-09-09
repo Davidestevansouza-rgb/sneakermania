@@ -8,8 +8,6 @@
    ============================================================ */
 import { STORAGE_KEY, QUEUE_KEY } from './config.js';
 
-export let state = null;
-
 export function seedData() {
   return {
     clientes: [], clientesEliminados: [], ordenes: [], ordenesEliminadas: [],
@@ -19,6 +17,11 @@ export function seedData() {
     session: { loggedIn: false, role: null, user: null }
   };
 }
+
+// Estado seguro desde el primer import. app.js lo reemplaza después por
+// la caché real o por un seed nuevo. Evita que módulos laterales lean null
+// durante la pantalla de login antes de que termine la inicialización.
+export let state = seedData();
 
 export function setState(next) { state = next; }
 export function tenantId() { return state && state.session ? state.session.tenantId || null : null; }
