@@ -14,6 +14,45 @@ function onlineNow() {
   return typeof navigator === 'undefined' || navigator.onLine !== false;
 }
 
+function notifLogicalKey(n) {
+  const tipo = n?.type || n?.tipo || '';
+  const ordenId = n?.ordenId || n?.orden_id || '';
+  const inventarioId = n?.inventarioId || n?.inventario_id || '';
+  if (tipo || ordenId || inventarioId) return [tipo, ordenId, inventarioId].join('|');
+  return 'texto|' + String(n?.texto || '');
+}
+
+function dismissedStorageKey() {
+  return 'ses-notif-dismissed:' + (state?.session?.tenantId || 'local');
+}
+
+function getDismissedSet() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(dismissedStorageKey()) || '[]');
+    return new Set(Array.isArray(raw) ? raw : []);
+  } catch (_) { return new Set(); }
+}
+
+function saveDismissedSet(set) {
+  try { localStorage.setItem(dismissedStorageKey(), JSON.stringify([...set])); } catch (_) {}
+}
+
+export function silenciarNotificacionesActuales(lista = null) {
+  const set = getDismissedSet();
+  const fuentes = Array.isArray(lista) ? lista : computeNotifications();
+  fuentes.forEach(n => set.add(notifLogicalKey(n)));
+  saveDismissedSet(set);
+}
+
+function depurarSilenciadas(computed) {
+  const activas = new Set((computed || []).map(notifLogicalKey));
+  const set = getDismissedSet();
+  let cambio = false;
+  [...set].forEach(k => { if (!activas.has(k)) { set.delete(k); cambio = true; } });
+  if (cambio) saveDismissedSet(set);
+  return set;
+}
+
 export function computeNotifications() {
   const today = todayISO(0);
   const notifs = [];
@@ -52,12 +91,13 @@ export async function syncNotifications() {
   try {
     await reloadNotificationsOnly();
     const computed = computeNotifications();
+    const silenciadas = depurarSilenciadas(computed);
     const computedTexts = computed.map(n => n.texto);
     if (!Array.isArray(state.notificaciones)) state.notificaciones = [];
     const resolved = state.notificaciones.filter(n => !n.leida && !computedTexts.includes(n.texto));
     for (const n of resolved) { if (!onlineNow()) break; await db.markNotificationRead(n.id); }
     const existingTexts = state.notificaciones.map(n => n.texto);
-    const nuevas = computed.filter(n => !existingTexts.includes(n.texto));
+    const nuevas = computed.filter(n => !existingTexts.includes(n.texto) && !silenciadas.has(notifLogicalKey(n)));
     const validOrderIds = await idsOrdenesValidas(nuevas.map(n => n.ordenId));
     for (const n of nuevas) {
       if (!onlineNow()) break;
@@ -87,7 +127,12 @@ export async function renderNotificaciones() {
 export async function dismissNotification(id) {
   if (!(state.session && state.session.role === 'Administrador')) { if (window.showToast) window.showToast('Solo el Administrador puede eliminar notificaciones'); return; }
   if (!onlineNow()) { if (window.showToast) window.showToast('Sin conexión. Intenta nuevamente cuando vuelva internet.'); return; }
-  try { await db.markNotificationRead(id); await renderNotificaciones(); } catch (e) { console.error('Error al descartar notificación:', e); }
+  try {
+    const actual = (state.notificaciones || []).find(n => n.id === id);
+    if (actual) silenciarNotificacionesActuales([actual]);
+    await db.markNotificationRead(id);
+    await renderNotificaciones();
+  } catch (e) { console.error('Error al descartar notificación:', e); }
 }
 
 const NOTIF_KNOWN_KEY='ses-notif-known';
@@ -128,4 +173,4 @@ export function stopNotificationSync(){
   if(onlineHandlerInstalled&&typeof window!=='undefined'){window.removeEventListener('online',onBackOnline);onlineHandlerInstalled=false;}
   notifSyncRunning=false;
 }
-Object.assign(window,{computeNotifications,renderNotificaciones,updateBell,marcarNotifsVistas,dismissNotification,startNotificationSync,stopNotificationSync});
+Object.assign(window,{computeNotifications,renderNotificaciones,updateBell,marcarNotifsVistas,dismissNotification,startNotificationSync,stopNotificationSync,silenciarNotificacionesActuales});
