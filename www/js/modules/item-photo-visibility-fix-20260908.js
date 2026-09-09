@@ -51,6 +51,10 @@ function fotosDelItem(orden, item) {
   return todasFotosOrden(orden).filter(f => f && (f.itemId === item.id || f.item === item.codigo));
 }
 
+function fotosSinVinculo(orden) {
+  return todasFotosOrden(orden).filter(f => f && !f.itemId && !f.item);
+}
+
 async function resolverFotos(fotos) {
   if (!fotos.length) return [];
   try {
@@ -83,6 +87,16 @@ function crearGaleriaFotos(validas, item) {
   return box;
 }
 
+function insertarDebajoDeFechas(card, box) {
+  const izquierda = card.firstElementChild?.firstElementChild || card;
+  const fechas = Array.from(izquierda.querySelectorAll('.hint')).find(el => {
+    const t = (el.textContent || '').trim();
+    return t.startsWith('Ingreso:') && t.includes('Entrega estimada:');
+  });
+  if (fechas && fechas.parentNode === izquierda) fechas.insertAdjacentElement('afterend', box);
+  else izquierda.appendChild(box);
+}
+
 async function renderFotosEnDetalle(ordenId) {
   const cont = document.getElementById('orden-detalle-items');
   const orden = ordenById(ordenId);
@@ -94,6 +108,7 @@ async function renderFotosEnDetalle(ordenId) {
 
   cont.querySelectorAll('.sm-item-fotos-visible,.sm-fotos-ingreso-orden').forEach(x => x.remove());
 
+  // Fotos correctamente vinculadas: siempre debajo del artículo exacto.
   for (let i = 0; i < cards.length && i < items.length; i++) {
     const card = cards[i];
     const item = items[i];
@@ -104,14 +119,23 @@ async function renderFotosEnDetalle(ordenId) {
     if (gen !== renderGen) return;
     if (!validas.length) continue;
 
-    const box = crearGaleriaFotos(validas, item);
-    const izquierda = card.firstElementChild?.firstElementChild || card;
-    const fechas = Array.from(izquierda.querySelectorAll('.hint')).find(el => {
-      const t = (el.textContent || '').trim();
-      return t.startsWith('Ingreso:') && t.includes('Entrega estimada:');
-    });
-    if (fechas && fechas.parentNode === izquierda) fechas.insertAdjacentElement('afterend', box);
-    else izquierda.appendChild(box);
+    insertarDebajoDeFechas(card, crearGaleriaFotos(validas, item));
+  }
+
+  // Compatibilidad con órdenes recientes afectadas por el bug anterior:
+  // si la orden tiene UN SOLO artículo, una foto antigua sin itemId/item no
+  // es ambigua y debe volver a mostrarse dentro de ese artículo, como ocurría
+  // antes del último despliegue. En órdenes con varios artículos NO se hace
+  // esta asociación para evitar mostrar la foto general en un precinto errado.
+  if (items.length === 1 && cards.length === 1) {
+    const vinculadas = fotosDelItem(orden, items[0]);
+    const vinculadasKeys = new Set(vinculadas.map(f => f.path || f.url));
+    const legacy = fotosSinVinculo(orden).filter(f => !vinculadasKeys.has(f.path || f.url));
+    if (legacy.length) {
+      const validas = await resolverFotos(legacy);
+      if (gen !== renderGen) return;
+      if (validas.length) insertarDebajoDeFechas(cards[0], crearGaleriaFotos(validas, items[0]));
+    }
   }
 }
 
@@ -152,14 +176,14 @@ function instalar() {
   window.agregarFotoItem = agregarFotoItemVisible;
 
   const originalDetalle = window.viewOrdenDetalle;
-  if (typeof originalDetalle === 'function' && !originalDetalle.__smFotoVisibleV5) {
+  if (typeof originalDetalle === 'function' && !originalDetalle.__smFotoVisibleV6) {
     const wrapped = function(id, preselectItemId) {
       detalleOrdenActual = id;
       const r = originalDetalle(id, preselectItemId);
       Promise.resolve(r).finally(() => setTimeout(() => renderFotosEnDetalle(id), 0));
       return r;
     };
-    wrapped.__smFotoVisibleV5 = true;
+    wrapped.__smFotoVisibleV6 = true;
     window.viewOrdenDetalle = wrapped;
   }
 
