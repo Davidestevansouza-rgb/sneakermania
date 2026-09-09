@@ -31,6 +31,7 @@ function nuevaEntrada(file) {
 
 function entradasFila(row) {
   const arr = Array.isArray(row?.[PENDING_KEY]) ? row[PENDING_KEY] : [];
+  // Compatibilidad con el formato anterior (File directo).
   const normalizadas = arr.map(x => x && x.file ? x : nuevaEntrada(x)).filter(x => x.file);
   if (row) row[PENDING_KEY] = normalizadas;
   return normalizadas;
@@ -97,6 +98,8 @@ document.addEventListener('change', ev => {
   const files = Array.from(input.files || []).filter(f => f && ((f.type || '').startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name || '')));
   if (!files.length) return;
 
+  // Este módulo es el único dueño del guardado diferido de fotos de artículos.
+  // Evita que otros handlers históricos suban la misma selección por duplicado.
   ev.preventDefault();
   ev.stopPropagation();
   if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
@@ -133,6 +136,7 @@ async function guardarFotosPendientes(ordenId, pendientes) {
   const items = (state.ordenItems || []).filter(it => it.ordenId === ordenId).sort((a, b) => (a.numeroItem || 0) - (b.numeroItem || 0));
   const fallos = [];
 
+  // Secuencial a propósito: máximo una compresión/subida pesada a la vez.
   for (const p of pendientes) {
     const itemIdActual = p.row?.dataset?.itemId || p.itemId;
     const item = itemIdActual ? items.find(it => it.id === itemIdActual) : items[p.index];
@@ -162,6 +166,8 @@ async function guardarFotosPendientes(ordenId, pendientes) {
         foto.itemId = item.id;
         foto.categoria = 'item_inicial';
 
+        // R2 puede haber terminado bien aunque falle la vinculación. Por eso
+        // uploadedFoto se conserva y un reintento vuelve únicamente a la RPC.
         entry.status = 'confirming';
         mostrarPendientes(p.row);
         const res = await db.appendOrderPhotoAtomic(orden.id, foto);
@@ -180,7 +186,11 @@ async function guardarFotosPendientes(ordenId, pendientes) {
     }
   }
 
+  // La copia local queda sincronizada con el último read-back confirmado.
   await persist();
+
+  // Contar exclusivamente las entradas de ESTE intento. Así una selección nueva
+  // realizada mientras termina el guardado no altera el resultado N/N mostrado.
   const saved = pendientes.reduce((n, p) => n + p.entries.filter(e => e.status === 'saved').length, 0);
   const failed = Math.max(0, expected - saved);
   pendientes.forEach(p => limpiarGuardadasDeFila(p.row));
@@ -237,6 +247,8 @@ function hayPendientes() {
 function instalar() {
   window.__smHayFotosItemPendientes = hayPendientes;
   envolverGuardado('saveOrden', '__smConfirmedItemPhotos');
+  // El botón visible usa saveOrdenYMantener y llama internamente al binding
+  // léxico saveOrden, por eso se envuelve también explícitamente.
   envolverGuardado('saveOrdenYMantener', '__smConfirmedItemPhotosKeepOpen');
 }
 
