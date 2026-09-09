@@ -1,10 +1,61 @@
-/* WhatsApp de órdenes: envío directo de texto al número guardado. */
+/* WhatsApp de órdenes: envío directo de texto completo al número guardado. */
 import { state } from '../state.js';
-import { showToast } from '../ui.js';
-import { ordenQrText } from './ordenes.js';
+import { showToast, fmtDate, fmtMoney } from '../ui.js';
 
 function clienteDeOrden(o) {
   return (state.clientes || []).find(c => c.id === o.clienteId) || null;
+}
+
+function itemsDeOrden(o) {
+  return (state.ordenItems || [])
+    .filter(it => it.ordenId === o.id)
+    .sort((a,b) => Number(a.numeroItem || 0) - Number(b.numeroItem || 0));
+}
+
+function servicioTexto(it) {
+  const servicios = Array.isArray(it.tipoServicio) ? it.tipoServicio.filter(Boolean) : [];
+  if (servicios.length) return servicios.join(', ');
+  if (it.servicio) return String(it.servicio);
+  return 'Sin servicio asignado';
+}
+
+function nombreArticulo(it) {
+  if (it.descripcion) return String(it.descripcion).trim();
+  const marcaModelo = [it.marca, it.modelo].filter(Boolean).join(' ').trim();
+  return marcaModelo || it.codigo || 'Artículo';
+}
+
+function mensajeCompletoOrden(o, c) {
+  const items = itemsDeOrden(o);
+  const total = Number(o.precio || 0) - Number(o.descuento || 0);
+  const pagado = Number(o.pagado || 0);
+  const lineas = [
+    'Hola ' + (c.nombre || '') + ' 👟',
+    '¡Registramos tu pedido (orden #' + o.numero + ')!',
+    '',
+    'Orden #' + o.numero,
+    'Cliente: ' + (c.nombre || ''),
+    'Ingreso: ' + fmtDate(o.fechaIngreso),
+    'Entrega est.: ' + fmtDate(o.fechaEstimada),
+    '— Artículos (' + items.length + ') —'
+  ];
+
+  if (items.length) {
+    items.forEach((it, idx) => {
+      lineas.push(
+        'Artículo ' + (idx + 1) + ': ' + nombreArticulo(it) +
+        ' · Servicio: ' + servicioTexto(it) +
+        ' · Estado: ' + (it.estado || 'Recibido y registrado')
+      );
+    });
+  } else {
+    lineas.push('Artículo: Sin artículos individuales registrados');
+  }
+
+  lineas.push('Total: ' + fmtMoney(total) + ' · Pagado: ' + fmtMoney(pagado));
+  lineas.push('');
+  lineas.push('¡Gracias por tu confianza!');
+  return lineas.join('\n');
 }
 
 function idOrdenDesdeContexto(btn) {
@@ -35,7 +86,7 @@ export function enviarWhatsAppOrdenRapido(ordenId) {
   const tel = String(c.whatsapp || c.telefono || '').replace(/\D/g, '');
   if (!tel) { showToast('El cliente no tiene un número de WhatsApp válido'); return false; }
 
-  const msg = 'Hola ' + (c.nombre || '') + ' 👟\n\n' + ordenQrText(o) + '\n\n¡Gracias por tu confianza!';
+  const msg = mensajeCompletoOrden(o, c);
   const ok = abrirChatDirecto(tel, msg);
   if (!ok) showToast('No se pudo abrir WhatsApp');
   return ok;
