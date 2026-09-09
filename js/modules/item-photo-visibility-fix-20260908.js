@@ -137,14 +137,9 @@ async function agregarFotoItemVisible(itemId, file) {
     fotoData.itemId = item.id;
     fotoData.categoria = 'item_inicial';
 
-    orden.extra = orden.extra || {};
-    const existentes = todasFotosOrden(orden);
-    orden.extra.fotos = existentes;
-    orden.extra.fotos.push(fotoData);
-
+    const res = await db.appendOrderPhotoAtomic(orden.id, fotoData);
+    if (res && res.error) throw res.error;
     await persist();
-    const res = await db.saveOrden(orden);
-    if (res && res.error && !res.queued) throw res.error;
 
     logActivity('Agregó foto al artículo ' + item.codigo);
     showToast('✅ Foto guardada');
