@@ -19,22 +19,10 @@ export function computeNotifications() {
   const notifs = [];
   const ordenes = Array.isArray(state?.ordenes) ? state.ordenes.filter(o => o && o.eliminada !== true) : [];
   const inventario = Array.isArray(state?.inventario) ? state.inventario : [];
-
-  ordenes.filter(o => o.fechaEstimada === today && o.estado !== 'Entregado').forEach(o =>
-    notifs.push({ type:'d', texto:'Entrega hoy: orden #' + o.numero + ' de ' + clienteNombre(o.clienteId), ordenId:o.id, prioridad:o.prioridad === 'Alta' ? 'Alta' : 'Media' })
-  );
-
-  ordenes.filter(o => o.fechaEstimada && o.fechaEstimada < today && o.estado !== 'Entregado').forEach(o =>
-    notifs.push({ type:'a', texto:'Servicio atrasado: orden #' + o.numero + ' de ' + clienteNombre(o.clienteId), ordenId:o.id, prioridad:'Alta' })
-  );
-
-  inventario.filter(i => Number(i.cantidad) <= Number(i.stockMinimo)).forEach(i =>
-    notifs.push({ type:'s', texto:'Stock bajo: ' + i.nombre + ' (' + i.cantidad + ' unidades)', inventarioId:i.id, prioridad:'Media' })
-  );
-
-  ordenes.filter(o => o.estadoPago === 'Pendiente' || o.estadoPago === 'Parcial').forEach(o =>
-    notifs.push({ type:'p', texto:'Pago pendiente: orden #' + o.numero + ' — ' + clienteNombre(o.clienteId), ordenId:o.id, prioridad:'Baja' })
-  );
+  ordenes.filter(o => o.fechaEstimada === today && o.estado !== 'Entregado').forEach(o => notifs.push({ type:'d', texto:'Entrega hoy: orden #' + o.numero + ' de ' + clienteNombre(o.clienteId), ordenId:o.id, prioridad:o.prioridad === 'Alta' ? 'Alta' : 'Media' }));
+  ordenes.filter(o => o.fechaEstimada && o.fechaEstimada < today && o.estado !== 'Entregado').forEach(o => notifs.push({ type:'a', texto:'Servicio atrasado: orden #' + o.numero + ' de ' + clienteNombre(o.clienteId), ordenId:o.id, prioridad:'Alta' }));
+  inventario.filter(i => Number(i.cantidad) <= Number(i.stockMinimo)).forEach(i => notifs.push({ type:'s', texto:'Stock bajo: ' + i.nombre + ' (' + i.cantidad + ' unidades)', inventarioId:i.id, prioridad:'Media' }));
+  ordenes.filter(o => o.estadoPago === 'Pendiente' || o.estadoPago === 'Parcial').forEach(o => notifs.push({ type:'p', texto:'Pago pendiente: orden #' + o.numero + ' — ' + clienteNombre(o.clienteId), ordenId:o.id, prioridad:'Baja' }));
   return notifs;
 }
 
@@ -54,14 +42,10 @@ async function idsOrdenesValidas(ids) {
     const { data, error } = await supabase.from('ordenes').select('id').in('id', unique);
     if (error) throw error;
     return new Set((data || []).map(r => r.id));
-  } catch (e) {
-    console.warn('No se pudo validar órdenes para notificaciones:', e);
-    return new Set();
-  }
+  } catch (e) { console.warn('No se pudo validar órdenes para notificaciones:', e); return new Set(); }
 }
 
 let notifSyncRunning = false;
-
 export async function syncNotifications() {
   if (notifSyncRunning || !state.session?.loggedIn || !onlineNow()) return;
   notifSyncRunning = true;
@@ -70,13 +54,8 @@ export async function syncNotifications() {
     const computed = computeNotifications();
     const computedTexts = computed.map(n => n.texto);
     if (!Array.isArray(state.notificaciones)) state.notificaciones = [];
-
     const resolved = state.notificaciones.filter(n => !n.leida && !computedTexts.includes(n.texto));
-    for (const n of resolved) {
-      if (!onlineNow()) break;
-      await db.markNotificationRead(n.id);
-    }
-
+    for (const n of resolved) { if (!onlineNow()) break; await db.markNotificationRead(n.id); }
     const existingTexts = state.notificaciones.map(n => n.texto);
     const nuevas = computed.filter(n => !existingTexts.includes(n.texto));
     const validOrderIds = await idsOrdenesValidas(nuevas.map(n => n.ordenId));
@@ -86,9 +65,8 @@ export async function syncNotifications() {
       await db.createNotification({ tipo:n.type, texto:n.texto, ordenId:n.ordenId || null, inventarioId:n.inventarioId || null, prioridad:n.prioridad, leida:false });
     }
     updateBell();
-  } catch (e) {
-    if (onlineNow()) console.error('Error al sincronizar notificaciones:', e);
-  } finally { notifSyncRunning = false; }
+  } catch (e) { if (onlineNow()) console.error('Error al sincronizar notificaciones:', e); }
+  finally { notifSyncRunning = false; }
 }
 
 export async function renderNotificaciones() {
@@ -103,7 +81,7 @@ export async function renderNotificaciones() {
     const btn = esAdmin ? '<button class="notif-dismiss" onclick="dismissNotification(\'' + n.id + '\')">×</button>' : '';
     return '<div class="notif-item' + prioClass + '"><div class="notif-ic ' + n.tipo + '">' + icon + '</div><div class="notif-text">' + escHtml(n.texto) + '</div>' + btn + '</div>';
   }).join('') : '<div class="hint">No hay notificaciones pendientes.</div>';
-  marcarNotifsVistas(); updateBell();
+  marcarNotifsVistas();
 }
 
 export async function dismissNotification(id) {
@@ -125,7 +103,15 @@ function registrarNuevas() {
   localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify([...knownSet]));
   return badge;
 }
-export function marcarNotifsVistas(){localStorage.setItem(NOTIF_BADGE_KEY,'0');updateBell();}
+export function marcarNotifsVistas(){
+  let known; try { known = JSON.parse(localStorage.getItem(NOTIF_KNOWN_KEY) || '[]'); } catch (e) { known = []; }
+  const knownSet = new Set(known);
+  (state.notificaciones || []).filter(n => !n.leida).forEach(n => { if (n.id) knownSet.add(n.id); });
+  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify([...knownSet]));
+  localStorage.setItem(NOTIF_BADGE_KEY,'0');
+  const el=document.getElementById('bell-count');
+  if(el){el.textContent='0';el.style.display='none';}
+}
 export function updateBell(){const count=registrarNuevas();const el=document.getElementById('bell-count');if(!el)return;el.textContent=count;el.style.display=count>0?'flex':'none';}
 
 let notifSyncInterval=null;
