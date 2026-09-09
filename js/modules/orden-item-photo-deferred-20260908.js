@@ -11,7 +11,6 @@ import { state, persist } from '../state.js';
 import * as db from '../db.js';
 import * as storageManager from '../storage-manager.js';
 import { showToast } from '../ui.js';
-import { supabase } from '../config.js';
 
 const PENDING_KEY = '__smDeferredOrderItemPhotos';
 let seq = 0;
@@ -123,74 +122,6 @@ function snapshotPendientes() {
   })).filter(x => x.entries.length);
 }
 
-function agregarFotosLegacy(destino, origen) {
-  if (!origen) return;
-  if (Array.isArray(origen)) {
-    origen.forEach(f => { if (f) destino.push(typeof f === 'string' ? { url: f } : f); });
-    return;
-  }
-  if (typeof origen === 'object') {
-    Object.entries(origen).forEach(([categoria, lista]) => {
-      if (!Array.isArray(lista)) return;
-      lista.forEach(f => {
-        if (!f) return;
-        destino.push(typeof f === 'string' ? { url: f, categoria } : { ...f, categoria: f.categoria || categoria });
-      });
-    });
-  }
-}
-
-function asegurarFotosSinPerdida(orden) {
-  const reunidas = [];
-  agregarFotosLegacy(reunidas, orden?.extra?.fotos);
-  agregarFotosLegacy(reunidas, orden?.fotos);
-  const vistas = new Set();
-  const unicas = reunidas.filter(f => {
-    const k = f?.path || f?.url || JSON.stringify(f);
-    if (!k || vistas.has(k)) return false;
-    vistas.add(k);
-    return true;
-  });
-  orden.extra = orden.extra || {};
-  orden.extra.fotos = unicas;
-  return orden.extra.fotos;
-}
-
-function keyPath(foto) {
-  if (foto?.path) return String(foto.path).replace(/^r2:\/\//, '');
-  if (typeof foto?.url === 'string' && foto.url.startsWith('r2://')) return foto.url.slice(5).replace(/^\/+/, '');
-  return '';
-}
-
-function recolectarPathsFotos(nodo, salida = new Set(), vistos = new Set()) {
-  if (!nodo || typeof nodo !== 'object' || vistos.has(nodo)) return salida;
-  vistos.add(nodo);
-  if (Array.isArray(nodo)) {
-    nodo.forEach(x => recolectarPathsFotos(x, salida, vistos));
-    return salida;
-  }
-  const k = keyPath(nodo);
-  if (k) salida.add(k);
-  Object.values(nodo).forEach(x => recolectarPathsFotos(x, salida, vistos));
-  return salida;
-}
-
-async function confirmarPathsEnSupabase(ordenId, paths) {
-  const esperadas = Array.from(new Set((paths || []).map(String).filter(Boolean)));
-  if (!esperadas.length) return { ok: true, confirmed: [], missing: [] };
-  if (!supabase) return { ok: false, confirmed: [], missing: esperadas, error: new Error('Supabase no disponible') };
-  try {
-    const { data, error } = await supabase.from('ordenes').select('extra').eq('id', ordenId).single();
-    if (error) throw error;
-    const presentes = recolectarPathsFotos(data?.extra || {});
-    const confirmed = esperadas.filter(x => presentes.has(x.replace(/^r2:\/\//, '')));
-    const missing = esperadas.filter(x => !presentes.has(x.replace(/^r2:\/\//, '')));
-    return { ok: missing.length === 0, confirmed, missing };
-  } catch (error) {
-    return { ok: false, confirmed: [], missing: esperadas, error };
-  }
-}
-
 function limpiarGuardadasDeFila(row) {
   if (!row) return;
   row[PENDING_KEY] = entradasFila(row).filter(e => e.status !== 'saved');
@@ -203,8 +134,6 @@ async function guardarFotosPendientes(ordenId, pendientes) {
   if (!orden || !expected) return { expected, saved: 0, failed: expected, fallos: [] };
 
   const items = (state.ordenItems || []).filter(it => it.ordenId === ordenId).sort((a, b) => (a.numeroItem || 0) - (b.numeroItem || 0));
-  const fotosOrden = asegurarFotosSinPerdida(orden);
-  const candidatos = [];
   const fallos = [];
 
   // Secuencial a propósito: máximo una compresión/subida pesada a la vez.
@@ -230,62 +159,35 @@ async function guardarFotosPendientes(ordenId, pendientes) {
         let foto = entry.uploadedFoto;
         if (!foto) {
           foto = await storageManager.uploadFoto(entry.file, orden.id, 'item_inicial');
-          foto.item = item.codigo;
-          foto.itemId = item.id;
-          foto.categoria = 'item_inicial';
           entry.uploadedFoto = foto;
-        } else {
-          foto.item = item.codigo;
-          foto.itemId = item.id;
-          foto.categoria = 'item_inicial';
         }
 
-        const k = keyPath(foto) || foto.url;
-        if (!fotosOrden.some(f => (keyPath(f) || f?.url) === k)) fotosOrden.push(foto);
+        foto.item = item.codigo;
+        foto.itemId = item.id;
+        foto.categoria = 'item_inicial';
+
+        // R2 puede haber terminado bien aunque falle la vinculación. Por eso
+        // uploadedFoto se conserva y un reintento vuelve únicamente a la RPC.
         entry.status = 'confirming';
-        candidatos.push({ p, item, entry, foto });
+        mostrarPendientes(p.row);
+        const res = await db.appendOrderPhotoAtomic(orden.id, foto);
+        if (res?.error) throw res.error;
+
+        entry.status = 'saved';
+        entry.error = null;
         mostrarPendientes(p.row);
       } catch (error) {
         entry.status = 'error';
         entry.error = error;
         fallos.push({ codigo: item.codigo, entry, error });
-        console.error('No se pudo subir foto inicial del artículo ' + (item.codigo || ''), error);
+        console.error('No se pudo guardar foto inicial del artículo ' + (item.codigo || ''), error);
         mostrarPendientes(p.row);
       }
     }
   }
 
-  if (candidatos.length) {
-    try {
-      await persist();
-      const res = await db.saveOrden(orden);
-      if (res?.queued) throw new Error('La referencia quedó en cola y todavía no fue confirmada en Supabase');
-      if (res?.error) throw res.error;
-
-      const paths = candidatos.map(x => keyPath(x.foto)).filter(Boolean);
-      const confirmacion = await confirmarPathsEnSupabase(ordenId, paths);
-      const confirmadas = new Set((confirmacion.confirmed || []).map(x => String(x).replace(/^r2:\/\//, '')));
-
-      for (const c of candidatos) {
-        const k = keyPath(c.foto);
-        if (k && confirmadas.has(k)) {
-          c.entry.status = 'saved';
-          c.entry.error = null;
-        } else {
-          c.entry.status = 'error';
-          c.entry.error = confirmacion.error || new Error('Supabase no confirmó la referencia de la foto');
-          fallos.push({ codigo: c.item.codigo, entry: c.entry, error: c.entry.error });
-        }
-      }
-    } catch (error) {
-      for (const c of candidatos) {
-        c.entry.status = 'error';
-        c.entry.error = error;
-        fallos.push({ codigo: c.item.codigo, entry: c.entry, error });
-      }
-      console.error('No se pudieron confirmar las fotos iniciales en Supabase:', error);
-    }
-  }
+  // La copia local queda sincronizada con el último read-back confirmado.
+  await persist();
 
   // Contar exclusivamente las entradas de ESTE intento. Así una selección nueva
   // realizada mientras termina el guardado no altera el resultado N/N mostrado.
