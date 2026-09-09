@@ -11,6 +11,16 @@ import { escHtml } from './sanitize.js';
 
 /* ---------- Toast ---------- */
 export function showToast(msg) {
+  // Si una orden todavía tiene fotos iniciales pendientes de confirmar, evita
+  // mostrar un éxito genérico antes de saber si realmente quedaron guardadas.
+  // El pipeline de fotos muestra después el resultado exacto N/N o el artículo
+  // que debe reintentarse.
+  const texto = String(msg || '');
+  const esExitoGenericoOrden = texto === 'Orden guardada' || texto === '✅ Orden guardada';
+  if (esExitoGenericoOrden && typeof window !== 'undefined' &&
+      typeof window.__smHayFotosItemPendientes === 'function' &&
+      window.__smHayFotosItemPendientes()) return;
+
   const t = document.getElementById('toast');
   if (!t) return;
   t.textContent = msg;

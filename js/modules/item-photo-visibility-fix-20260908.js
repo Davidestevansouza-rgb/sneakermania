@@ -48,11 +48,10 @@ function todasFotosOrden(orden) {
 }
 
 function fotosDelItem(orden, item) {
-  return todasFotosOrden(orden).filter(f => f && (f.itemId === item.id || f.item === item.codigo));
-}
-
-function fotosSinVinculo(orden) {
-  return todasFotosOrden(orden).filter(f => f && !f.itemId && !f.item);
+  // Debajo de Ingreso/Entrega solo corresponde la evidencia inicial tomada
+  // en recepción. Las fotos de Producción (detalle/suela/laterales/etc.) se
+  // muestran en sus vistas propias y nunca reemplazan esta evidencia.
+  return todasFotosOrden(orden).filter(f => f && f.categoria === 'item_inicial' && (f.itemId === item.id || f.item === item.codigo));
 }
 
 async function resolverFotos(fotos) {
@@ -122,21 +121,6 @@ async function renderFotosEnDetalle(ordenId) {
     insertarDebajoDeFechas(card, crearGaleriaFotos(validas, item));
   }
 
-  // Compatibilidad con órdenes recientes afectadas por el bug anterior:
-  // si la orden tiene UN SOLO artículo, una foto antigua sin itemId/item no
-  // es ambigua y debe volver a mostrarse dentro de ese artículo, como ocurría
-  // antes del último despliegue. En órdenes con varios artículos NO se hace
-  // esta asociación para evitar mostrar la foto general en un precinto errado.
-  if (items.length === 1 && cards.length === 1) {
-    const vinculadas = fotosDelItem(orden, items[0]);
-    const vinculadasKeys = new Set(vinculadas.map(f => f.path || f.url));
-    const legacy = fotosSinVinculo(orden).filter(f => !vinculadasKeys.has(f.path || f.url));
-    if (legacy.length) {
-      const validas = await resolverFotos(legacy);
-      if (gen !== renderGen) return;
-      if (validas.length) insertarDebajoDeFechas(cards[0], crearGaleriaFotos(validas, items[0]));
-    }
-  }
 }
 
 async function agregarFotoItemVisible(itemId, file) {

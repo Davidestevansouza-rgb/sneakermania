@@ -10,10 +10,66 @@ import { supabase } from './config.js';
 import { state, tenantId } from './state.js';
 
 const SIGNED_URL_CACHE = new Map();
-// TTL del cache de URLs firmadas: se subió de 8 a 50 minutos para evitar pedir
-// una URL nueva al Edge Function en cada visita. Las URLs se piden firmadas por
-// 3000 s (50 min), así el cache y la URL caducan a la par.
-const SIGNED_URL_TTL_MS = 50 * 60 * 1000; // era 8 min, ahora 50 min
+// Promesas en curso por path: si varios componentes piden la misma foto al
+// mismo tiempo, comparten UNA sola llamada al Edge Function.
+const SIGNED_URL_PENDING = new Map();
+let SESSION_REFRESH_PENDING = null;
+const PIXEL_TRANSPARENTE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+// La firma dura 50 min. El cache local vence antes para no reutilizar una URL
+// justo al borde de su expiración.
+const SIGNED_URL_TTL_MS = 45 * 60 * 1000;
+const SIGNED_URL_CONCURRENCY = 4;
+
+function functionStatus(error) {
+  return Number(error?.context?.status || error?.status || error?.statusCode || 0) || 0;
+}
+
+function esNoAutorizado(error, data) {
+  if (functionStatus(error) === 401) return true;
+  const msg = String(error?.message || data?.error || '').toLowerCase();
+  return msg.includes('401') || msg.includes('no autorizado') || msg.includes('unauthorized');
+}
+
+async function refrescarSesionUnaVez() {
+  if (!supabase?.auth) return false;
+  if (!SESSION_REFRESH_PENDING) {
+    SESSION_REFRESH_PENDING = (async () => {
+      try {
+        const { data, error } = await supabase.auth.refreshSession();
+        return !error && !!data?.session?.access_token;
+      } catch (_) {
+        return false;
+      } finally {
+        SESSION_REFRESH_PENDING = null;
+      }
+    })();
+  }
+  return SESSION_REFRESH_PENDING;
+}
+
+async function invokeR2(options, permitirRefresh = true) {
+  let resultado = await supabase.functions.invoke('r2-storage', options);
+  if (permitirRefresh && esNoAutorizado(resultado.error, resultado.data)) {
+    const refreshed = await refrescarSesionUnaVez();
+    if (refreshed) resultado = await supabase.functions.invoke('r2-storage', options);
+  }
+  return resultado;
+}
+
+async function mapConcurrencia(items, limite, fn) {
+  const salida = new Array(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      salida[i] = await fn(items[i], i);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limite, items.length) }, () => worker());
+  await Promise.all(workers);
+  return salida;
+}
 
 function extraerPathR2(url) {
   if (!url || typeof url !== 'string') return null;
@@ -34,44 +90,56 @@ export async function resolveImageUrl(url, path = null) {
   const esReferenciaR2 = url.startsWith('r2://');
   const objectPath = path || extraerPathR2(url);
   if (!objectPath) return esReferenciaR2 ? null : url;
+
   const cached = SIGNED_URL_CACHE.get(objectPath);
   if (cached && cached.expiresAt > Date.now()) return cached.url;
-  try {
-    const tid1 = tenantId();
-    const { data, error } = await supabase.functions.invoke('r2-storage', {
-      body: { action: 'signed-url', path: objectPath, expires: 3000 },
-      headers: tid1 ? { 'x-tenant-id': tid1 } : {}
-    });
-    if (!error && data?.url) {
-      SIGNED_URL_CACHE.set(objectPath, { url: data.url, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
-      return data.url;
+
+  const pending = SIGNED_URL_PENDING.get(objectPath);
+  if (pending) return pending;
+
+  const solicitud = (async () => {
+    try {
+      const tid1 = tenantId();
+      const { data, error } = await invokeR2({
+        body: { action: 'signed-url', path: objectPath, expires: 3000 },
+        headers: tid1 ? { 'x-tenant-id': tid1 } : {}
+      });
+      if (!error && data?.url) {
+        SIGNED_URL_CACHE.set(objectPath, { url: data.url, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
+        return data.url;
+      }
+      if (esReferenciaR2) {
+        console.warn('No se pudo resolver referencia R2:', objectPath, error || data?.error || 'respuesta sin URL firmada');
+        return null;
+      }
+    } catch (e) {
+      if (esReferenciaR2) {
+        console.warn('No se pudo resolver referencia R2:', objectPath, e);
+        return null;
+      }
+      console.warn('No se pudo obtener URL firmada; se mantiene URL existente:', e);
     }
-    if (esReferenciaR2) {
-      console.warn('No se pudo resolver referencia R2:', objectPath, error || 'respuesta sin URL firmada');
-      return null;
-    }
-  } catch (e) {
-    if (esReferenciaR2) {
-      console.warn('No se pudo resolver referencia R2:', objectPath, e);
-      return null;
-    }
-    console.warn('No se pudo obtener URL firmada; se mantiene URL existente:', e);
-  }
-  return esReferenciaR2 ? null : url;
+    return esReferenciaR2 ? null : url;
+  })().finally(() => {
+    SIGNED_URL_PENDING.delete(objectPath);
+  });
+
+  SIGNED_URL_PENDING.set(objectPath, solicitud);
+  return solicitud;
 }
 
 export async function resolveImageUrls(fotos) {
-  if (!Array.isArray(fotos)) return [];
-  // Todas las firmas se piden EN PARALELO (Promise.all), no una tras otra, para
-  // que la galería de una orden cargue de golpe y no foto por foto.
-  // resolvedUrl puede ser null si una referencia r2:// no pudo resolverse.
-  return Promise.all(fotos.map(async f => ({ ...f, resolvedUrl: await resolveImageUrl(f.url, f.path) })));
+  if (!Array.isArray(fotos) || !fotos.length) return [];
+  // Limita la cantidad de firmas simultáneas para no saturar Safari/Chrome
+  // móvil ni el Edge Function cuando una galería contiene muchas imágenes.
+  return mapConcurrencia(fotos, SIGNED_URL_CONCURRENCY, async f => ({
+    ...f,
+    resolvedUrl: await resolveImageUrl(f?.url, f?.path)
+  }));
 }
 
 /**
- * Resuelve un lote de URLs firmadas en paralelo (alias explícito de
- * resolveImageUrls para dejar claro en el código que es un prefetch en batch).
- * Devuelve las fotos con su `resolvedUrl` ya lista.
+ * Resuelve un lote de URLs firmadas con concurrencia controlada.
  * @param {Array<{url:string, path?:string}>} fotos
  */
 export async function resolveImageUrlsBatch(fotos) {
@@ -79,45 +147,71 @@ export async function resolveImageUrlsBatch(fotos) {
 }
 
 /**
- * Prefetch en BACKGROUND (sin await, no bloquea la UI): calienta el cache de
- * URLs firmadas de un conjunto de fotos (p. ej. todas las de una orden) para
- * que cuando el usuario las mire ya estén firmadas y aparezcan al instante.
- * Es seguro llamarlo varias veces: las que ya estén en cache no repiten pedido.
+ * Prefetch en BACKGROUND con la misma concurrencia controlada y cache compartida.
  * @param {Array<{url:string, path?:string}>} fotos
  */
 export function prefetchImageUrls(fotos) {
   if (!Array.isArray(fotos) || !fotos.length) return;
-  // No await a propósito: corre en segundo plano.
-  Promise.all(fotos.map(f => resolveImageUrl(f && f.url, f && f.path).catch(() => null)))
-    .catch(() => {});
+  resolveImageUrls(fotos).catch(() => {});
+}
+
+function imagenesEn(root) {
+  const imgs = [];
+  if (root?.matches?.('img')) imgs.push(root);
+  if (root?.querySelectorAll) imgs.push(...root.querySelectorAll('img'));
+  return imgs;
 }
 
 export async function secureImageUrlsInDom(root = document) {
   if (!root) return;
-  const imgs = root.querySelectorAll ? root.querySelectorAll('img[src]') : [];
-  await Promise.all(Array.from(imgs).map(async img => {
-    // Carga diferida: el navegador solo descarga la imagen cuando está por
-    // entrar en pantalla. Acelera la carga inicial de listados con muchas fotos.
+  const imgs = imagenesEn(root);
+  await mapConcurrencia(imgs, SIGNED_URL_CONCURRENCY, async img => {
     if (!img.hasAttribute('loading')) img.setAttribute('loading', 'lazy');
-    const src = img.getAttribute('src');
-    const signed = await resolveImageUrl(src);
-    if (signed && signed !== src) {
-      img.setAttribute('src', signed);
-      img.removeAttribute('data-r2-unavailable');
-    } else if (!signed && src && src.startsWith('r2://')) {
-      img.removeAttribute('src');
+
+    const srcActual = img.getAttribute('src') || '';
+    if (srcActual.startsWith('r2://')) img.dataset.r2Source = srcActual;
+    const fuenteR2 = img.dataset.r2Source || (srcActual.startsWith('r2://') ? srcActual : '');
+    if (!fuenteR2) return;
+
+    // Si ya tiene una URL HTTP resuelta y no está marcada como no disponible,
+    // no vuelve a firmarla por una mutación DOM ajena.
+    if (!srcActual.startsWith('r2://') && srcActual && srcActual !== PIXEL_TRANSPARENTE && img.dataset.r2Unavailable !== 'true') return;
+
+    const signed = await resolveImageUrl(fuenteR2);
+    if (signed) {
+      if (img.getAttribute('src') !== signed) img.setAttribute('src', signed);
+      delete img.dataset.r2Unavailable;
+    } else {
+      // La referencia persistente queda en data-r2-source. Un fallo temporal
+      // nunca borra el r2:// original ni convierte el problema en pérdida de foto.
+      if (img.getAttribute('src') !== PIXEL_TRANSPARENTE) img.setAttribute('src', PIXEL_TRANSPARENTE);
       img.dataset.r2Unavailable = 'true';
     }
-  }));
+  });
 }
 
 if (typeof window !== 'undefined') {
   const iniciarSeguridadImagenes = () => {
     secureImageUrlsInDom(document).catch(() => {});
-    const observer = new MutationObserver(() => {
-      secureImageUrlsInDom(document).catch(() => {});
+    const observer = new MutationObserver(mutations => {
+      for (const m of mutations) {
+        if (m.type === 'attributes' && m.target?.tagName === 'IMG') {
+          const src = m.target.getAttribute('src') || '';
+          if (src.startsWith('r2://')) secureImageUrlsInDom(m.target).catch(() => {});
+          continue;
+        }
+        for (const node of m.addedNodes || []) {
+          if (node?.nodeType === 1) secureImageUrlsInDom(node).catch(() => {});
+        }
+      }
     });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
+    window.addEventListener('online', () => {
+      document.querySelectorAll('img[data-r2-unavailable="true"]').forEach(img => {
+        const source = img.dataset.r2Source;
+        if (source) img.setAttribute('src', source);
+      });
+    });
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciarSeguridadImagenes, { once: true });
   else iniciarSeguridadImagenes();
@@ -153,7 +247,7 @@ export async function uploadFile(file, folder, filename, internal = {}) {
     form.append('path', path);
 
     const tid2 = tenantId();
-    const { data, error } = await supabase.functions.invoke('r2-storage', {
+    const { data, error } = await invokeR2({
       body: form,
       headers: tid2 ? { 'x-tenant-id': tid2 } : {}
     });
@@ -164,11 +258,13 @@ export async function uploadFile(file, folder, filename, internal = {}) {
 
     ultimoError = error || new Error((data && data.error) || 'Error desconocido al subir el archivo');
     const mensaje = (ultimoError.message || '').toLowerCase();
-    const esErrorRed = mensaje.includes('failed to fetch') || mensaje.includes('network') || mensaje.includes('http2') || mensaje.includes('protocol');
+    const esErrorRed = mensaje.includes('failed to fetch') || mensaje.includes('network') ||
+      mensaje.includes('http2') || mensaje.includes('protocol') || mensaje.includes('insufficient') ||
+      mensaje.includes('resource') || mensaje.includes('timeout');
     console.error(`Error al subir archivo (intento ${intento}/${MAX_INTENTOS}):`, ultimoError);
     if (!esErrorRed || intento === MAX_INTENTOS) break;
     // Espera creciente antes de reintentar (500ms, 1500ms).
-    await new Promise(r => setTimeout(r, intento * 500));
+    await new Promise(r => setTimeout(r, intento === 1 ? 700 : 1600));
   }
   throw ultimoError;
 }
@@ -309,7 +405,7 @@ export async function uploadFoto(file, ordenId, categoria) {
  */
 export async function deleteFile(path) {
   const tidDel = tenantId();
-  const { data, error } = await supabase.functions.invoke('r2-storage', {
+  const { data, error } = await invokeR2({
     body: { action: 'delete', path },
     headers: tidDel ? { 'x-tenant-id': tidDel } : {}
   });
@@ -331,7 +427,7 @@ export async function listOrdenFiles(ordenId) {
   const folder = `${tenant}/ordenes/${ordenId}`;
 
   const tidList = tenantId();
-  const { data, error } = await supabase.functions.invoke('r2-storage', {
+  const { data, error } = await invokeR2({
     body: { action: 'list', prefix: folder },
     headers: tidList ? { 'x-tenant-id': tidList } : {}
   });
