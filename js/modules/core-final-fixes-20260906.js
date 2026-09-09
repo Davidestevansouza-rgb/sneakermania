@@ -31,15 +31,32 @@ function instalarNormalizacionWhatsApp() {
 
 function mensajeOrden(o) {
   const c = clienteById(o?.clienteId) || {};
-  const items = (state?.ordenItems || []).filter(it => it.ordenId === o?.id);
+  const items = (state?.ordenItems || [])
+    .filter(it => it.ordenId === o?.id)
+    .sort((a,b) => Number(a.numeroItem || 0) - Number(b.numeroItem || 0));
+  const valorFinal = Number(o?.precio || 0) - Number(o?.descuento || 0);
   const lineas = [
     'Hola ' + (c.nombre || '') + ' 👋',
-    'Tu orden #' + (o?.numero || '') + ' fue registrada correctamente.',
+    '¡Registramos tu pedido (orden #' + (o?.numero || '') + ')!',
+    '',
+    'Orden #' + (o?.numero || ''),
+    'Cliente: ' + (c.nombre || '—'),
     'Ingreso: ' + fmtDate(o?.fechaIngreso),
-    'Entrega estimada: ' + fmtDate(o?.fechaEstimada),
-    'Total: ' + fmtMoney(Number(o?.precio || 0) - Number(o?.descuento || 0))
+    'Entrega est.: ' + fmtDate(o?.fechaEstimada),
+    '— Artículos (' + items.length + ') —'
   ];
-  if (items.length) lineas.push('Artículos: ' + items.map(it => it.codigo + ' · ' + (it.descripcion || '')).join(' | '));
+  items.forEach((it, i) => {
+    const servicios = Array.isArray(it.tipoServicio) && it.tipoServicio.length
+      ? it.tipoServicio.join(', ')
+      : (it.servicio || 'Sin servicio');
+    lineas.push(
+      'Artículo ' + (i + 1) + ': ' + (it.descripcion || it.codigo || '—') +
+      ' · Servicio: ' + servicios +
+      ' · Estado: ' + (it.estado || 'Recibido y registrado')
+    );
+  });
+  lineas.push('Total: ' + fmtMoney(valorFinal) + ' · Pagado: ' + fmtMoney(Number(o?.pagado || 0)));
+  lineas.push('', '¡Gracias por tu confianza!');
   return lineas.join('\n');
 }
 
