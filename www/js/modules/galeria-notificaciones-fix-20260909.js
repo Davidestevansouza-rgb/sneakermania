@@ -50,6 +50,9 @@ async function limpiarTodasNotificaciones() {
   const btn = document.getElementById('notif-clear-all-btn');
   if (btn) btn.disabled = true;
   try {
+    if (typeof window.silenciarNotificacionesActuales === 'function') {
+      window.silenciarNotificacionesActuales(pendientes);
+    }
     for (const n of pendientes) {
       await db.markNotificationRead(n.id);
       n.leida = true;
