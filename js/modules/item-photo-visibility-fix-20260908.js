@@ -10,25 +10,59 @@ function itemsOrden(ordenId) {
   return (state.ordenItems || []).filter(it => it.ordenId === ordenId).sort((a,b) => (a.numeroItem || 0) - (b.numeroItem || 0));
 }
 
+function agregarFotosColeccion(destino, origen, categoriaFallback = null) {
+  if (!origen) return;
+  if (Array.isArray(origen)) {
+    for (const f of origen) {
+      if (!f) continue;
+      destino.push(typeof f === 'string' ? { url: f, categoria: categoriaFallback || undefined } : { ...f, categoria: f.categoria || categoriaFallback || undefined });
+    }
+    return;
+  }
+  if (typeof origen === 'object') {
+    for (const [categoria, lista] of Object.entries(origen)) {
+      if (!Array.isArray(lista)) continue;
+      agregarFotosColeccion(destino, lista, categoria);
+    }
+  }
+}
+
+function todasFotosOrden(orden) {
+  const encontradas = [];
+  const vistosNodos = new Set();
+  let nodo = orden;
+  while (nodo && typeof nodo === 'object' && !Array.isArray(nodo) && !vistosNodos.has(nodo)) {
+    vistosNodos.add(nodo);
+    agregarFotosColeccion(encontradas, nodo.fotos);
+    nodo = nodo.extra && typeof nodo.extra === 'object' && !Array.isArray(nodo.extra) ? nodo.extra : null;
+  }
+  const claves = new Set();
+  return encontradas.filter(f => {
+    const key = f.path || f.url || JSON.stringify(f);
+    if (!key || claves.has(key)) return false;
+    claves.add(key);
+    return true;
+  });
+}
+
 function fotosDelItem(orden, item) {
-  const fotos = orden && orden.extra && Array.isArray(orden.extra.fotos) ? orden.extra.fotos : [];
-  return fotos.filter(f => f && (f.itemId === item.id || (!f.itemId && f.item === item.codigo)));
+  return todasFotosOrden(orden).filter(f => f && (f.itemId === item.id || f.item === item.codigo));
+}
+
+function fotosSinVinculo(orden) {
+  return todasFotosOrden(orden).filter(f => f && !f.itemId && !f.item);
 }
 
 function normalizarVinculosEnMemoria(orden) {
-  if (!orden || !orden.extra || !Array.isArray(orden.extra.fotos)) return false;
+  if (!orden || !orden.extra) return false;
+  const fotos = todasFotosOrden(orden);
   const items = itemsOrden(orden.id);
   let cambio = false;
-  for (const foto of orden.extra.fotos) {
-    if (!foto) continue;
+  for (const foto of fotos) {
     if (!foto.itemId && foto.item) {
       const item = items.find(it => it.codigo === foto.item);
-      if (item) {
-        foto.itemId = item.id;
-        cambio = true;
-      }
+      if (item) { foto.itemId = item.id; cambio = true; }
     }
-    // Las fotos iniciales de artículo deben aparecer en "Todos los archivos".
     if (foto.itemId && (foto.categoria === 'item_inicial' || !foto.categoria)) {
       foto.categoria = 'todos_pares';
       cambio = true;
@@ -37,43 +71,87 @@ function normalizarVinculosEnMemoria(orden) {
   return cambio;
 }
 
+async function resolverFotos(fotos) {
+  if (!fotos.length) return [];
+  try {
+    const resueltas = await storageManager.resolveImageUrls(fotos);
+    return resueltas.filter(f => f && f.resolvedUrl && !String(f.resolvedUrl).startsWith('r2://'));
+  } catch (e) {
+    console.warn('No se pudieron resolver algunas fotos R2 del detalle:', e);
+    return [];
+  }
+}
+
+function crearGaleriaFotos(validas, altBase) {
+  const box = document.createElement('div');
+  box.className = 'sm-item-fotos-visible';
+  box.style.cssText = 'display:flex;gap:7px;flex-wrap:wrap;margin-top:8px;';
+  for (const foto of validas) {
+    const img = document.createElement('img');
+    img.src = foto.resolvedUrl;
+    img.loading = 'lazy';
+    img.alt = altBase;
+    img.style.cssText = 'width:82px;height:82px;object-fit:cover;border-radius:7px;border:1px solid var(--line);cursor:pointer;';
+    img.onclick = () => {
+      if (typeof window.ampliarImagen === 'function') window.ampliarImagen(foto.resolvedUrl, validas.map(x => x.resolvedUrl));
+    };
+    box.appendChild(img);
+  }
+  return box;
+}
+
 async function renderFotosEnDetalle(ordenId) {
   const cont = document.getElementById('orden-detalle-items');
   const orden = ordenById(ordenId);
   if (!cont || !orden) return;
   const gen = ++renderGen;
-  normalizarVinculosEnMemoria(orden);
   const items = itemsOrden(ordenId);
   const cards = Array.from(cont.children).filter(el => el.classList && el.classList.contains('panel'));
+
+  cont.querySelectorAll('.sm-item-fotos-visible,.sm-fotos-ingreso-orden').forEach(x => x.remove());
+
+  // 1) Fotos vinculadas a un artículo: SIEMPRE debajo de su tarjeta correcta.
   for (let i = 0; i < cards.length && i < items.length; i++) {
     const card = cards[i];
     const item = items[i];
-    card.querySelectorAll('.sm-item-fotos-visible').forEach(x => x.remove());
     const fotos = fotosDelItem(orden, item);
     if (!fotos.length) continue;
-    let resueltas;
-    try { resueltas = await storageManager.resolveImageUrls(fotos); }
-    catch (_) { resueltas = fotos.map(f => ({...f, resolvedUrl: f.url})); }
+    const validas = await resolverFotos(fotos);
     if (gen !== renderGen) return;
-    const validas = resueltas.filter(f => f && f.resolvedUrl && !String(f.resolvedUrl).startsWith('r2://'));
     if (!validas.length) continue;
-    const box = document.createElement('div');
-    box.className = 'sm-item-fotos-visible';
-    box.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;justify-content:flex-end;max-width:300px;';
-    for (const foto of validas) {
-      const img = document.createElement('img');
-      img.src = foto.resolvedUrl;
-      img.loading = 'lazy';
-      img.alt = 'Foto del artículo ' + item.codigo;
-      img.style.cssText = 'width:72px;height:72px;object-fit:cover;border-radius:7px;border:1px solid var(--line);cursor:pointer;';
-      img.onclick = () => {
-        if (typeof window.ampliarImagen === 'function') window.ampliarImagen(foto.resolvedUrl, validas.map(x => x.resolvedUrl));
-      };
-      box.appendChild(img);
+    const box = crearGaleriaFotos(validas, 'Foto del artículo ' + item.codigo);
+    const izquierda = card.querySelector('div > div');
+    (izquierda || card).appendChild(box);
+  }
+
+  // 2) Compatibilidad histórica: fotos que sí existen en R2 pero fueron
+  // guardadas sin itemId/item. Nunca se asignan a un precinto al azar.
+  const huerfanas = fotosSinVinculo(orden);
+  if (huerfanas.length) {
+    const validas = await resolverFotos(huerfanas);
+    if (gen !== renderGen) return;
+    if (validas.length) {
+      // Si la orden tiene un solo artículo, no existe ambigüedad: se muestra
+      // directamente dentro de esa tarjeta. Con varios artículos se muestra
+      // arriba como "Fotos de ingreso de la orden" para no atribuir una foto
+      // al precinto equivocado.
+      if (items.length === 1 && cards[0]) {
+        const box = crearGaleriaFotos(validas, 'Foto de ingreso del artículo');
+        const izquierda = cards[0].querySelector('div > div');
+        (izquierda || cards[0]).appendChild(box);
+      } else {
+        const bloque = document.createElement('div');
+        bloque.className = 'sm-fotos-ingreso-orden';
+        bloque.style.cssText = 'margin:0 0 10px 0;padding:9px 10px;border:1px dashed var(--line);border-radius:8px;';
+        const titulo = document.createElement('div');
+        titulo.className = 'hint';
+        titulo.style.fontWeight = '700';
+        titulo.textContent = '📷 Fotos de ingreso de la orden';
+        bloque.appendChild(titulo);
+        bloque.appendChild(crearGaleriaFotos(validas, 'Foto de ingreso de la orden'));
+        cont.insertBefore(bloque, cont.firstChild);
+      }
     }
-    const estado = Array.from(card.querySelectorAll('span.hint')).find(el => (el.textContent || '').trim().startsWith('Estado:'));
-    const destino = estado ? estado.closest('div[style*="flex-direction:column"]') : null;
-    (destino || card).appendChild(box);
   }
 }
 
@@ -90,10 +168,9 @@ async function agregarFotoItemVisible(itemId, file) {
     fotoData.itemId = item.id;
     fotoData.categoria = 'todos_pares';
     orden.extra = orden.extra || {};
-    orden.extra.fotos = Array.isArray(orden.extra.fotos) ? orden.extra.fotos : [];
-    // IMPORTANTE: agregar, nunca reemplazar fotos anteriores del mismo artículo.
+    const existentes = todasFotosOrden(orden);
+    orden.extra.fotos = existentes;
     orden.extra.fotos.push(fotoData);
-    normalizarVinculosEnMemoria(orden);
     await persist();
     const res = await db.saveOrden(orden);
     if (res && res.error && !res.queued) throw res.error;
@@ -108,48 +185,39 @@ async function agregarFotoItemVisible(itemId, file) {
 }
 
 function instalar() {
-  // Se instala al final del arranque para prevalecer sobre wrappers antiguos
-  // que reemplazaban la foto anterior o no guardaban itemId.
   window.agregarFotoItem = agregarFotoItemVisible;
 
   const originalDetalle = window.viewOrdenDetalle;
-  if (typeof originalDetalle === 'function' && !originalDetalle.__smFotoVisibleV3) {
+  if (typeof originalDetalle === 'function' && !originalDetalle.__smFotoVisibleV4) {
     const wrapped = function(id, preselectItemId) {
       detalleOrdenActual = id;
       const r = originalDetalle(id, preselectItemId);
-      setTimeout(() => renderFotosEnDetalle(id), 0);
+      Promise.resolve(r).finally(() => setTimeout(() => renderFotosEnDetalle(id), 0));
       return r;
     };
-    wrapped.__smFotoVisibleV3 = true;
+    wrapped.__smFotoVisibleV4 = true;
     window.viewOrdenDetalle = wrapped;
   }
 
   const originalGaleria = window.renderGaleria;
-  if (typeof originalGaleria === 'function' && !originalGaleria.__smFotoVisibleV3) {
+  if (typeof originalGaleria === 'function' && !originalGaleria.__smFotoVisibleV4) {
     const wrappedGaleria = function(...args) {
-      // Compatibilidad con fotos ya guardadas sin itemId: las vinculamos en memoria
-      // antes de que Galería aplique su filtro por itemId.
-      (state.ordenes || []).forEach(normalizarVinculosEnMemoria);
       return originalGaleria.apply(this, args);
     };
-    wrappedGaleria.__smFotoVisibleV3 = true;
+    wrappedGaleria.__smFotoVisibleV4 = true;
     window.renderGaleria = wrappedGaleria;
   }
 
   const observer = new MutationObserver((mutations) => {
-    // Ignorar las mutaciones que produce este mismo módulo al quitar/agregar
-    // .sm-item-fotos-visible. Sin este guard, el observer vuelve a llamar al
-    // render y crea un ciclo continuo que hace parpadear las fotos.
-    const soloFotosPropias = mutations.length > 0 && mutations.every(m => {
+    const soloPropias = mutations.length > 0 && mutations.every(m => {
+      const targetPropio = m.target?.closest?.('.sm-item-fotos-visible,.sm-fotos-ingreso-orden');
       const nodos = [...m.addedNodes, ...m.removedNodes].filter(n => n && n.nodeType === 1);
-      if (!nodos.length) return false;
-      return nodos.every(n => n.classList?.contains('sm-item-fotos-visible'));
+      return !!targetPropio || (nodos.length > 0 && nodos.every(n => n.matches?.('.sm-item-fotos-visible,.sm-fotos-ingreso-orden') || n.closest?.('.sm-item-fotos-visible,.sm-fotos-ingreso-orden')));
     });
-    if (soloFotosPropias) return;
-
+    if (soloPropias) return;
     if (detalleOrdenActual && document.getElementById('orden-detalle-items')) {
       clearTimeout(observer.__t);
-      observer.__t = setTimeout(() => renderFotosEnDetalle(detalleOrdenActual), 30);
+      observer.__t = setTimeout(() => renderFotosEnDetalle(detalleOrdenActual), 80);
     }
   });
   observer.observe(document.body, { childList: true, subtree: true });
