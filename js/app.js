@@ -42,6 +42,7 @@ import './modules/whatsapp-order-fast-20260908.js';
 import './modules/seguimiento-selector-mobile-fix-20260908.js';
 import './modules/seguimiento-button-speed-20260908.js';
 import './modules/mobile-touch-stability-20260908.js';
+import './modules/galeria-notificaciones-fix-20260909.js';
 
 /* ============================================================
    NAVEGACIÓN
