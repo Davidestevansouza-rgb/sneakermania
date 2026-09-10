@@ -8,9 +8,9 @@
    - Procesamiento secuencial para no saturar iPhone/Android.
    ============================================================ */
 import { state, persist } from '../state.js';
-import * as db from '../db.js';
 import * as storageManager from '../storage-manager.js';
 import { showToast } from '../ui.js';
+import { appendOrderPhotoAtomic } from '../photo-store.js';
 
 const PENDING_KEY = '__smDeferredOrderItemPhotos';
 let seq = 0;
@@ -170,7 +170,7 @@ async function guardarFotosPendientes(ordenId, pendientes) {
         // uploadedFoto se conserva y un reintento vuelve únicamente a la RPC.
         entry.status = 'confirming';
         mostrarPendientes(p.row);
-        const res = await db.appendOrderPhotoAtomic(orden.id, foto);
+        const res = await appendOrderPhotoAtomic(orden.id, foto);
         if (res?.error) throw res.error;
 
         entry.status = 'saved';
