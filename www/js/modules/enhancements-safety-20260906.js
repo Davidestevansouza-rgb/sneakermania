@@ -16,7 +16,26 @@ function initSafety() {
   envolverProduccion();
   envolverNavegacion();
   enlazarHistorialProduccion();
+  asegurarHistorialEmpleadoVisible();
   corregirEtiquetasBlanqueamiento();
+}
+
+function asegurarHistorialEmpleadoVisible() {
+  if (!esEmpleado()) return;
+  const panel = document.getElementById('prod-historial-panel');
+  if (!panel) return;
+  panel.dataset.smEmployeeOwnHistory = '1';
+  if (!document.getElementById('sm-employee-own-history-style')) {
+    const style = document.createElement('style');
+    style.id = 'sm-employee-own-history-style';
+    style.textContent = '#prod-historial-panel[data-sm-employee-own-history="1"]{display:block!important}';
+    document.head.appendChild(style);
+  }
+  const selectorLegacy = document.getElementById('prod-historial-empleado');
+  const selectorLegacyWrap = selectorLegacy?.closest('.field') || selectorLegacy?.parentElement;
+  if (selectorLegacyWrap) selectorLegacyWrap.style.display = 'none';
+  const selectorRangoWrap = document.getElementById('sm-pempwrap');
+  if (selectorRangoWrap) selectorRangoWrap.style.display = 'none';
 }
 
 /* 1) Al editar una orden vieja, el campo general NO pisa las fechas
@@ -161,6 +180,7 @@ async function cargarHistorialProduccionSeguro() {
 }
 
 function enlazarHistorialProduccion() {
+  asegurarHistorialEmpleadoVisible();
   window.renderHistorialProduccion = cargarHistorialProduccionSeguro;
   const buscar = document.getElementById('sm-pgo');
   if (buscar) buscar.onclick = cargarHistorialProduccionSeguro;
@@ -188,6 +208,7 @@ function envolverNavegacion() {
     const r = original.call(this, tab, ...args);
     if (tab === 'produccion') {
       enlazarHistorialProduccion();
+      asegurarHistorialEmpleadoVisible();
       corregirEtiquetasBlanqueamiento();
     }
     return r;
