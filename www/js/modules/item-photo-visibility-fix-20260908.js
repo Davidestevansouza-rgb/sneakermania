@@ -49,9 +49,6 @@ function todasFotosOrden(orden) {
 }
 
 function fotosDelItem(orden, item) {
-  // Debajo de Ingreso/Entrega solo corresponde la evidencia inicial tomada
-  // en recepción. Las fotos de Producción (detalle/suela/laterales/etc.) se
-  // muestran en sus vistas propias y nunca reemplazan esta evidencia.
   return todasFotosOrden(orden).filter(f => f && f.categoria === 'item_inicial' && (f.itemId === item.id || f.item === item.codigo));
 }
 
@@ -108,10 +105,16 @@ async function renderFotosEnDetalle(ordenId) {
 
   cont.querySelectorAll('.sm-item-fotos-visible,.sm-fotos-ingreso-orden').forEach(x => x.remove());
 
-  // Fotos correctamente vinculadas: siempre debajo del artículo exacto.
   for (let i = 0; i < cards.length && i < items.length; i++) {
     const card = cards[i];
     const item = items[i];
+
+    // items.js ya renderiza la foto inicial cuando existe `item` en la referencia.
+    // Este módulo queda únicamente como fallback para referencias históricas que
+    // tengan itemId pero no item. Así evitamos mostrar dos veces la misma foto y
+    // eliminamos el parpadeo causado por reconstruir una segunda miniatura.
+    if (card.querySelector('img[title="Foto del artículo"]')) continue;
+
     const fotos = fotosDelItem(orden, item);
     if (!fotos.length) continue;
 
@@ -121,7 +124,6 @@ async function renderFotosEnDetalle(ordenId) {
 
     insertarDebajoDeFechas(card, crearGaleriaFotos(validas, item));
   }
-
 }
 
 async function agregarFotoItemVisible(itemId, file) {
