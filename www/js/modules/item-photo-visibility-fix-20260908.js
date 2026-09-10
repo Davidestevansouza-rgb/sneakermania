@@ -1,7 +1,8 @@
 import { state, persist } from '../state.js';
-import * as db from '../db.js';
 import * as storageManager from '../storage-manager.js';
 import { showToast, ordenById, logActivity } from '../ui.js';
+import { appendOrderPhotoAtomic } from '../photo-store.js';
+import './photo-integrity-runtime-20260909.js';
 
 let detalleOrdenActual = null;
 let renderGen = 0;
@@ -48,11 +49,14 @@ function todasFotosOrden(orden) {
 }
 
 function fotosDelItem(orden, item) {
-  return todasFotosOrden(orden).filter(f => f && (f.itemId === item.id || f.item === item.codigo));
-}
-
-function fotosSinVinculo(orden) {
-  return todasFotosOrden(orden).filter(f => f && !f.itemId && !f.item);
+  return todasFotosOrden(orden).filter(f => {
+    if (!f || !(f.itemId === item.id || f.item === item.codigo)) return false;
+    if (f.categoria === 'item_inicial') return true;
+    // Compatibilidad histórica comprobada: algunas versiones guardaron la
+    // foto individual como `todos_pares`, pero conservaron explícitamente
+    // item/itemId. Una foto general real sin vínculo NO entra aquí.
+    return f.categoria === 'todos_pares' && !!(f.itemId || f.item);
+  });
 }
 
 async function resolverFotos(fotos) {
@@ -108,10 +112,15 @@ async function renderFotosEnDetalle(ordenId) {
 
   cont.querySelectorAll('.sm-item-fotos-visible,.sm-fotos-ingreso-orden').forEach(x => x.remove());
 
-  // Fotos correctamente vinculadas: siempre debajo del artículo exacto.
   for (let i = 0; i < cards.length && i < items.length; i++) {
     const card = cards[i];
     const item = items[i];
+
+    // items.js ya renderiza la foto inicial cuando existe `item` en la referencia.
+    // Este módulo queda únicamente como fallback cuando ese render no existe.
+    // Así evitamos dos miniaturas de la misma foto y el parpadeo visual.
+    if (card.querySelector('img[title="Foto del artículo"]')) continue;
+
     const fotos = fotosDelItem(orden, item);
     if (!fotos.length) continue;
 
@@ -120,22 +129,6 @@ async function renderFotosEnDetalle(ordenId) {
     if (!validas.length) continue;
 
     insertarDebajoDeFechas(card, crearGaleriaFotos(validas, item));
-  }
-
-  // Compatibilidad con órdenes recientes afectadas por el bug anterior:
-  // si la orden tiene UN SOLO artículo, una foto antigua sin itemId/item no
-  // es ambigua y debe volver a mostrarse dentro de ese artículo, como ocurría
-  // antes del último despliegue. En órdenes con varios artículos NO se hace
-  // esta asociación para evitar mostrar la foto general en un precinto errado.
-  if (items.length === 1 && cards.length === 1) {
-    const vinculadas = fotosDelItem(orden, items[0]);
-    const vinculadasKeys = new Set(vinculadas.map(f => f.path || f.url));
-    const legacy = fotosSinVinculo(orden).filter(f => !vinculadasKeys.has(f.path || f.url));
-    if (legacy.length) {
-      const validas = await resolverFotos(legacy);
-      if (gen !== renderGen) return;
-      if (validas.length) insertarDebajoDeFechas(cards[0], crearGaleriaFotos(validas, items[0]));
-    }
   }
 }
 
@@ -153,14 +146,9 @@ async function agregarFotoItemVisible(itemId, file) {
     fotoData.itemId = item.id;
     fotoData.categoria = 'item_inicial';
 
-    orden.extra = orden.extra || {};
-    const existentes = todasFotosOrden(orden);
-    orden.extra.fotos = existentes;
-    orden.extra.fotos.push(fotoData);
-
+    const res = await appendOrderPhotoAtomic(orden.id, fotoData);
+    if (res && res.error) throw res.error;
     await persist();
-    const res = await db.saveOrden(orden);
-    if (res && res.error && !res.queued) throw res.error;
 
     logActivity('Agregó foto al artículo ' + item.codigo);
     showToast('✅ Foto guardada');
@@ -176,14 +164,14 @@ function instalar() {
   window.agregarFotoItem = agregarFotoItemVisible;
 
   const originalDetalle = window.viewOrdenDetalle;
-  if (typeof originalDetalle === 'function' && !originalDetalle.__smFotoVisibleV6) {
+  if (typeof originalDetalle === 'function' && !originalDetalle.__smFotoVisibleV8) {
     const wrapped = function(id, preselectItemId) {
       detalleOrdenActual = id;
       const r = originalDetalle(id, preselectItemId);
       Promise.resolve(r).finally(() => setTimeout(() => renderFotosEnDetalle(id), 0));
       return r;
     };
-    wrapped.__smFotoVisibleV6 = true;
+    wrapped.__smFotoVisibleV8 = true;
     window.viewOrdenDetalle = wrapped;
   }
 
