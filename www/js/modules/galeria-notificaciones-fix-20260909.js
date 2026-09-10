@@ -1,8 +1,8 @@
 /* Ajustes puntuales 2026-09-09.
-   1) Galería: "Todos los pares" abre siempre la vista consolidada __ALL__.
-   2) Notificaciones: "Notificaciones leídas" marca y oculta todas las pendientes.
-   3) Producción: los servicios más recientes se muestran arriba.
-   No toca pagos, permisos, contenido de fotos ni lógica financiera. */
+   1) Galería: "Todos los pares" abre siempre la vista consolidada existente.
+   2) Notificaciones: botón "Notificaciones leídas" marca y oculta las pendientes.
+   3) Producción: orden visual más reciente arriba, instalado solo al abrir Producción.
+   No toca pagos, permisos, fotos, R2 ni lógica financiera. */
 import { state } from '../state.js';
 import * as db from '../db.js';
 import { showToast } from '../ui.js';
@@ -13,12 +13,9 @@ function activarGaleriaTodos() {
   const select = document.getElementById('galeria-orden-select');
   const search = document.getElementById('galeria-orden-search');
   const results = document.getElementById('galeria-orden-results');
-
   if (select) select.value = '__ALL__';
   if (search) search.value = '👟 Todos los pares';
   if (results) results.innerHTML = '';
-
-  // El filtro por artículo no puede quedar activo al pedir la vista completa.
   if (typeof window.limpiarFiltroGaleriaItem === 'function') {
     try { window.limpiarFiltroGaleriaItem(); } catch (_) {}
   }
@@ -35,24 +32,15 @@ function manejarGaleriaTodos(ev) {
     inline.includes('mostrarTodosLosParesGaleria') ||
     /Ver fotos de (todas las órdenes|todos los pares)/i.test(texto);
   if (!esTodos) return;
-
   ev.preventDefault();
   ev.stopImmediatePropagation();
-
   const ahora = Date.now();
   if (ahora - ultimoGaleriaTodosAt < 250) return;
   ultimoGaleriaTodosAt = ahora;
   activarGaleriaTodos();
 }
 
-function instalarGaleriaTodos() {
-  // Algunos resultados usan onmousedown y otros onclick. Capturamos ambos
-  // para que "Todos los pares" no vuelva a quedar en una orden individual.
-  document.addEventListener('mousedown', manejarGaleriaTodos, true);
-  document.addEventListener('click', manejarGaleriaTodos, true);
-}
-
-async function limpiarTodasNotificaciones() {
+async function marcarTodasNotificacionesLeidas() {
   if (!(state.session && state.session.role === 'Administrador')) {
     showToast('Solo el Administrador puede marcar todas las notificaciones como leídas');
     return;
@@ -61,13 +49,11 @@ async function limpiarTodasNotificaciones() {
     showToast('Sin conexión. Intenta nuevamente cuando vuelva internet.');
     return;
   }
-
   const pendientes = (state.notificaciones || []).filter(n => n && !n.leida && n.id);
   if (!pendientes.length) {
     showToast('No hay notificaciones pendientes');
     return;
   }
-
   const btn = document.getElementById('notif-clear-all-btn');
   if (btn) btn.disabled = true;
   try {
@@ -92,9 +78,7 @@ async function limpiarTodasNotificaciones() {
 
 function instalarBotonNotificaciones() {
   const tab = document.getElementById('tab-notificaciones');
-  if (!tab) return;
-  if (!(state.session && state.session.role === 'Administrador')) return;
-
+  if (!tab || !(state.session && state.session.role === 'Administrador')) return;
   let btn = document.getElementById('notif-clear-all-btn');
   if (!btn) {
     const head = tab.querySelector('.page-head');
@@ -103,11 +87,11 @@ function instalarBotonNotificaciones() {
     btn.type = 'button';
     btn.id = 'notif-clear-all-btn';
     btn.className = 'btn btn-ghost';
-    btn.onclick = limpiarTodasNotificaciones;
     head.appendChild(btn);
   }
   btn.textContent = '✅ Notificaciones leídas';
   btn.title = 'Marcar como leídas y ocultar todas las notificaciones mostradas';
+  btn.onclick = marcarTodasNotificacionesLeidas;
 }
 
 function minutosHoraCard(card) {
@@ -128,7 +112,6 @@ function ordenarGridProduccion(scopeId) {
   if (!grid) return;
   const cards = Array.from(grid.children);
   if (cards.length < 2) return;
-
   const ordenadas = cards.map((el, idx) => ({ el, idx, hora: minutosHoraCard(el) }))
     .sort((a, b) => {
       if (a.hora == null && b.hora == null) return a.idx - b.idx;
@@ -137,42 +120,47 @@ function ordenarGridProduccion(scopeId) {
       return b.hora - a.hora || a.idx - b.idx;
     })
     .map(x => x.el);
-
   if (ordenadas.every((el, idx) => el === cards[idx])) return;
   const frag = document.createDocumentFragment();
   ordenadas.forEach(el => frag.appendChild(el));
   grid.appendChild(frag);
 }
 
-let ordenarProduccionTimer = null;
-function ordenarProduccionMasReciente() {
-  clearTimeout(ordenarProduccionTimer);
-  ordenarProduccionTimer = setTimeout(() => {
+let prodObserver = null;
+function activarOrdenProduccion() {
+  const lista = document.getElementById('prod-lista');
+  const historial = document.getElementById('prod-historial-lista');
+  const ordenar = () => {
     ordenarGridProduccion('prod-lista');
     ordenarGridProduccion('prod-historial-lista');
-  }, 0);
-}
-
-function instalarOrdenProduccion() {
-  ordenarProduccionMasReciente();
-  const tab = document.getElementById('tab-produccion') || document.body;
-  const obs = new MutationObserver(() => ordenarProduccionMasReciente());
-  obs.observe(tab, { childList: true, subtree: true });
+  };
+  setTimeout(ordenar, 0);
+  setTimeout(ordenar, 150);
+  if (prodObserver || (!lista && !historial)) return;
+  prodObserver = new MutationObserver(() => {
+    clearTimeout(prodObserver.__t);
+    prodObserver.__t = setTimeout(ordenar, 0);
+  });
+  if (lista) prodObserver.observe(lista, { childList:true, subtree:true });
+  if (historial) prodObserver.observe(historial, { childList:true, subtree:true });
 }
 
 function instalar() {
-  instalarGaleriaTodos();
-  instalarBotonNotificaciones();
-  instalarOrdenProduccion();
-  const obs = new MutationObserver(() => instalarBotonNotificaciones());
-  obs.observe(document.body, { childList:true, subtree:true });
+  document.addEventListener('mousedown', manejarGaleriaTodos, true);
+  document.addEventListener('click', manejarGaleriaTodos, true);
+  document.addEventListener('click', ev => {
+    const tab = ev.target?.closest?.('[data-tab]')?.dataset?.tab;
+    if (tab === 'notificaciones') setTimeout(instalarBotonNotificaciones, 0);
+    if (tab === 'produccion') setTimeout(activarOrdenProduccion, 0);
+  });
+  setTimeout(instalarBotonNotificaciones, 0);
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', instalar, { once:true });
 else instalar();
 
 Object.assign(window, {
-  limpiarTodasNotificaciones,
-  marcarTodasNotificacionesLeidas: limpiarTodasNotificaciones,
+  limpiarTodasNotificaciones: marcarTodasNotificacionesLeidas,
+  marcarTodasNotificacionesLeidas,
   activarGaleriaTodos
 });
