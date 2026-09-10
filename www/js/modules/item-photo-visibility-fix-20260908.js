@@ -6,6 +6,9 @@ import './photo-integrity-runtime-20260909.js';
 
 let detalleOrdenActual = null;
 let renderGen = 0;
+const R2_ORDER_FILES_CACHE = new Map();
+const R2_ORDER_FILES_PENDING = new Map();
+const R2_ORDER_FILES_TTL_MS = 5 * 60 * 1000;
 
 function itemsOrden(ordenId) {
   return (state.ordenItems || []).filter(it => it.ordenId === ordenId).sort((a,b) => (a.numeroItem || 0) - (b.numeroItem || 0));
@@ -48,8 +51,90 @@ function todasFotosOrden(orden) {
   });
 }
 
+function fotoVinculadaAlItem(f, item) {
+  return !!(f && item && (f.itemId === item.id || f.item === item.codigo));
+}
+
+function esFotoInicialCompatible(f, item) {
+  if (!fotoVinculadaAlItem(f, item)) return false;
+  if (f.categoria === 'item_inicial') return true;
+
+  // Compatibilidad histórica: hubo versiones que guardaban la foto tomada
+  // desde "Agregar foto" del artículo como `todos_pares`, pero conservaban
+  // explícitamente `item`/`itemId`. Una foto general real no tiene vínculo a
+  // un artículo. Solo este caso inequívoco se trata como foto inicial.
+  return f.categoria === 'todos_pares' && !!(f.item || f.itemId);
+}
+
 function fotosDelItem(orden, item) {
-  return todasFotosOrden(orden).filter(f => f && f.categoria === 'item_inicial' && (f.itemId === item.id || f.item === item.codigo));
+  return todasFotosOrden(orden).filter(f => esFotoInicialCompatible(f, item));
+}
+
+function pathFoto(f) {
+  if (!f) return '';
+  if (f.path) return String(f.path).replace(/^r2:\/\//, '').replace(/^\/+/, '');
+  if (typeof f.url === 'string' && f.url.startsWith('r2://')) return f.url.slice(5).replace(/^\/+/, '');
+  return '';
+}
+
+async function listarArchivosOrdenR2(ordenId) {
+  const cached = R2_ORDER_FILES_CACHE.get(ordenId);
+  if (cached && cached.expiresAt > Date.now()) return cached.files;
+  if (R2_ORDER_FILES_PENDING.has(ordenId)) return R2_ORDER_FILES_PENDING.get(ordenId);
+
+  const p = (async () => {
+    try {
+      const files = await storageManager.listOrdenFiles(ordenId);
+      const lista = Array.isArray(files) ? files : [];
+      R2_ORDER_FILES_CACHE.set(ordenId, { files: lista, expiresAt: Date.now() + R2_ORDER_FILES_TTL_MS });
+      return lista;
+    } catch (e) {
+      console.warn('No se pudo auditar R2 para la orden ' + ordenId + ':', e);
+      return [];
+    } finally {
+      R2_ORDER_FILES_PENDING.delete(ordenId);
+    }
+  })();
+
+  R2_ORDER_FILES_PENDING.set(ordenId, p);
+  return p;
+}
+
+/**
+ * Recuperación visual NO destructiva de huérfanas R2.
+ * Solo se usa cuando la asociación es matemáticamente inequívoca:
+ * exactamente 1 artículo sin foto + exactamente 1 objeto `foto_item_inicial`
+ * que existe en R2 pero no está referenciado en Supabase.
+ * No escribe ni cambia datos; las asociaciones ambiguas nunca se adivinan.
+ */
+async function fotoHuerfanaR2Segura(orden, item, items) {
+  const faltantes = items.filter(it => fotosDelItem(orden, it).length === 0);
+  if (faltantes.length !== 1 || faltantes[0].id !== item.id) return [];
+
+  const conocidas = new Set(todasFotosOrden(orden).map(pathFoto).filter(Boolean));
+  const archivos = await listarArchivosOrdenR2(orden.id);
+  const huerfanas = archivos.filter(file => {
+    const p = pathFoto(file);
+    const nombre = String(file?.name || p.split('/').pop() || '');
+    return p && /foto_item_inicial_/i.test(nombre) && !conocidas.has(p);
+  });
+
+  if (huerfanas.length !== 1) {
+    if (huerfanas.length > 1) {
+      console.warn('Recuperación R2 ambigua: orden #' + (orden.numero || '') + ' tiene ' + huerfanas.length + ' fotos iniciales huérfanas para ' + faltantes.length + ' artículo(s) faltante(s). No se asignó ninguna automáticamente.');
+    }
+    return [];
+  }
+
+  const f = huerfanas[0];
+  return [{
+    url: f.url || ('r2://' + pathFoto(f)),
+    path: pathFoto(f),
+    categoria: 'item_inicial',
+    itemId: item.id,
+    item: item.codigo,
+    __smRecoveredReadOnly: true
+  }];
 }
 
 async function resolverFotos(fotos) {
@@ -94,6 +179,14 @@ function insertarDebajoDeFechas(card, box) {
   else izquierda.appendChild(box);
 }
 
+function ocultarRenderAntiguoFoto(card) {
+  const img = card.querySelector('img[title="Foto del artículo"]');
+  if (!img) return;
+  const wrap = img.parentElement;
+  if (wrap && wrap.tagName === 'DIV') wrap.remove();
+  else img.remove();
+}
+
 async function renderFotosEnDetalle(ordenId) {
   const cont = document.getElementById('orden-detalle-items');
   const orden = ordenById(ordenId);
@@ -109,13 +202,14 @@ async function renderFotosEnDetalle(ordenId) {
     const card = cards[i];
     const item = items[i];
 
-    // items.js ya renderiza la foto inicial cuando existe `item` en la referencia.
-    // Este módulo queda únicamente como fallback para referencias históricas que
-    // tengan itemId pero no item. Así evitamos mostrar dos veces la misma foto y
-    // eliminamos el parpadeo causado por reconstruir una segunda miniatura.
-    if (card.querySelector('img[title="Foto del artículo"]')) continue;
+    // Un único render controla la foto bajo Ingreso / Entrega. Así el render
+    // histórico de items.js no puede duplicarla, parpadear ni colar una foto
+    // de Producción como si fuera la foto inicial.
+    ocultarRenderAntiguoFoto(card);
 
-    const fotos = fotosDelItem(orden, item);
+    let fotos = fotosDelItem(orden, item);
+    if (!fotos.length) fotos = await fotoHuerfanaR2Segura(orden, item, items);
+    if (gen !== renderGen) return;
     if (!fotos.length) continue;
 
     const validas = await resolverFotos(fotos);
@@ -142,6 +236,7 @@ async function agregarFotoItemVisible(itemId, file) {
 
     const res = await appendOrderPhotoAtomic(orden.id, fotoData);
     if (res && res.error) throw res.error;
+    R2_ORDER_FILES_CACHE.delete(orden.id);
     await persist();
 
     logActivity('Agregó foto al artículo ' + item.codigo);
@@ -158,14 +253,14 @@ function instalar() {
   window.agregarFotoItem = agregarFotoItemVisible;
 
   const originalDetalle = window.viewOrdenDetalle;
-  if (typeof originalDetalle === 'function' && !originalDetalle.__smFotoVisibleV6) {
+  if (typeof originalDetalle === 'function' && !originalDetalle.__smFotoVisibleV7) {
     const wrapped = function(id, preselectItemId) {
       detalleOrdenActual = id;
       const r = originalDetalle(id, preselectItemId);
       Promise.resolve(r).finally(() => setTimeout(() => renderFotosEnDetalle(id), 0));
       return r;
     };
-    wrapped.__smFotoVisibleV6 = true;
+    wrapped.__smFotoVisibleV7 = true;
     window.viewOrdenDetalle = wrapped;
   }
 
