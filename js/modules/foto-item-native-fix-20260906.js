@@ -1,5 +1,6 @@
 /* Selector nativo de foto para artículos dentro de Nueva/Editar orden.
  * iPhone: un solo toque real sobre el input file abre el selector nativo.
+ * Android: abre directamente la cámara trasera mediante capture=environment.
  * No usa input.click() programático porque Safari puede requerir varios toques.
  * Reutiliza onFotoFilaItem() original para persistencia y añade vista previa inmediata.
  */
@@ -51,7 +52,8 @@ function convertirFila(row) {
   input.type = 'file';
   input.accept = 'image/*';
   input.className = 'sm-item-native-picker';
-  input.removeAttribute('capture');
+  if (/Android/i.test(navigator.userAgent || '')) input.setAttribute('capture', 'environment');
+  else input.removeAttribute('capture');
   input.style.position = 'absolute';
   input.style.inset = '0';
   input.style.width = '100%';
