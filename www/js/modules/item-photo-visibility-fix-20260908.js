@@ -1,7 +1,8 @@
 import { state, persist } from '../state.js';
-import * as db from '../db.js';
 import * as storageManager from '../storage-manager.js';
 import { showToast, ordenById, logActivity } from '../ui.js';
+import { appendOrderPhotoAtomic } from '../photo-store.js';
+import './photo-integrity-runtime-20260909.js';
 
 let detalleOrdenActual = null;
 let renderGen = 0;
@@ -137,7 +138,7 @@ async function agregarFotoItemVisible(itemId, file) {
     fotoData.itemId = item.id;
     fotoData.categoria = 'item_inicial';
 
-    const res = await db.appendOrderPhotoAtomic(orden.id, fotoData);
+    const res = await appendOrderPhotoAtomic(orden.id, fotoData);
     if (res && res.error) throw res.error;
     await persist();
 
