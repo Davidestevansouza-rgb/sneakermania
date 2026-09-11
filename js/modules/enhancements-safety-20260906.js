@@ -1,5 +1,6 @@
 import { state, todayISO, esEmpleado } from '../state.js';
 import { supabase } from '../config.js';
+import * as db from '../db.js';
 import { fmtDate } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
 
@@ -18,6 +19,7 @@ function initSafety() {
   enlazarHistorialProduccion();
   asegurarHistorialEmpleadoVisible();
   corregirEtiquetasBlanqueamiento();
+  instalarEntradaEmpleadoSegura();
 }
 
 function asegurarHistorialEmpleadoVisible() {
@@ -36,6 +38,39 @@ function asegurarHistorialEmpleadoVisible() {
   if (selectorLegacyWrap) selectorLegacyWrap.style.display = 'none';
   const selectorRangoWrap = document.getElementById('sm-pempwrap');
   if (selectorRangoWrap) selectorRangoWrap.style.display = 'none';
+}
+
+/* El módulo puede cargarse antes de que Auth termine de conocer el rol.
+ * Observamos únicamente la apertura del app-shell y los clicks de navegación:
+ * así Empleado entra directamente a Producción y el historial queda enlazado
+ * desde la primera visita, sin necesitar ir a otra pestaña y volver. */
+function prepararProduccionEmpleado() {
+  if (!esEmpleado()) return;
+  if (typeof window.switchTab === 'function') window.switchTab('produccion');
+  enlazarHistorialProduccion();
+  asegurarHistorialEmpleadoVisible();
+  corregirEtiquetasBlanqueamiento();
+}
+function instalarEntradaEmpleadoSegura() {
+  const shell = document.getElementById('app-shell');
+  if (shell && !shell.dataset.smEmployeeStartObserver) {
+    shell.dataset.smEmployeeStartObserver = '1';
+    new MutationObserver(() => {
+      if (shell.style.display !== 'none') queueMicrotask(prepararProduccionEmpleado);
+    }).observe(shell, { attributes:true, attributeFilter:['style','class'] });
+  }
+  if (!document.documentElement.dataset.smProdNavBound) {
+    document.documentElement.dataset.smProdNavBound = '1';
+    document.addEventListener('click', e => {
+      const nav = e.target?.closest?.('.nav-item[data-tab="produccion"]');
+      if (!nav) return;
+      requestAnimationFrame(() => {
+        enlazarHistorialProduccion();
+        asegurarHistorialEmpleadoVisible();
+        corregirEtiquetasBlanqueamiento();
+      });
+    }, true);
+  }
 }
 
 /* 1) Al editar una orden vieja, el campo general NO pisa las fechas
@@ -64,9 +99,6 @@ function protegerFechaEntregaGeneral() {
   window.saveOrden = wrapper;
 }
 
-/* El blanqueamiento se muestra únicamente en el servicio donde quedó
- * persistido en registroServicios[servicio].blanqueamiento. Esto evita que
- * el campo legacy item.blanqueamiento lo haga aparecer en todos los servicios. */
 function servicioDeCard(card) {
   const txt = card.textContent || '';
   return ['Pintado y personalizado', 'Secado y detallado', 'Lavado'].find(s => txt.includes(s)) || '';
@@ -81,9 +113,7 @@ function corregirEtiquetasBlanqueamiento(root=document) {
     const servicio = servicioDeCard(card);
     if (!codigo || !servicio) return;
     [...card.querySelectorAll('div')].forEach(el => {
-      if (el.children.length === 0 && (el.textContent || '').trim() === 'Blanqueamiento: Sí' && !blanqueamientoExacto(codigo, servicio)) {
-        el.remove();
-      }
+      if (el.children.length === 0 && (el.textContent || '').trim() === 'Blanqueamiento: Sí' && !blanqueamientoExacto(codigo, servicio)) el.remove();
     });
   });
 }
@@ -110,23 +140,15 @@ function renderHistorialSeguro(registros, desde, hasta) {
   out.innerHTML = '<div class="hint" style="margin-bottom:8px">' + registros.length + ' registro(s) · ' + fmtDate(desde) + ' → ' + fmtDate(hasta) + '</div>' +
     (registros.length ? '<div class="prod-grid">' + registros.map(r => {
       const fotos = Array.isArray(r.fotoUrls) ? r.fotoUrls : [];
-      const foto = fotos[0]
-        ? '<img src="' + escAttr(fotos[0]) + '" loading="lazy" style="width:100%;max-height:180px;object-fit:cover;border-radius:8px">'
-        : '<div class="empty-state" style="padding:18px">Sin foto</div>';
-      const bl = blanqueamientoExacto(r.codigo, r.servicio)
-        ? '<div style="font-size:11px;font-weight:800;margin-top:3px">Blanqueamiento: Sí</div>' : '';
+      const foto = fotos[0] ? '<img src="' + escAttr(fotos[0]) + '" loading="lazy" style="width:100%;max-height:180px;object-fit:cover;border-radius:8px">' : '<div class="empty-state" style="padding:18px">Sin foto</div>';
+      const bl = blanqueamientoExacto(r.codigo, r.servicio) ? '<div style="font-size:11px;font-weight:800;margin-top:3px">Blanqueamiento: Sí</div>' : '';
       return '<div class="prod-card">' + foto + '<div style="padding:6px">' +
-        '<div><strong>' + escHtml(r.empleado || '—') + '</strong>' +
-        (r.codigo ? ' · <span class="mono">' + escHtml(r.codigo) + '</span>' : '') +
-        (r.servicio ? ' · ' + escHtml(r.servicio) : '') + '</div>' +
+        '<div><strong>' + escHtml(r.empleado || '—') + '</strong>' + (r.codigo ? ' · <span class="mono">' + escHtml(r.codigo) + '</span>' : '') + (r.servicio ? ' · ' + escHtml(r.servicio) : '') + '</div>' +
         '<div class="hint">' + fmtDate(r.fecha) + (r.hora ? ' · ' + escHtml(r.hora) : '') + (fotos.length ? ' · ' + fotos.length + ' foto(s)' : '') + '</div>' +
-        bl + (r.observacion ? '<div class="hint" style="white-space:pre-line">📝 ' + escHtml(r.observacion) + '</div>' : '') +
-        '</div></div>';
+        bl + (r.observacion ? '<div class="hint" style="white-space:pre-line">📝 ' + escHtml(r.observacion) + '</div>' : '') + '</div></div>';
     }).join('') + '</div>' : '<div class="hint">Sin registros en el rango.</div>');
 }
 
-/* Historial por rango consultado directamente en la tabla existente.
- * Así no depende del límite de 500 registros de la carga inicial de state. */
 async function cargarHistorialProduccionSeguro() {
   const out = document.getElementById('prod-historial');
   if (!out) return;
@@ -193,8 +215,15 @@ function envolverProduccion() {
   if (typeof original !== 'function' || original.__smSafetyProd) return;
   const wrapper = async function(...args) {
     const r = await original.apply(this, args);
+    /* Si una señal débil hizo que saveRegistroPar quedara en la cola offline,
+     * intentamos sincronizarla inmediatamente una vez. No duplica registros:
+     * la cola conserva el mismo UUID/upsert. */
+    if (db.online() && db.pendingCount() > 0) {
+      try { await db.flushQueue(); } catch (_) {}
+    }
     corregirEtiquetasBlanqueamiento();
     enlazarHistorialProduccion();
+    if (esEmpleado()) await cargarHistorialProduccionSeguro();
     return r;
   };
   wrapper.__smSafetyProd = true;
