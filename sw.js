@@ -1,7 +1,6 @@
 /* Service Worker — Sistema SeS (PWA / modo offline)
-   Estrategia: network-first para navegación y stale-while-revalidate para
-   archivos estáticos del mismo origen. Las peticiones a Supabase (API, Auth,
-   Storage) NUNCA se cachean. */
+   Estrategia: network-first para navegación y archivos estáticos del mismo
+   origen. Las peticiones a Supabase (API, Auth, Storage) NUNCA se cachean. */
 const CACHE = 'ses-static-v38';
 // En Cloudflare Pages la raíz './' responde 200 directo, mientras que
 // './index.html' responde 308 → '/'. Por eso cacheamos y servimos SIEMPRE
@@ -76,20 +75,22 @@ self.addEventListener('fetch', (e) => {
   }
 
   // ── Recursos estáticos (CSS, JS, imágenes…) ──────────────────────────────
+  // NETWORK-FIRST también aquí: evita mezclar HTML nuevo con JS/CSS antiguos.
+  // Solo se usa la caché cuando la red no está disponible.
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(req);
-      // Nunca servir desde caché una respuesta redirigida.
       const cachedOk = cached && cached.status === 200 && !cached.redirected ? cached : null;
-      const network = fetch(req, { redirect: 'follow' }).then(async (res) => {
+      try {
+        const res = await fetch(req, { redirect: 'follow', cache: 'no-store' });
         const clean = await stripRedirect(res);
-        // Solo cachear respuestas exitosas del mismo origen (basic) y sin redirección.
         if (clean && clean.status === 200 && clean.type === 'basic') {
           cache.put(req, clean.clone()).catch(() => {});
         }
         return clean;
-      }).catch(() => cachedOk);
-      return cachedOk || network;
+      } catch (err) {
+        return cachedOk || Response.error();
+      }
     })
   );
 });
