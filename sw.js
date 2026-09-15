@@ -1,7 +1,8 @@
 /* Service Worker — Sistema SeS (PWA / modo offline)
-   Estrategia: stale-while-revalidate SOLO para archivos estáticos del mismo
-   origen. Las peticiones a Supabase (API, Auth, Storage) NUNCA se cachean. */
-const CACHE = 'ses-static-v37';
+   Estrategia: network-first para navegación y stale-while-revalidate para
+   archivos estáticos del mismo origen. Las peticiones a Supabase (API, Auth,
+   Storage) NUNCA se cachean. */
+const CACHE = 'ses-static-v38';
 // En Cloudflare Pages la raíz './' responde 200 directo, mientras que
 // './index.html' responde 308 → '/'. Por eso cacheamos y servimos SIEMPRE
 // la raíz './' para la navegación, NUNCA './index.html' (que redirige y
@@ -53,17 +54,19 @@ self.addEventListener('fetch', (e) => {
   if (url.pathname.includes('/functions/') || url.pathname.includes('/rest/') || url.pathname.includes('/auth/')) return;
 
   // ── Peticiones de navegación (cargar la página) ──────────────────────────
-  // Safari/iOS lanza "Response served by service worker has redirections"
-  // si el SW devuelve una respuesta con redirected=true. Servimos la raíz './'
-  // (que en Cloudflare responde 200 directo) desde caché; si hay que ir a red,
-  // seguimos el redirect y luego limpiamos la bandera con stripRedirect.
+  // NETWORK-FIRST: cuando hay conexión, Cloudflare es la fuente de verdad.
+  // La caché queda únicamente como respaldo offline. Así un celular no queda
+  // atrapado indefinidamente usando un HTML antiguo después de un despliegue.
   if (req.mode === 'navigate') {
     e.respondWith((async () => {
-      const cached = await caches.match('./');
-      if (cached) return stripRedirect(cached);
       try {
-        const res = await fetch('./', { redirect: 'follow' });
-        return await stripRedirect(res);
+        const res = await fetch('./', { redirect: 'follow', cache: 'no-store' });
+        const clean = await stripRedirect(res);
+        if (clean && clean.status === 200) {
+          const cache = await caches.open(CACHE);
+          cache.put('./', clean.clone()).catch(() => {});
+        }
+        return clean;
       } catch (err) {
         const fallback = await caches.match('./');
         return fallback ? stripRedirect(fallback) : Response.error();
