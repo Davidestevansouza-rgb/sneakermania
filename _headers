@@ -3,3 +3,6 @@
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
   Permissions-Policy: geolocation=(), microphone=(), payment=(), usb=(), interest-cohort=()
+
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
