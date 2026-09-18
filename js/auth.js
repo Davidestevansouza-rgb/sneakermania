@@ -328,9 +328,11 @@ export async function onAuthenticated(authUser) {
   if (!ok) {
     const cached = loadCache();
     if (cached) {
-      cached.session = state.session;
-      setState(cached);
-      showToast('Trabajando con datos guardados (sin conexión).');
+      // La caché local es deliberadamente mínima. Mantener la estructura
+      // completa del estado para que un fallo de red nunca deje módulos sin arrays.
+      const base = seedData();
+      setState({ ...base, ...cached, session: state.session });
+      showToast('Sin conexión: algunas funciones requieren volver a conectarse.');
     }
   }
   await persist();
