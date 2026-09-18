@@ -606,6 +606,25 @@ export async function markNotificationRead(notifId) {
   }
 }
 
+export async function markAllNotificationsRead() {
+  try {
+    if (!online()) return { error: 'OFFLINE' };
+    const tenant = tenantId();
+    if (!tenant) return { error: 'NO_TENANT' };
+    const { error } = await supabase
+      .from('notificaciones')
+      .update({ leida: true })
+      .eq('tenant_id', tenant)
+      .eq('leida', false);
+    if (error) throw error;
+    (state.notificaciones || []).forEach(n => { if (n) n.leida = true; });
+    return { ok: true };
+  } catch (e) {
+    console.error('Error al marcar todas las notificaciones como leídas:', e);
+    return { error: e.message || String(e) };
+  }
+}
+
 /* ============================================================
    SINCRONIZACIÓN DE LA COLA OFFLINE
    ============================================================ */
