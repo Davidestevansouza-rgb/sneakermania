@@ -1084,7 +1084,7 @@
   /* Registro del Service Worker (PWA / modo offline) */
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js?v=43').catch((e) => console.warn('SW no registrado:', e));
+      navigator.serviceWorker.register('sw.js?v=44').catch((e) => console.warn('SW no registrado:', e));
     });
     // Cuando el Service Worker nuevo se activa, avisa a la pestaña para que se
     // recargue sola y así el usuario siempre vea la última versión de la app
