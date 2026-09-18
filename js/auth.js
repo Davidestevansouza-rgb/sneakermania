@@ -350,7 +350,7 @@ export async function onAuthenticated(authUser) {
 
   const { tabInicial } = await import('./state.js');
   const inicial = tabInicial();
-  if (inicial !== 'dashboard' && typeof app.switchTab === 'function') app.switchTab(inicial);
+  if (typeof app.switchTab === 'function') app.switchTab(inicial);
 
   if (state.session.role === 'Supervisor') {
     try {
