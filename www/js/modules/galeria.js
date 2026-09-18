@@ -149,79 +149,82 @@ function carpetasGaleria() {
   const itemPorId = new Map((state.ordenItems || []).map(it => [it.id, it]));
   const itemPorCodigo = new Map((state.ordenItems || []).map(it => [it.codigo, it]));
 
-  const asegurar = (codigo, item = null) => {
-    if (!codigo) return null;
-    if (!grupos.has(codigo)) {
-      const it = item || itemPorCodigo.get(codigo) || null;
-      const o = it ? ordenById(it.ordenId) : null;
-      grupos.set(codigo, { codigo, item: it, orden: o, fotos: [], keys: new Set() });
+  const asegurar = (ordenId, orden = null) => {
+    if (!ordenId) return null;
+    if (!grupos.has(ordenId)) {
+      const o = orden || ordenById(ordenId) || null;
+      grupos.set(ordenId, { ordenId, orden: o, fotos: [], keys: new Set(), codigos: new Set() });
     }
-    return grupos.get(codigo);
+    return grupos.get(ordenId);
   };
-  const agregar = (g, foto) => {
+  const agregar = (g, foto, codigo = null) => {
     if (!g || !foto || !foto.url) return;
     const key = foto.path || foto.url;
     if (g.keys.has(key)) return;
     g.keys.add(key);
-    g.fotos.push(foto);
+    if (codigo) g.codigos.add(codigo);
+    g.fotos.push({ ...foto, codigo: codigo || foto.codigo || null });
   };
 
-  // Producción es la fuente canónica de las fotos tomadas por artículo.
+  // Producción es la fuente canónica. Se agrupa por ORDEN general (405),
+  // no por artículo (405-1, 405-2...), conservando cada código dentro.
   (state.registroPares || []).forEach(r => {
-    const g = asegurar(r.codigo);
+    const it = itemPorCodigo.get(r.codigo);
+    if (!it) return;
+    const g = asegurar(it.ordenId);
     const urls = Array.isArray(r.fotoUrls) ? r.fotoUrls : (r.fotoUrl ? [r.fotoUrl] : []);
     urls.forEach(url => agregar(g, {
       url,
       categoria: SERVICIO_A_GALERIA_CAT[r.servicio] || 'todos_pares',
       fecha: r.fecha || '',
-      itemId: g && g.item ? g.item.id : null
-    }));
+      itemId: it.id
+    }, r.codigo));
   });
 
-  // Conserva también fotos históricas/manuales guardadas directamente en la orden.
+  // Fotos históricas/manuales de la orden se suman a la misma carpeta general.
   (state.ordenes || []).forEach(o => {
     migrateLegacyFotos(o);
     const fotos = (o.extra && Array.isArray(o.extra.fotos)) ? o.extra.fotos : [];
     fotos.forEach(f => {
       const it = f.itemId ? itemPorId.get(f.itemId) : null;
-      if (it) agregar(asegurar(it.codigo, it), f);
+      agregar(asegurar(o.id, o), f, it ? it.codigo : null);
     });
   });
 
   return Array.from(grupos.values())
     .filter(g => g.fotos.length)
-    .sort((a, b) => {
-      const [ao, ai] = String(a.codigo).split('-').map(Number);
-      const [bo, bi] = String(b.codigo).split('-').map(Number);
-      return (bo || 0) - (ao || 0) || (bi || 0) - (ai || 0);
-    });
+    .sort((a, b) => (Number(b.orden?.numero) || 0) - (Number(a.orden?.numero) || 0));
 }
 
-export async function seleccionarCarpetaGaleria(codigo) {
-  galeriaCarpetaActual = codigo || null;
-  const grupo = carpetasGaleria().find(g => g.codigo === codigo);
+export async function seleccionarCarpetaGaleria(ordenId) {
+  galeriaCarpetaActual = ordenId || null;
+  const grupo = carpetasGaleria().find(g => g.ordenId === ordenId);
   const content = document.getElementById('galeria-content');
   if (!content) return;
-  if (!grupo) {
-    galeriaCarpetaActual = null;
-    await renderGaleria();
-    return;
-  }
+  if (!grupo) { galeriaCarpetaActual = null; await renderGaleria(); return; }
   const miGen = ++_galeriaRenderGen;
-  content.innerHTML = '<div class="hint">Cargando fotos del artículo #' + escHtml(codigo) + '…</div>';
+  const numero = grupo.orden?.numero || '';
+  content.innerHTML = '<div class="hint">Cargando fotos de la orden #' + escHtml(numero) + '…</div>';
   const fotos = await storageManager.resolveImageUrls(grupo.fotos);
   if (miGen !== _galeriaRenderGen) return;
-  const tituloOrden = grupo.orden ? ' · Orden #' + escHtml(grupo.orden.numero) + ' · ' + escHtml(clienteNombre(grupo.orden.clienteId)) : '';
-  const thumbs = fotos.map(foto => {
-    const src = fotoUrlNavegable(foto);
-    const isStorage = !!(foto.url && (foto.url.startsWith('http') || foto.url.startsWith('r2://')));
-    const badge = isStorage ? '<span class="storage-badge" title="Almacenada en la nube">☁️</span>' : '';
-    return '<div class="gallery-thumb-wrap"><img src="' + escAttr(src) + '" loading="lazy" decoding="async" onclick="ampliarImagen(\'' + String(src || '').replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' + badge + '</div>';
+  const porArticulo = new Map();
+  fotos.forEach(f => {
+    const codigo = f.codigo || 'Fotos generales';
+    if (!porArticulo.has(codigo)) porArticulo.set(codigo, []);
+    porArticulo.get(codigo).push(f);
+  });
+  const secciones = Array.from(porArticulo.entries()).sort(([a],[b]) => String(a).localeCompare(String(b), undefined, { numeric:true })).map(([codigo, lista]) => {
+    const thumbs = lista.map(foto => {
+      const src = fotoUrlNavegable(foto);
+      const isStorage = !!(foto.url && (foto.url.startsWith('http') || foto.url.startsWith('r2://')));
+      const badge = isStorage ? '<span class="storage-badge" title="Almacenada en la nube">☁️</span>' : '';
+      return '<div class="gallery-thumb-wrap"><img src="' + escAttr(src) + '" loading="lazy" decoding="async" onclick="ampliarImagen(\'' + String(src || '').replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' + badge + '</div>';
+    }).join('');
+    return '<div class="gallery-cat"><h4>👟 ' + escHtml(codigo) + ' <span class="hint">(' + lista.length + ' fotos)</span></h4><div class="gallery-thumbs" style="display:grid;">' + thumbs + '</div></div>';
   }).join('');
-  content.innerHTML =
-    '<div style="margin-bottom:12px;"><button class="btn btn-ghost btn-sm" onclick="volverTodasCarpetasGaleria()">← Todos los pares</button></div>' +
-    '<div class="gallery-cat"><h4>👟 #' + escHtml(codigo) + tituloOrden + ' <span class="hint">(' + fotos.length + ' fotos)</span></h4>' +
-    '<div class="gallery-thumbs" style="display:grid;">' + thumbs + '</div></div>';
+  content.innerHTML = '<div style="margin-bottom:12px;"><button class="btn btn-ghost btn-sm" onclick="volverTodasCarpetasGaleria()">← Todos los pares</button></div>' +
+    '<h3>📁 Orden #' + escHtml(numero) + (grupo.orden ? ' · ' + escHtml(clienteNombre(grupo.orden.clienteId)) : '') + '</h3>' +
+    '<div class="gallery-cats">' + secciones + '</div>';
 }
 
 export function volverTodasCarpetasGaleria() {
@@ -236,13 +239,22 @@ export function volverTodasCarpetasGaleria() {
 async function renderGaleriaTodos(miGen) {
   galeriaCarpetaActual = null;
   const grupos = carpetasGaleria();
+  let bloques = '';
+  for (const g of grupos) {
+    const fotos = await storageManager.resolveImageUrls(g.fotos.slice(0, 1));
+    if (miGen !== _galeriaRenderGen) return;
+    const portada = fotos[0];
+    if (!portada) continue;
+    const src = fotoUrlNavegable(portada);
+    const numero = g.orden?.numero || '';
+    const codigos = Array.from(g.codigos).sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));
+    const contador = g.fotos.length > 1 ? '<span class="gallery-cover-badge">+' + (g.fotos.length - 1) + ' fotos</span>' : '';
+    bloques += '<div class="gallery-cat"><h4>#' + escHtml(numero) + (g.orden ? ' · ' + escHtml(clienteNombre(g.orden.clienteId)) : '') +
+      ' <span class="hint">(' + escHtml(codigos.join(', ')) + ')</span></h4>' +
+      '<div class="gallery-thumb-wrap gallery-cover" onclick="seleccionarCarpetaGaleria(\'' + escAttr(g.ordenId) + '\')" title="Abrir carpeta de la orden">' +
+      '<img src="' + escAttr(src) + '" loading="lazy" decoding="async">' + contador + '</div></div>';
+  }
   if (miGen !== _galeriaRenderGen) return;
-  const bloques = grupos.map(g => {
-    const tituloOrden = g.orden ? ' · Orden #' + escHtml(g.orden.numero) + ' · ' + escHtml(clienteNombre(g.orden.clienteId)) : '';
-    return '<button type="button" class="gallery-cat" style="text-align:left;cursor:pointer;width:100%;" onclick="seleccionarCarpetaGaleria(\'' + escAttr(g.codigo) + '\')">' +
-      '<h4>📁 👟 #' + escHtml(g.codigo) + tituloOrden + ' <span class="hint">(' + g.fotos.length + ' fotos)</span></h4>' +
-      '<div class="hint">Abrir carpeta para ver las fotografías</div></button>';
-  }).join('');
   document.getElementById('galeria-content').innerHTML = bloques
     ? '<div class="gallery-cats">' + bloques + '</div>'
     : '<div class="empty-state"><div class="big">📷</div>No hay fotografías para mostrar</div>';
