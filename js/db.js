@@ -469,6 +469,20 @@ export async function saveConfig(cfg) {
 /* ============================================================
    CARGA INICIAL DE DATOS DEL TENANT
    ============================================================ */
+async function fetchAllRows(table, { orderColumn = null, ascending = true, pageSize = 500 } = {}) {
+  const data = [];
+  for (let from = 0; ; from += pageSize) {
+    let q = supabase.from(table).select('*').range(from, from + pageSize - 1);
+    if (orderColumn) q = q.order(orderColumn, { ascending });
+    const page = await q;
+    if (page.error) return { data: [], error: page.error };
+    const rows = page.data || [];
+    data.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+  return { data, error: null };
+}
+
 export async function loadAllData() {
   if (!online() || !tenantId()) return false;
   try {
@@ -481,8 +495,8 @@ export async function loadAllData() {
       supabase.from('configuracion_tenant').select('*').eq('tenant_id', tenantId()).maybeSingle(),
       supabase.from('notificaciones').select('*').order('created_at', { ascending: false }).limit(100),
       supabase.from('facturas').select('*'),
-      supabase.from('registro_pares').select('*').order('created_at', { ascending: false }).limit(500),
-      supabase.from('orden_items').select('*')
+      fetchAllRows('registro_pares', { orderColumn: 'created_at', ascending: false }),
+      fetchAllRows('orden_items', { orderColumn: 'numero_item', ascending: true })
     ]);
     if (!cli.error) {
       const todos = (cli.data || []).map(clienteFromDb);
