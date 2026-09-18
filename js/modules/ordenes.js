@@ -1412,6 +1412,8 @@ export function itemsDeOrden(ordenId) {
  *  descripción y un servicio por defecto (editables), y marcar la fila
  *  como generada en lote (data-masivo) para poder regenerarlas si el
  *  recepcionista cambia la cantidad de pares. */
+const _itemsEliminadosExplicitamente = new Set();
+
 function agregarFilaItemOrden(item, opts) {
   const cont = document.getElementById('orden-items-list');
   if (!cont) return;
@@ -1535,6 +1537,7 @@ function onCambioPrecioItem(input) {
  *  eso se resuelve recién al guardar la orden). */
 function quitarFilaItemOrden(btn) {
   const row = btn.closest('.orden-item-row');
+  if (row?.dataset?.itemId) _itemsEliminadosExplicitamente.add(row.dataset.itemId);
   if (row) row.remove();
   recalcularTotalArticulos();
 }
@@ -1727,12 +1730,14 @@ async function sincronizarItemsDesdeFormulario(o) {
     }
   }
 
-  // Borra (de verdad) los ítems que existían pero cuya fila se quitó del
-  // formulario — solo si NO fueron entregados, como protección extra.
+  // SEGURIDAD: nunca borrar un artículo solo porque no apareció en el DOM.
+  // El estado local puede estar parcial; solo se elimina si el recepcionista
+  // pulsó explícitamente ✕ sobre ESE artículo durante esta edición.
   for (const item of existentes) {
-    if (!idsVistos.has(item.id) && !item.entregado) {
+    if (_itemsEliminadosExplicitamente.has(item.id) && !item.entregado) {
       state.ordenItems = state.ordenItems.filter(it => it.id !== item.id);
       await db.deleteOrdenItem(item.id);
+      _itemsEliminadosExplicitamente.delete(item.id);
     }
   }
 
