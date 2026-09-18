@@ -384,6 +384,28 @@ function itemFromDb(r) {
 export const saveOrdenItem = (it) => pushUpsert('orden_items', itemToDb(it));
 export const deleteOrdenItem = (id) => pushDelete('orden_items', id);
 
+/** Recarga desde Supabase únicamente los artículos de una orden.
+ *  Se usa al mostrar Órdenes para reparar una caché local parcial sin
+ *  modificar ni recrear artículos en la base. */
+export async function refreshOrdenItems(ordenId) {
+  if (!online() || !supabase || !tenantId() || !ordenId) return { error: 'NO_CONNECTION' };
+  try {
+    const { data, error } = await supabase
+      .from('orden_items')
+      .select('*')
+      .eq('orden_id', ordenId)
+      .order('numero_item', { ascending: true });
+    if (error) throw error;
+    const frescos = (data || []).map(itemFromDb);
+    const otros = (state.ordenItems || []).filter(it => it.ordenId !== ordenId);
+    state.ordenItems = otros.concat(frescos);
+    return { ok: true, items: frescos };
+  } catch (e) {
+    console.error('No se pudieron refrescar los artículos de la orden:', e);
+    return { error: e };
+  }
+}
+
 export const saveUser = (u) => pushUpsert('users', {
   id: u.id, tenant_id: tenantId(), nombre: u.nombre, email: u.email,
   rol: u.rol, activo: u.activo !== false
