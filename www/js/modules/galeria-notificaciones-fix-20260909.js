@@ -145,8 +145,6 @@ function activarOrdenProduccion() {
 }
 
 function instalar() {
-  document.addEventListener('mousedown', manejarGaleriaTodos, true);
-  document.addEventListener('click', manejarGaleriaTodos, true);
   document.addEventListener('click', ev => {
     const tab = ev.target?.closest?.('[data-tab]')?.dataset?.tab;
     if (tab === 'notificaciones') setTimeout(instalarBotonNotificaciones, 0);
