@@ -45,28 +45,11 @@ async function _registrarSesionUnica(userId) {
 }
 
 function _iniciarValidacionSesion(userId, token) {
+  // Supabase Auth es la autoridad de la sesión. El antiguo control de
+  // "sesión única" expulsaba usuarios durante el trabajo cuando el token
+  // auxiliar quedaba desincronizado. Se conserva la función como no-op
+  // para compatibilidad, pero nunca fuerza logout automático.
   _stopSessionValidation();
-
-  _sessionValidationInterval = setInterval(async () => {
-    if (!state.session?.loggedIn || _logoutInProgress || _sessionValidationRunning) return;
-    _sessionValidationRunning = true;
-
-    try {
-      const { data, error } = await supabase.rpc('valida_sesion', { p_user_id: userId, p_token: token });
-      if (error) return;
-
-      if (data === false && !_replacementLogoutScheduled) {
-        _replacementLogoutScheduled = true;
-        _stopSessionValidation();
-        showToast('⚠️ Tu sesión fue iniciada en otro dispositivo. Esta sesión se cerrará.', 'error');
-        setTimeout(() => doLogout({ replaced: true }), 2500);
-      }
-    } catch (e) {
-      // Un fallo temporal de red no debe provocar logout ni ciclos de reconexión.
-    } finally {
-      _sessionValidationRunning = false;
-    }
-  }, 20000);
 }
 
 /**
@@ -75,27 +58,13 @@ function _iniciarValidacionSesion(userId, token) {
  * la sesión nueva siga siendo la vigente y muestra el login localmente.
  */
 async function _restaurarSesionUnica(userId) {
+  // Una sesión válida de Supabase no se invalida por el token auxiliar.
+  // Si no existe token local, se registra únicamente como compatibilidad.
   const token = localStorage.getItem(SESSION_TOKEN_KEY);
   if (!token) {
-    // Primera apertura después de activar sesión persistente o dispositivo nuevo.
-    await _registrarSesionUnica(userId);
-    return true;
+    try { await _registrarSesionUnica(userId); } catch (_) { /* noop */ }
   }
-
-  try {
-    const { data, error } = await supabase.rpc('valida_sesion', { p_user_id: userId, p_token: token });
-    if (error) {
-      // Si la red falla, no expulsar al usuario; se validará nuevamente al reconectar.
-      _iniciarValidacionSesion(userId, token);
-      return true;
-    }
-    if (data === false) return false;
-    _iniciarValidacionSesion(userId, token);
-    return true;
-  } catch (e) {
-    _iniciarValidacionSesion(userId, token);
-    return true;
-  }
+  return true;
 }
 
 /**
