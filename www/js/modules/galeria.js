@@ -239,25 +239,49 @@ export function volverTodasCarpetasGaleria() {
 async function renderGaleriaTodos(miGen) {
   galeriaCarpetaActual = null;
   const grupos = carpetasGaleria();
-  let bloques = '';
-  for (const g of grupos) {
-    const fotos = await storageManager.resolveImageUrls(g.fotos.slice(0, 1));
-    if (miGen !== _galeriaRenderGen) return;
-    const portada = fotos[0];
-    if (!portada) continue;
-    const src = fotoUrlNavegable(portada);
-    const numero = g.orden?.numero || '';
-    const codigos = Array.from(g.codigos).sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));
-    const contador = g.fotos.length > 1 ? '<span class="gallery-cover-badge">+' + (g.fotos.length - 1) + ' fotos</span>' : '';
-    bloques += '<div class="gallery-cat"><h4>#' + escHtml(numero) + (g.orden ? ' · ' + escHtml(clienteNombre(g.orden.clienteId)) : '') +
-      ' <span class="hint">(' + escHtml(codigos.join(', ')) + ')</span></h4>' +
-      '<div class="gallery-thumb-wrap gallery-cover" onclick="seleccionarCarpetaGaleria(\'' + escAttr(g.ordenId) + '\')" title="Abrir carpeta de la orden">' +
-      '<img src="' + escAttr(src) + '" loading="lazy" decoding="async">' + contador + '</div></div>';
+  const content = document.getElementById('galeria-content');
+  if (!content) return;
+
+  if (!grupos.length) {
+    content.innerHTML = '<div class="empty-state"><div class="big">📷</div>No hay fotografías para mostrar</div>';
+    return;
   }
-  if (miGen !== _galeriaRenderGen) return;
-  document.getElementById('galeria-content').innerHTML = bloques
-    ? '<div class="gallery-cats">' + bloques + '</div>'
-    : '<div class="empty-state"><div class="big">📷</div>No hay fotografías para mostrar</div>';
+
+  // Primero se muestran TODAS las carpetas. La carga de las portadas nunca
+  // puede impedir que “Todos los pares” o “Limpiar” muestren la lista.
+  const portadas = [];
+  const bloques = grupos.map((g, idx) => {
+    const portada = g.fotos[0] || null;
+    portadas.push(portada);
+    const numero = g.orden?.numero || '';
+    const codigos = Array.from(g.codigos).sort((a,b) =>
+      String(a).localeCompare(String(b), undefined, { numeric:true })
+    );
+    const contador = g.fotos.length > 1
+      ? '<span class="gallery-cover-badge">+' + (g.fotos.length - 1) + ' fotos</span>'
+      : '';
+    return '<div class="gallery-cat"><h4>#' + escHtml(numero) +
+      (g.orden ? ' · ' + escHtml(clienteNombre(g.orden.clienteId)) : '') +
+      ' <span class="hint">(' + escHtml(codigos.join(', ')) + ')</span></h4>' +
+      '<div class="gallery-thumb-wrap gallery-cover" onclick="seleccionarCarpetaGaleria(\'' +
+      escAttr(g.ordenId) + '\')" title="Abrir carpeta de la orden">' +
+      '<img data-galeria-cover="' + idx + '" src="' + PIXEL_TRANSPARENTE +
+      '" loading="lazy" decoding="async">' + contador + '</div></div>';
+  }).join('');
+
+  content.innerHTML = '<div class="gallery-cats">' + bloques + '</div>';
+
+  // Resolver portadas en segundo plano. Si una URL falla, la carpeta sigue
+  // visible y utilizable; no desaparece la orden completa.
+  storageManager.resolveImageUrls(portadas).then(resueltas => {
+    if (miGen !== _galeriaRenderGen) return;
+    (resueltas || []).forEach((foto, idx) => {
+      const img = content.querySelector('img[data-galeria-cover="' + idx + '"]');
+      if (!img) return;
+      const src = fotoUrlNavegable(foto);
+      if (src && src !== PIXEL_TRANSPARENTE) img.src = src;
+    });
+  }).catch(err => console.warn('No se pudieron resolver algunas portadas de galería:', err));
 }
 
 export async function renderGaleria() {
