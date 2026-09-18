@@ -47,7 +47,16 @@ async function refrescarSesionUnaVez() {
   return SESSION_REFRESH_PENDING;
 }
 
+function sesionR2Activa() {
+  return !!(state?.session?.loggedIn && state?.session?.userId && tenantId());
+}
+
 async function invokeR2(options, permitirRefresh = true) {
+  // Al cerrar sesión pueden quedar renders/prefetch asíncronos en vuelo.
+  // No llamar Edge Functions sin JWT: evita avalanchas 401 tras logout.
+  if (!sesionR2Activa()) {
+    return { data: null, error: null, skipped: true };
+  }
   let resultado = await supabase.functions.invoke('r2-storage', options);
   if (permitirRefresh && esNoAutorizado(resultado.error, resultado.data)) {
     const refreshed = await refrescarSesionUnaVez();
@@ -87,6 +96,7 @@ function extraerPathR2(url) {
  */
 export async function resolveImageUrl(url, path = null) {
   if (!url || typeof url !== 'string') return url;
+  if (!sesionR2Activa()) return url.startsWith('r2://') ? null : url;
   const esReferenciaR2 = url.startsWith('r2://');
   const objectPath = path || extraerPathR2(url);
   if (!objectPath) return esReferenciaR2 ? null : url;
@@ -129,7 +139,7 @@ export async function resolveImageUrl(url, path = null) {
 }
 
 export async function resolveImageUrls(fotos) {
-  if (!Array.isArray(fotos) || !fotos.length) return [];
+  if (!Array.isArray(fotos) || !fotos.length || !sesionR2Activa()) return [];
   // Limita la cantidad de firmas simultáneas para no saturar Safari/Chrome
   // móvil ni el Edge Function cuando una galería contiene muchas imágenes.
   return mapConcurrencia(fotos, SIGNED_URL_CONCURRENCY, async f => ({
@@ -151,7 +161,7 @@ export async function resolveImageUrlsBatch(fotos) {
  * @param {Array<{url:string, path?:string}>} fotos
  */
 export function prefetchImageUrls(fotos) {
-  if (!Array.isArray(fotos) || !fotos.length) return;
+  if (!Array.isArray(fotos) || !fotos.length || !sesionR2Activa()) return;
   resolveImageUrls(fotos).catch(() => {});
 }
 
@@ -163,7 +173,7 @@ function imagenesEn(root) {
 }
 
 export async function secureImageUrlsInDom(root = document) {
-  if (!root) return;
+  if (!root || !sesionR2Activa()) return;
   const imgs = imagenesEn(root);
   await mapConcurrencia(imgs, SIGNED_URL_CONCURRENCY, async img => {
     if (!img.hasAttribute('loading')) img.setAttribute('loading', 'lazy');
