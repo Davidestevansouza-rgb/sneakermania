@@ -1,7 +1,7 @@
 /* Service Worker — Sistema SeS (PWA / modo offline)
    Estrategia: network-first para navegación y archivos estáticos del mismo
    origen. Las peticiones a Supabase (API, Auth, Storage) NUNCA se cachean. */
-const CACHE = 'ses-static-v44';
+const CACHE = 'ses-static-v45';
 // En Cloudflare Pages la raíz './' responde 200 directo, mientras que
 // './index.html' responde 308 → '/'. Por eso cacheamos y servimos SIEMPRE
 // la raíz './' para la navegación, NUNCA './index.html' (que redirige y
