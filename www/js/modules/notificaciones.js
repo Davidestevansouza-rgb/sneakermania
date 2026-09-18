@@ -76,7 +76,12 @@ export function computeNotifications() {
 async function reloadNotificationsOnly() {
   const tenant = state.session?.tenantId;
   if (!supabase || !tenant || !onlineNow()) return false;
-  const { data, error } = await supabase.from('notificaciones').select('id,tipo,texto,leida,prioridad,orden_id,inventario_id,dedupe_key,created_at').eq('tenant_id', tenant).order('created_at', { ascending:false }).limit(100);
+  const { data, error } = await supabase.from('notificaciones')
+    .select('id,tipo,texto,leida,prioridad,orden_id,inventario_id,dedupe_key,created_at')
+    .eq('tenant_id', tenant)
+    .eq('leida', false)
+    .order('created_at', { ascending:false })
+    .limit(500);
   if (error) throw error;
   state.notificaciones = (data || []).map(n => ({ id:n.id, tipo:n.tipo, texto:n.texto, leida:!!n.leida, prioridad:n.prioridad || 'Media', ordenId:n.orden_id || null, inventarioId:n.inventario_id || null, dedupeKey:n.dedupe_key || null, fecha:n.created_at }));
   return true;
@@ -93,28 +98,51 @@ async function idsOrdenesValidas(ids) {
 }
 
 let notifSyncRunning = false;
+
+async function existingDedupeKeys(keys) {
+  const unique = [...new Set((keys || []).filter(Boolean))];
+  const found = new Set();
+  for (let i = 0; i < unique.length; i += 100) {
+    const chunk = unique.slice(i, i + 100);
+    const { data, error } = await supabase
+      .from('notificaciones')
+      .select('dedupe_key')
+      .eq('tenant_id', state.session?.tenantId)
+      .in('dedupe_key', chunk);
+    if (error) throw error;
+    (data || []).forEach(r => { if (r.dedupe_key) found.add(r.dedupe_key); });
+  }
+  return found;
+}
+
 export async function syncNotifications() {
   if (notifSyncRunning || !state.session?.loggedIn || !onlineNow()) return;
   notifSyncRunning = true;
   try {
-    await reloadNotificationsOnly();
+    // Regla simple y definitiva:
+    // 1) un atraso tiene una sola dedupe_key;
+    // 2) si esa clave existió alguna vez, aunque esté leída, NO se recrea;
+    // 3) la UI solo carga filas leida=false del servidor.
     const computed = computeNotifications();
-    const silenciadas = depurarSilenciadas(computed);
-    const computedTexts = computed.map(n => n.texto);
-    if (!Array.isArray(state.notificaciones)) state.notificaciones = [];
-    const resolved = state.notificaciones.filter(n => !n.leida && !computedTexts.includes(n.texto));
-    for (const n of resolved) { if (!onlineNow()) break; await db.markNotificationRead(n.id); }
-    const existingKeys = new Set(state.notificaciones.map(n => n.dedupeKey).filter(Boolean));
-    const nuevas = computed.filter(n => !existingKeys.has(n.dedupeKey) && !silenciadas.has(notifLogicalKey(n)));
+    const keysExistentes = await existingDedupeKeys(computed.map(n => n.dedupeKey));
+    const nuevas = computed.filter(n => !keysExistentes.has(n.dedupeKey));
     const validOrderIds = await idsOrdenesValidas(nuevas.map(n => n.ordenId));
     for (const n of nuevas) {
       if (!onlineNow()) break;
       if (n.ordenId && !validOrderIds.has(n.ordenId)) continue;
-      await db.createNotification({ tipo:n.type, texto:n.texto, ordenId:n.ordenId || null, inventarioId:n.inventarioId || null, prioridad:n.prioridad, dedupeKey:n.dedupeKey, leida:false });
+      await db.createNotification({
+        tipo:n.type, texto:n.texto, ordenId:n.ordenId || null,
+        inventarioId:n.inventarioId || null, prioridad:n.prioridad,
+        dedupeKey:n.dedupeKey, leida:false
+      });
     }
+    await reloadNotificationsOnly();
     updateBell();
-  } catch (e) { if (onlineNow()) console.error('Error al sincronizar notificaciones:', e); }
-  finally { notifSyncRunning = false; }
+  } catch (e) {
+    if (onlineNow()) console.error('Error al sincronizar notificaciones:', e);
+  } finally {
+    notifSyncRunning = false;
+  }
 }
 
 export async function renderNotificaciones() {
