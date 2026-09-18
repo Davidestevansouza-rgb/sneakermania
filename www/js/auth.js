@@ -9,7 +9,7 @@ import { startNotificationSync, stopNotificationSync } from './modules/notificac
 import { startRealtimeAgenda, stopRealtimeAgenda } from './modules/agenda.js';
 import { startRealtimeConfig, stopRealtimeConfig } from './modules/configuracion.js';
 import { hasPin, saveSessionForPin, getSavedSession, clearPin } from './pin.js';
-import { biometricDisponible, registrarBiometria, verificarBiometria, hasBiometric, ofrecerActivarBiometria, saveBiometricSession, getBiometricSession } from './biometric.js';
+import { biometricDisponible, registrarBiometria, verificarBiometria, hasBiometric, biometricOfferAnswered, ofrecerActivarBiometria, saveBiometricSession, getBiometricSession } from './biometric.js';
 
 // ─── SESIÓN ÚNICA ────────────────────────────────────────────────────────────
 const SESSION_TOKEN_KEY = 'ses-session-token';
@@ -136,7 +136,7 @@ export async function doLogin() {
     try { await _registrarSesionUnica(data.user.id); } catch (e) { /* noop */ }
 
     try {
-      if (!hasBiometric() && await biometricDisponible()) {
+      if (!hasBiometric() && !biometricOfferAnswered() && await biometricDisponible()) {
         ofrecerActivarBiometria(async () => {
           try {
             await registrarBiometria(state.session.user, state.session.userId);
