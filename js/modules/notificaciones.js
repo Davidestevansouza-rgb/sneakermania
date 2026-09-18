@@ -145,6 +145,7 @@ export async function dismissNotification(id) {
 
 const NOTIF_KNOWN_KEY='ses-notif-known';
 const NOTIF_BADGE_KEY='ses-notif-badge';
+const NOTIF_KNOWN_MAX=500;
 function registrarNuevas() {
   let known; try { known = JSON.parse(localStorage.getItem(NOTIF_KNOWN_KEY) || '[]'); } catch (e) { known = []; }
   const knownSet = new Set(known);
@@ -153,14 +154,17 @@ function registrarNuevas() {
   let nuevas=0;
   activas.forEach(n => { if (!knownSet.has(n.id)) { knownSet.add(n.id); nuevas++; } });
   if (nuevas > 0) { badge += nuevas; localStorage.setItem(NOTIF_BADGE_KEY, String(badge)); reproducirSonidoNotificacion(); }
-  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify([...knownSet]));
+  // Evita que años de IDs vistos vuelvan a llenar localStorage.
+  const compactKnown = [...knownSet].slice(-NOTIF_KNOWN_MAX);
+  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify(compactKnown));
   return badge;
 }
 export function marcarNotifsVistas(){
   let known; try { known = JSON.parse(localStorage.getItem(NOTIF_KNOWN_KEY) || '[]'); } catch (e) { known = []; }
   const knownSet = new Set(known);
   (state.notificaciones || []).filter(n => !n.leida).forEach(n => { if (n.id) knownSet.add(n.id); });
-  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify([...knownSet]));
+  const compactKnown = [...knownSet].slice(-NOTIF_KNOWN_MAX);
+  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify(compactKnown));
   localStorage.setItem(NOTIF_BADGE_KEY,'0');
   const el=document.getElementById('bell-count');
   if(el){el.textContent='0';el.style.display='none';}
