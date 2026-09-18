@@ -45,36 +45,20 @@ export function setDateValue(id, value) {
 
 export function saveCache() {
   try {
-    // La caché offline NO debe duplicar miles de URLs/fotos de R2.
-    // Los datos completos siguen en memoria y en Supabase; aquí guardamos
-    // una copia liviana suficiente para arrancar sin conexión.
+    // Caché local mínima: Supabase sigue siendo la fuente de verdad.
+    // No duplicamos clientes, órdenes, artículos, producción ni URLs/fotos
+    // en localStorage; eso era lo que agotaba la cuota del navegador.
     const cache = {
-      ...state,
-      registroPares: (state.registroPares || []).slice(0, 500).map(r => ({
-        ...r, fotoUrls: [], fotoUrl: ''
-      })),
-      ordenes: (state.ordenes || []).map(o => ({
-        ...o,
-        extra: (o.extra && typeof o.extra === 'object')
-          ? { ...o.extra, fotos: [] }
-          : { fotos: [] }
-      })),
-      ordenesEliminadas: (state.ordenesEliminadas || []).map(o => ({
-        ...o,
-        extra: (o.extra && typeof o.extra === 'object')
-          ? { ...o.extra, fotos: [] }
-          : { fotos: [] }
-      })),
-      notificaciones: (state.notificaciones || []).slice(0, 100),
-      activityLog: (state.activityLog || []).slice(0, 100),
-      notifSeenTexts: (state.notifSeenTexts || []).slice(-200)
+      session: state.session || { loggedIn:false, role:null, user:null },
+      config: state.config || {},
+      notificaciones: (state.notificaciones || []).filter(n => !n.leida).slice(0, 50),
+      activityLog: (state.activityLog || []).slice(0, 30),
+      notifSeenTexts: (state.notifSeenTexts || []).slice(-100)
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
     return true;
   } catch (e) {
-    console.error('Error guardando caché local', e);
-    // Si quedó una caché vieja gigante, liberarla para que no siga
-    // bloqueando cada operación del sistema.
+    console.error('Error guardando caché local mínima', e);
     try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
     return false;
   }
