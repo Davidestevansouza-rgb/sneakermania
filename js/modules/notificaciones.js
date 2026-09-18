@@ -55,22 +55,30 @@ function depurarSilenciadas(computed) {
 
 export function computeNotifications() {
   const today = todayISO(0);
-  const notifs = [];
-  const ordenes = Array.isArray(state?.ordenes) ? state.ordenes.filter(o => o && o.eliminada !== true) : [];
-  const inventario = Array.isArray(state?.inventario) ? state.inventario : [];
-  ordenes.filter(o => o.fechaEstimada === today && o.estado !== 'Entregado').forEach(o => notifs.push({ type:'d', texto:'Entrega hoy: orden #' + o.numero + ' de ' + clienteNombre(o.clienteId), ordenId:o.id, prioridad:o.prioridad === 'Alta' ? 'Alta' : 'Media' }));
-  ordenes.filter(o => o.fechaEstimada && o.fechaEstimada < today && o.estado !== 'Entregado').forEach(o => notifs.push({ type:'a', texto:'Servicio atrasado: orden #' + o.numero + ' de ' + clienteNombre(o.clienteId), ordenId:o.id, prioridad:'Alta' }));
-  inventario.filter(i => Number(i.cantidad) <= Number(i.stockMinimo)).forEach(i => notifs.push({ type:'s', texto:'Stock bajo: ' + i.nombre + ' (' + i.cantidad + ' unidades)', inventarioId:i.id, prioridad:'Media' }));
-  ordenes.filter(o => o.estadoPago === 'Pendiente' || o.estadoPago === 'Parcial').forEach(o => notifs.push({ type:'p', texto:'Pago pendiente: orden #' + o.numero + ' — ' + clienteNombre(o.clienteId), ordenId:o.id, prioridad:'Baja' }));
-  return notifs;
+  const ordenes = Array.isArray(state?.ordenes)
+    ? state.ordenes.filter(o => o && o.eliminada !== true)
+    : [];
+
+  // Regla definitiva: solo se generan alertas automáticas por atraso.
+  // La fecha estimada forma parte de la clave para permitir una nueva alerta
+  // si la orden es reprogramada y posteriormente vuelve a atrasarse.
+  return ordenes
+    .filter(o => o.fechaEstimada && o.fechaEstimada < today && o.estado !== 'Entregado')
+    .map(o => ({
+      type: 'a',
+      texto: 'Servicio atrasado: orden #' + o.numero + ' de ' + clienteNombre(o.clienteId),
+      ordenId: o.id,
+      prioridad: 'Alta',
+      dedupeKey: ['a', o.id, o.fechaEstimada].join('|')
+    }));
 }
 
 async function reloadNotificationsOnly() {
   const tenant = state.session?.tenantId;
   if (!supabase || !tenant || !onlineNow()) return false;
-  const { data, error } = await supabase.from('notificaciones').select('id,tipo,texto,leida,prioridad,orden_id,inventario_id,created_at').eq('tenant_id', tenant).order('created_at', { ascending:false }).limit(100);
+  const { data, error } = await supabase.from('notificaciones').select('id,tipo,texto,leida,prioridad,orden_id,inventario_id,dedupe_key,created_at').eq('tenant_id', tenant).order('created_at', { ascending:false }).limit(100);
   if (error) throw error;
-  state.notificaciones = (data || []).map(n => ({ id:n.id, tipo:n.tipo, texto:n.texto, leida:!!n.leida, prioridad:n.prioridad || 'Media', ordenId:n.orden_id || null, inventarioId:n.inventario_id || null, fecha:n.created_at }));
+  state.notificaciones = (data || []).map(n => ({ id:n.id, tipo:n.tipo, texto:n.texto, leida:!!n.leida, prioridad:n.prioridad || 'Media', ordenId:n.orden_id || null, inventarioId:n.inventario_id || null, dedupeKey:n.dedupe_key || null, fecha:n.created_at }));
   return true;
 }
 
@@ -96,13 +104,13 @@ export async function syncNotifications() {
     if (!Array.isArray(state.notificaciones)) state.notificaciones = [];
     const resolved = state.notificaciones.filter(n => !n.leida && !computedTexts.includes(n.texto));
     for (const n of resolved) { if (!onlineNow()) break; await db.markNotificationRead(n.id); }
-    const existingTexts = state.notificaciones.map(n => n.texto);
-    const nuevas = computed.filter(n => !existingTexts.includes(n.texto) && !silenciadas.has(notifLogicalKey(n)));
+    const existingKeys = new Set(state.notificaciones.map(n => n.dedupeKey).filter(Boolean));
+    const nuevas = computed.filter(n => !existingKeys.has(n.dedupeKey) && !silenciadas.has(notifLogicalKey(n)));
     const validOrderIds = await idsOrdenesValidas(nuevas.map(n => n.ordenId));
     for (const n of nuevas) {
       if (!onlineNow()) break;
       if (n.ordenId && !validOrderIds.has(n.ordenId)) continue;
-      await db.createNotification({ tipo:n.type, texto:n.texto, ordenId:n.ordenId || null, inventarioId:n.inventarioId || null, prioridad:n.prioridad, leida:false });
+      await db.createNotification({ tipo:n.type, texto:n.texto, ordenId:n.ordenId || null, inventarioId:n.inventarioId || null, prioridad:n.prioridad, dedupeKey:n.dedupeKey, leida:false });
     }
     updateBell();
   } catch (e) { if (onlineNow()) console.error('Error al sincronizar notificaciones:', e); }
@@ -137,6 +145,7 @@ export async function dismissNotification(id) {
 
 const NOTIF_KNOWN_KEY='ses-notif-known';
 const NOTIF_BADGE_KEY='ses-notif-badge';
+const NOTIF_KNOWN_MAX=500;
 function registrarNuevas() {
   let known; try { known = JSON.parse(localStorage.getItem(NOTIF_KNOWN_KEY) || '[]'); } catch (e) { known = []; }
   const knownSet = new Set(known);
@@ -145,14 +154,17 @@ function registrarNuevas() {
   let nuevas=0;
   activas.forEach(n => { if (!knownSet.has(n.id)) { knownSet.add(n.id); nuevas++; } });
   if (nuevas > 0) { badge += nuevas; localStorage.setItem(NOTIF_BADGE_KEY, String(badge)); reproducirSonidoNotificacion(); }
-  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify([...knownSet]));
+  // Evita que años de IDs vistos vuelvan a llenar localStorage.
+  const compactKnown = [...knownSet].slice(-NOTIF_KNOWN_MAX);
+  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify(compactKnown));
   return badge;
 }
 export function marcarNotifsVistas(){
   let known; try { known = JSON.parse(localStorage.getItem(NOTIF_KNOWN_KEY) || '[]'); } catch (e) { known = []; }
   const knownSet = new Set(known);
   (state.notificaciones || []).filter(n => !n.leida).forEach(n => { if (n.id) knownSet.add(n.id); });
-  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify([...knownSet]));
+  const compactKnown = [...knownSet].slice(-NOTIF_KNOWN_MAX);
+  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify(compactKnown));
   localStorage.setItem(NOTIF_BADGE_KEY,'0');
   const el=document.getElementById('bell-count');
   if(el){el.textContent='0';el.style.display='none';}

@@ -49,7 +49,28 @@ export function saveCache() {
 }
 
 export function loadCache() {
-  try { const raw = localStorage.getItem(STORAGE_KEY); if (raw) return JSON.parse(raw); }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    // Sanea únicamente residuos históricos de notificaciones para que una
+    // caché antigua enorme no vuelva a agotar localStorage al iniciar.
+    if (cached && typeof cached === 'object') {
+      if (Array.isArray(cached.notificaciones) && cached.notificaciones.length > 100) {
+        cached.notificaciones = cached.notificaciones.slice(-100);
+      }
+      if (Array.isArray(cached.notifSeenTexts) && cached.notifSeenTexts.length > 200) {
+        cached.notifSeenTexts = cached.notifSeenTexts.slice(-200);
+      }
+      try {
+        const known = JSON.parse(localStorage.getItem('ses-notif-known') || '[]');
+        if (Array.isArray(known) && known.length > 500) {
+          localStorage.setItem('ses-notif-known', JSON.stringify(known.slice(-500)));
+        }
+      } catch (_) {}
+    }
+    return cached;
+  }
   catch (e) { console.error('Error leyendo caché local', e); }
   return null;
 }

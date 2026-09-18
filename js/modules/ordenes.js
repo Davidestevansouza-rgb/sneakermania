@@ -395,7 +395,29 @@ function soloFechaISO(v) {
   return `${y}-${mo}-${day}`;
 }
 
+let _refreshItemsOrdenesEnCurso = false;
 export function renderOrdenes() {
+  // Una caché local puede quedar parcial si otro dispositivo actualizó los
+  // artículos. Al entrar a Órdenes, refrescamos en segundo plano las órdenes
+  // cuyo número de artículos cargados es menor que cantidadPares. Es solo
+  // lectura: nunca crea, borra ni modifica artículos en Supabase.
+  if (!_refreshItemsOrdenesEnCurso && navigator.onLine) {
+    const incompletas = (state.ordenes || []).filter(o => {
+      const esperado = Number(o.cantidadPares) || 0;
+      return esperado > 0 && itemsDeOrden(o.id).length < esperado;
+    });
+    if (incompletas.length) {
+      _refreshItemsOrdenesEnCurso = true;
+      Promise.all(incompletas.map(o => db.refreshOrdenItems(o.id)))
+        .then(resultados => {
+          if (resultados.some(r => r?.ok)) {
+            persist().catch(() => {});
+            renderOrdenes();
+          }
+        })
+        .finally(() => { _refreshItemsOrdenesEnCurso = false; });
+    }
+  }
   const estado = document.getElementById('filtro-estado').value;
   const prioridad = document.getElementById('filtro-prioridad').value;
   const pago = document.getElementById('filtro-pago').value;
@@ -725,7 +747,16 @@ export async function saveOrden(btn, opts = {}) {
       limpiarFotosGeneralesPendientes();
     }
     await persist();
-    await db.saveOrden(target);
+    const saveResult = await db.saveOrden(target);
+    // Una orden nueva nunca debe anunciarse como guardada si Supabase no
+    // confirmó la escritura. El número ya puede haber sido reservado por
+    // la BD; por eso un fallo aquí debe quedar visible y reintentable.
+    if (!saveResult?.ok) {
+      if (saveResult?.queued) {
+        throw new Error('ORDER_SAVE_PENDING_SYNC');
+      }
+      throw (saveResult?.error || new Error('ORDER_SAVE_NOT_CONFIRMED'));
+    }
     // PRECINTO NUMERADO: crea/actualiza/borra los ítems (pares) según lo
     // que el recepcionista cargó en el formulario, cada uno con su código
     // físico único (NRO_ORDEN-NRO_ITEM).
@@ -759,7 +790,11 @@ export async function saveOrden(btn, opts = {}) {
     return target.id;
   } catch (e) {
     console.error(e);
-    showToast('Error al guardar la orden');
+    if (e?.message === 'ORDER_SAVE_PENDING_SYNC') {
+      showToast('⚠️ Orden pendiente de sincronizar. No se confirmó el guardado en el servidor.');
+    } else {
+      showToast('❌ No se pudo confirmar el guardado de la orden. Reintenta.');
+    }
   } finally { restore(); }
 }
 
