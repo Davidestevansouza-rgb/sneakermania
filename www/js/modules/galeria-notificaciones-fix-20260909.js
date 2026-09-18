@@ -7,39 +7,6 @@ import { state } from '../state.js';
 import * as db from '../db.js';
 import { showToast } from '../ui.js';
 
-let ultimoGaleriaTodosAt = 0;
-
-function activarGaleriaTodos() {
-  const select = document.getElementById('galeria-orden-select');
-  const search = document.getElementById('galeria-orden-search');
-  const results = document.getElementById('galeria-orden-results');
-  if (select) select.value = '__ALL__';
-  if (search) search.value = '👟 Todos los pares';
-  if (results) results.innerHTML = '';
-  if (typeof window.limpiarFiltroGaleriaItem === 'function') {
-    try { window.limpiarFiltroGaleriaItem(); } catch (_) {}
-  }
-  if (select) select.value = '__ALL__';
-  if (typeof window.renderGaleria === 'function') window.renderGaleria();
-}
-
-function manejarGaleriaTodos(ev) {
-  const item = ev.target?.closest?.('.combo-item');
-  if (!item) return;
-  const inline = item.getAttribute('onmousedown') || item.getAttribute('onclick') || '';
-  const texto = (item.textContent || '').trim();
-  const esTodos = inline.includes("seleccionarGaleriaOrden('__ALL__')") ||
-    inline.includes('mostrarTodosLosParesGaleria') ||
-    /Ver fotos de (todas las órdenes|todos los pares)/i.test(texto);
-  if (!esTodos) return;
-  ev.preventDefault();
-  ev.stopImmediatePropagation();
-  const ahora = Date.now();
-  if (ahora - ultimoGaleriaTodosAt < 250) return;
-  ultimoGaleriaTodosAt = ahora;
-  activarGaleriaTodos();
-}
-
 async function marcarTodasNotificacionesLeidas() {
   if (!(state.session && state.session.role === 'Administrador')) {
     showToast('Solo el Administrador puede marcar todas las notificaciones como leídas');
