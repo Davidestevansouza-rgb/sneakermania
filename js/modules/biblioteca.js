@@ -69,7 +69,11 @@ function itemsUbicadosVigentes() {
  *  fecha): incluye también los ya entregados, para poder auditar cuándo
  *  se guardó cada artículo aunque ya se haya retirado. */
 function itemsConRegistroBiblioteca() {
-  return todosLosItems().filter(it => it.biblioteca && it.biblioteca.fecha);
+  // Vista operativa: solo artículos que siguen físicamente en Biblioteca.
+  // Los entregados conservan su historial en Supabase, pero ya no se muestran aquí.
+  return todosLosItems().filter(it =>
+    it.biblioteca && it.biblioteca.fecha && it.biblioteca.ubicacion && !it.entregado
+  );
 }
 
 /** Mapa espacio -> ARRAY de artículos que siguen ocupando ese lugar.
@@ -172,7 +176,7 @@ export function renderBiblioteca() {
           '<button class="btn btn-ghost btn-sm" onclick="limpiarFiltroFechaBiblioteca()">Ver todos</button>' +
         '</div>' +
       '</div>' +
-      '<div class="hint" style="margin:6px 0;">Buscador por fecha: para saber qué se registró en biblioteca un día en particular.</div>' +
+      '<div class="hint" style="margin:6px 0;">Muestra únicamente los artículos que siguen actualmente en biblioteca. Puedes filtrar por fecha de ingreso.</div>' +
       '<div id="biblioteca-lista"></div>' +
     '</div>';
 
@@ -219,7 +223,7 @@ function renderBibliotecaMapa() {
         if (its.length) {
           const esAntigua = its.some(x => x.biblioteca && x.biblioteca.fecha && x.biblioteca.fecha <= limiteAntiguo);
           const codigos = its.map(x => x.codigo).join(', ');
-          celdas.push('<div class="biblioteca-celda ocupada' + (esAntigua ? ' ocupada-antigua' : '') + '" title="' + escAttr(codigos) + (esAntigua ? ' (3+ días en biblioteca)' : '') + '" onclick="verEspacioBiblioteca(\'' + escAttr(its[0].id) + '\')">' +
+          celdas.push('<div class="biblioteca-celda ocupada' + (esAntigua ? ' ocupada-antigua' : '') + '" title="' + escAttr(codigos) + (esAntigua ? ' (3+ días en biblioteca)' : '') + '" onclick="verEspacioBiblioteca(\'' + escAttr(espacio) + '\')">' +
             '<span class="biblioteca-celda-cod">' + escHtml(espacio) + '</span>' +
             '<span class="biblioteca-celda-item">' + escHtml(codigos) + '</span>' +
           '</div>');
@@ -416,6 +420,14 @@ let itemBibliotecaActual = null;
 
 export function abrirUbicarEnBiblioteca(itemId) {
   if (!puedeUsarBiblioteca()) { showToast('No tienes permiso para usar la biblioteca'); return; }
+  const modal = document.getElementById('modal-biblioteca-ubicar');
+  const detalle = document.getElementById('biblioteca-espacio-detalle');
+  if (detalle) detalle.remove();
+  const selLetraPrev = document.getElementById('biblioteca-sel-letra');
+  const selNumeroPrev = document.getElementById('biblioteca-sel-numero');
+  if (selLetraPrev) { const x = selLetraPrev.closest('.field') || selLetraPrev.parentElement; if (x) x.style.display = ''; }
+  if (selNumeroPrev) { const x = selNumeroPrev.closest('.field') || selNumeroPrev.parentElement; if (x) x.style.display = ''; }
+  if (modal) { const guardar = modal.querySelector('[onclick*="guardarUbicacionBiblioteca"]'); if (guardar) guardar.style.display = ''; }
   const it = (state.ordenItems || []).find(x => x.id === itemId);
   if (!it) return;
   itemBibliotecaActual = itemId;
@@ -515,8 +527,49 @@ export async function guardarUbicacionBiblioteca(btn) {
   }
 }
 
-export function verEspacioBiblioteca(itemId) {
-  abrirUbicarEnBiblioteca(itemId);
+export function verEspacioBiblioteca(espacio) {
+  if (!puedeUsarBiblioteca()) { showToast('No tienes permiso para usar la biblioteca'); return; }
+  const items = (mapaOcupacion()[espacio] || []).slice().sort((a, b) =>
+    String(a.codigo || '').localeCompare(String(b.codigo || ''), undefined, { numeric:true })
+  );
+  if (!items.length) { showToast('El estante ' + espacio + ' está libre'); return; }
+
+  const titulo = document.getElementById('biblioteca-modal-titulo');
+  if (titulo) titulo.textContent = 'Estante ' + espacio + ' — ' + items.length + ' artículo(s)';
+
+  const modal = document.getElementById('modal-biblioteca-ubicar');
+  if (!modal) return;
+  const body = modal.querySelector('.modal-body') || modal.querySelector('.modal-content') || modal;
+  let detalle = document.getElementById('biblioteca-espacio-detalle');
+  if (!detalle) {
+    detalle = document.createElement('div');
+    detalle.id = 'biblioteca-espacio-detalle';
+    const selLetra = document.getElementById('biblioteca-sel-letra');
+    const anchor = selLetra ? selLetra.closest('.form-row, .field, div') : null;
+    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(detalle, anchor);
+    else body.insertBefore(detalle, body.firstChild);
+  }
+
+  detalle.innerHTML =
+    '<div class="hint" style="margin-bottom:10px;">Contenido actual de <strong>' + escHtml(espacio) + '</strong>. Solo aparecen artículos no entregados.</div>' +
+    items.map(it => {
+      const info = infoOrdenItem(it);
+      return '<div class="panel" style="padding:10px;margin-bottom:8px;">' +
+        '<div><strong class="mono">' + escHtml(it.codigo) + '</strong> · Orden #' + escHtml(String(info.numeroOrden)) + '</div>' +
+        '<div><strong>' + escHtml(info.cliente) + '</strong></div>' +
+        (it.descripcion ? '<div class="hint" style="margin-top:3px;">' + escHtml(it.descripcion) + '</div>' : '') +
+        '<div style="margin-top:8px;"><button class="btn btn-ghost btn-sm" onclick="abrirUbicarEnBiblioteca(\'' + escAttr(it.id) + '\')">Reubicar este artículo</button></div>' +
+      '</div>';
+    }).join('');
+
+  // En modo "ver estante" ocultamos los selectores/guardado de un artículo concreto.
+  const selLetra = document.getElementById('biblioteca-sel-letra');
+  const selNumero = document.getElementById('biblioteca-sel-numero');
+  if (selLetra) { const x = selLetra.closest('.field') || selLetra.parentElement; if (x) x.style.display = 'none'; }
+  if (selNumero) { const x = selNumero.closest('.field') || selNumero.parentElement; if (x) x.style.display = 'none'; }
+  const guardar = modal.querySelector('[onclick*="guardarUbicacionBiblioteca"]');
+  if (guardar) guardar.style.display = 'none';
+  openModalEl('modal-biblioteca-ubicar');
 }
 
 Object.assign(window, {
