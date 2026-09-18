@@ -558,11 +558,13 @@ export async function createNotification(notif) {
     orden_id: notif.ordenId || null,
     inventario_id: notif.inventarioId || null,
     prioridad: notif.prioridad || 'Media',
+    dedupe_key: notif.dedupeKey || null,
     leida: false
   };
   try {
     if (online()) {
       const { error } = await supabase.from('notificaciones').insert(row);
+      if (error && error.code === '23505' && row.dedupe_key) return { ok: true, duplicate: true };
       if (error) throw error;
     } else {
       pushUpsert('notificaciones', row);
@@ -574,6 +576,7 @@ export async function createNotification(notif) {
       ordenId: row.orden_id,
       inventarioId: row.inventario_id,
       prioridad: row.prioridad,
+      dedupeKey: row.dedupe_key,
       leida: false
     });
     return { ok: true };
