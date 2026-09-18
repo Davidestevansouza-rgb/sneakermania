@@ -121,6 +121,7 @@ export function seleccionarGaleriaOrden(id, resetItem = true) {
 
 export function limpiarBusquedaGaleria() {
   galeriaItemActual = null;
+  galeriaCarpetaActual = null;
   const search = document.getElementById('galeria-orden-search');
   const sel = document.getElementById('galeria-orden-select');
   if (search) search.value = '';
@@ -141,32 +142,110 @@ export function limpiarFiltroGaleriaItem() {
   renderGaleria();
 }
 
-async function renderGaleriaTodos(miGen) {
-  const ordenes = state.ordenes.slice().sort((a, b) => b.numero - a.numero);
-  let bloques = '';
-  for (const o of ordenes) {
+let galeriaCarpetaActual = null;
+
+function carpetasGaleria() {
+  const grupos = new Map();
+  const itemPorId = new Map((state.ordenItems || []).map(it => [it.id, it]));
+  const itemPorCodigo = new Map((state.ordenItems || []).map(it => [it.codigo, it]));
+
+  const asegurar = (codigo, item = null) => {
+    if (!codigo) return null;
+    if (!grupos.has(codigo)) {
+      const it = item || itemPorCodigo.get(codigo) || null;
+      const o = it ? ordenById(it.ordenId) : null;
+      grupos.set(codigo, { codigo, item: it, orden: o, fotos: [], keys: new Set() });
+    }
+    return grupos.get(codigo);
+  };
+  const agregar = (g, foto) => {
+    if (!g || !foto || !foto.url) return;
+    const key = foto.path || foto.url;
+    if (g.keys.has(key)) return;
+    g.keys.add(key);
+    g.fotos.push(foto);
+  };
+
+  // Producción es la fuente canónica de las fotos tomadas por artículo.
+  (state.registroPares || []).forEach(r => {
+    const g = asegurar(r.codigo);
+    const urls = Array.isArray(r.fotoUrls) ? r.fotoUrls : (r.fotoUrl ? [r.fotoUrl] : []);
+    urls.forEach(url => agregar(g, {
+      url,
+      categoria: SERVICIO_A_GALERIA_CAT[r.servicio] || 'todos_pares',
+      fecha: r.fecha || '',
+      itemId: g && g.item ? g.item.id : null
+    }));
+  });
+
+  // Conserva también fotos históricas/manuales guardadas directamente en la orden.
+  (state.ordenes || []).forEach(o => {
     migrateLegacyFotos(o);
-    const fotosBase = (o.extra && o.extra.fotos) ? o.extra.fotos : [];
-    if (!fotosBase.length) continue;
-    const fotos = await storageManager.resolveImageUrls(fotosBase);
-    if (miGen !== _galeriaRenderGen) return;
-    const grupoId = 'gg-all-' + escAttr(o.id);
-    const portada = fotos[0];
-    const portadaSrc = fotoUrlNavegable(portada);
-    const isStoragePortada = !!(portada.url && (portada.url.startsWith('http') || portada.url.startsWith('r2://')));
-    const badgePortada = isStoragePortada ? ' <span class="storage-badge" title="Almacenada en la nube">☁️</span>' : '';
-    const contadorBadge = fotos.length > 1 ? '<span class="gallery-cover-badge">+' + (fotos.length - 1) + ' fotos</span>' : '';
-    bloques += '<div class="gallery-cat"><h4>#' + escHtml(o.numero) + ' · ' + escHtml(clienteNombre(o.clienteId)) + ' <span class="hint">' + escHtml(o.marca || '') + ' ' + escHtml(o.modelo || '') + ' (' + fotos.length + ')</span></h4>' +
-      '<div class="gallery-thumb-wrap gallery-cover" onclick="toggleGaleriaGrupo(\'' + grupoId + '\')" title="Ver todas las fotos"><img src="' + escAttr(portadaSrc) + '" loading="lazy" decoding="async" title="' + escAttr(portada.fecha || '') + '">' + badgePortada + contadorBadge + '</div>' +
-      '<div class="gallery-thumbs" id="' + grupoId + '" style="display:none;">' + fotos.map(foto => {
-        const src = fotoUrlNavegable(foto);
-        const isStorage = !!(foto.url && (foto.url.startsWith('http') || foto.url.startsWith('r2://')));
-        const badge = isStorage ? ' <span class="storage-badge" title="Almacenada en la nube">☁️</span>' : '';
-        return '<div class="gallery-thumb-wrap"><img src="' + escAttr(src) + '" loading="lazy" decoding="async" onclick="ampliarImagen(\'' + String(src || '').replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' + badge + '</div>';
-      }).join('') + '</div></div>';
+    const fotos = (o.extra && Array.isArray(o.extra.fotos)) ? o.extra.fotos : [];
+    fotos.forEach(f => {
+      const it = f.itemId ? itemPorId.get(f.itemId) : null;
+      if (it) agregar(asegurar(it.codigo, it), f);
+    });
+  });
+
+  return Array.from(grupos.values())
+    .filter(g => g.fotos.length)
+    .sort((a, b) => {
+      const [ao, ai] = String(a.codigo).split('-').map(Number);
+      const [bo, bi] = String(b.codigo).split('-').map(Number);
+      return (bo || 0) - (ao || 0) || (bi || 0) - (ai || 0);
+    });
+}
+
+export async function seleccionarCarpetaGaleria(codigo) {
+  galeriaCarpetaActual = codigo || null;
+  const grupo = carpetasGaleria().find(g => g.codigo === codigo);
+  const content = document.getElementById('galeria-content');
+  if (!content) return;
+  if (!grupo) {
+    galeriaCarpetaActual = null;
+    await renderGaleria();
+    return;
   }
+  const miGen = ++_galeriaRenderGen;
+  content.innerHTML = '<div class="hint">Cargando fotos del artículo #' + escHtml(codigo) + '…</div>';
+  const fotos = await storageManager.resolveImageUrls(grupo.fotos);
   if (miGen !== _galeriaRenderGen) return;
-  document.getElementById('galeria-content').innerHTML = bloques ? '<div class="gallery-cats">' + bloques + '</div>' : '<div class="empty-state"><div class="big">📷</div>No hay fotografías para mostrar</div>';
+  const tituloOrden = grupo.orden ? ' · Orden #' + escHtml(grupo.orden.numero) + ' · ' + escHtml(clienteNombre(grupo.orden.clienteId)) : '';
+  const thumbs = fotos.map(foto => {
+    const src = fotoUrlNavegable(foto);
+    const isStorage = !!(foto.url && (foto.url.startsWith('http') || foto.url.startsWith('r2://')));
+    const badge = isStorage ? '<span class="storage-badge" title="Almacenada en la nube">☁️</span>' : '';
+    return '<div class="gallery-thumb-wrap"><img src="' + escAttr(src) + '" loading="lazy" decoding="async" onclick="ampliarImagen(\'' + String(src || '').replace(/'/g, "\\'") + '\')" title="' + escAttr(foto.fecha || '') + '">' + badge + '</div>';
+  }).join('');
+  content.innerHTML =
+    '<div style="margin-bottom:12px;"><button class="btn btn-ghost btn-sm" onclick="volverTodasCarpetasGaleria()">← Todos los pares</button></div>' +
+    '<div class="gallery-cat"><h4>👟 #' + escHtml(codigo) + tituloOrden + ' <span class="hint">(' + fotos.length + ' fotos)</span></h4>' +
+    '<div class="gallery-thumbs" style="display:grid;">' + thumbs + '</div></div>';
+}
+
+export function volverTodasCarpetasGaleria() {
+  galeriaCarpetaActual = null;
+  const sel = document.getElementById('galeria-orden-select');
+  const search = document.getElementById('galeria-orden-search');
+  if (sel) sel.value = '__ALL__';
+  if (search) search.value = '👟 Todos los pares';
+  renderGaleria();
+}
+
+async function renderGaleriaTodos(miGen) {
+  galeriaCarpetaActual = null;
+  const grupos = carpetasGaleria();
+  if (miGen !== _galeriaRenderGen) return;
+  const bloques = grupos.map(g => {
+    const tituloOrden = g.orden ? ' · Orden #' + escHtml(g.orden.numero) + ' · ' + escHtml(clienteNombre(g.orden.clienteId)) : '';
+    return '<button type="button" class="gallery-cat" style="text-align:left;cursor:pointer;width:100%;" onclick="seleccionarCarpetaGaleria(\'' + escAttr(g.codigo) + '\')">' +
+      '<h4>📁 👟 #' + escHtml(g.codigo) + tituloOrden + ' <span class="hint">(' + g.fotos.length + ' fotos)</span></h4>' +
+      '<div class="hint">Abrir carpeta para ver las fotografías</div></button>';
+  }).join('');
+  document.getElementById('galeria-content').innerHTML = bloques
+    ? '<div class="gallery-cats">' + bloques + '</div>'
+    : '<div class="empty-state"><div class="big">📷</div>No hay fotografías para mostrar</div>';
 }
 
 export async function renderGaleria() {
@@ -314,4 +393,4 @@ export function toggleGaleriaGrupo(grupoId) {
   cont.style.display = (cont.style.display === 'none' || !cont.style.display) ? 'flex' : 'none';
 }
 
-Object.assign(window, { populateGaleriaSelect, renderGaleria, addGaleriaFoto, eliminarFoto, ampliarImagen, imagenAmpliadaNav, filtrarGaleriaOrdenes, seleccionarGaleriaOrden, seleccionarGaleriaItem, limpiarBusquedaGaleria, limpiarFiltroGaleriaItem, toggleGaleriaGrupo });
+Object.assign(window, { populateGaleriaSelect, renderGaleria, addGaleriaFoto, eliminarFoto, ampliarImagen, imagenAmpliadaNav, filtrarGaleriaOrdenes, seleccionarGaleriaOrden, seleccionarGaleriaItem, limpiarBusquedaGaleria, limpiarFiltroGaleriaItem, seleccionarCarpetaGaleria, volverTodasCarpetasGaleria, toggleGaleriaGrupo });
