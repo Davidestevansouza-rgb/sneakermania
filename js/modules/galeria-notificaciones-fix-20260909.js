@@ -60,10 +60,9 @@ async function marcarTodasNotificacionesLeidas() {
     if (typeof window.silenciarNotificacionesActuales === 'function') {
       window.silenciarNotificacionesActuales(pendientes);
     }
-    for (const n of pendientes) {
-      await db.markNotificationRead(n.id);
-      n.leida = true;
-    }
+    const resultado = await db.markAllNotificationsRead();
+    if (!resultado?.ok) throw new Error(resultado?.error || 'No se confirmó la actualización');
+    pendientes.forEach(n => { n.leida = true; });
     localStorage.setItem('ses-notif-badge', '0');
     if (typeof window.renderNotificaciones === 'function') await window.renderNotificaciones();
     else if (typeof window.updateBell === 'function') window.updateBell();
