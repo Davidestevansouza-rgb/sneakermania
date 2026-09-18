@@ -725,7 +725,16 @@ export async function saveOrden(btn, opts = {}) {
       limpiarFotosGeneralesPendientes();
     }
     await persist();
-    await db.saveOrden(target);
+    const saveResult = await db.saveOrden(target);
+    // Una orden nueva nunca debe anunciarse como guardada si Supabase no
+    // confirmó la escritura. El número ya puede haber sido reservado por
+    // la BD; por eso un fallo aquí debe quedar visible y reintentable.
+    if (!saveResult?.ok) {
+      if (saveResult?.queued) {
+        throw new Error('ORDER_SAVE_PENDING_SYNC');
+      }
+      throw (saveResult?.error || new Error('ORDER_SAVE_NOT_CONFIRMED'));
+    }
     // PRECINTO NUMERADO: crea/actualiza/borra los ítems (pares) según lo
     // que el recepcionista cargó en el formulario, cada uno con su código
     // físico único (NRO_ORDEN-NRO_ITEM).
@@ -759,7 +768,11 @@ export async function saveOrden(btn, opts = {}) {
     return target.id;
   } catch (e) {
     console.error(e);
-    showToast('Error al guardar la orden');
+    if (e?.message === 'ORDER_SAVE_PENDING_SYNC') {
+      showToast('⚠️ Orden pendiente de sincronizar. No se confirmó el guardado en el servidor.');
+    } else {
+      showToast('❌ No se pudo confirmar el guardado de la orden. Reintenta.');
+    }
   } finally { restore(); }
 }
 
