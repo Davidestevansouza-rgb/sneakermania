@@ -12,6 +12,7 @@
 const CRED_ID_KEY = 'sm_biometric_cred_id';
 // Sesión guardada SOLO para biometría (separada del PIN para que no se borre en logout).
 const BIOMETRIC_SESSION_KEY = 'sm_biometric_session';
+const BIOMETRIC_OFFERED_KEY = 'sm_biometric_offer_answered';
 
 function b64encode(buf) {
   return btoa(String.fromCharCode(...new Uint8Array(buf)));
@@ -28,6 +29,14 @@ function randomChallenge() {
 /** ¿Ya se registró una huella/Face ID en este dispositivo? */
 export function hasBiometric() {
   return !!localStorage.getItem(CRED_ID_KEY);
+}
+
+/** Evita volver a interrumpir al usuario después de que ya respondió en este dispositivo. */
+export function biometricOfferAnswered() {
+  return localStorage.getItem(BIOMETRIC_OFFERED_KEY) === '1';
+}
+function markBiometricOfferAnswered() {
+  try { localStorage.setItem(BIOMETRIC_OFFERED_KEY, '1'); } catch (_) {}
 }
 
 /** Borra el registro biométrico de este dispositivo. */
@@ -129,11 +138,15 @@ export function ofrecerActivarBiometria(onAceptar) {
     </div>`;
   document.body.appendChild(modal);
   const close = () => modal.remove();
-  modal.querySelector('#bio-offer-no').addEventListener('click', close);
+  modal.querySelector('#bio-offer-no').addEventListener('click', () => {
+    markBiometricOfferAnswered();
+    close();
+  });
   modal.querySelector('#bio-offer-yes').addEventListener('click', async () => {
+    markBiometricOfferAnswered();
     close();
     if (onAceptar) await onAceptar();
   });
 }
 
-Object.assign(window, { biometricDisponible, registrarBiometria, verificarBiometria, hasBiometric, clearBiometric, saveBiometricSession, getBiometricSession });
+Object.assign(window, { biometricDisponible, registrarBiometria, verificarBiometria, hasBiometric, biometricOfferAnswered, clearBiometric, saveBiometricSession, getBiometricSession });
