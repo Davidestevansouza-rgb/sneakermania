@@ -95,10 +95,10 @@ export function handleGlobalSearch(q) {
 export function renderAll() {
   migrateOrdenes();
   applyBrandLogo();
-  renderDashboard();
-  renderClientes();
-  renderOrdenes();
-  renderInventario();
+  if (puedeVerTab('dashboard')) renderDashboard();
+  if (puedeVerTab('clientes')) renderClientes();
+  if (puedeVerTab('ordenes')) renderOrdenes();
+  if (puedeVerTab('inventario')) renderInventario();
   renderNotificaciones();
   renderConfiguracion();
   populateIaOrderSelect();
