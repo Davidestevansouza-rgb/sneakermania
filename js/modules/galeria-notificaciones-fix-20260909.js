@@ -125,6 +125,5 @@ else instalar();
 
 Object.assign(window, {
   limpiarTodasNotificaciones: marcarTodasNotificacionesLeidas,
-  marcarTodasNotificacionesLeidas,
-  activarGaleriaTodos
+  marcarTodasNotificacionesLeidas
 });
