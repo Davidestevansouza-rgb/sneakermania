@@ -40,8 +40,19 @@ function entradasFila(row) {
 function textoEstado(e) {
   if (e.status === 'uploading') return 'Comprimiendo y subiendo…';
   if (e.status === 'confirming') return 'Confirmando en Supabase…';
-  if (e.status === 'error') return '⚠️ No se pudo guardar. Guardá nuevamente para reintentar.';
+  if (e.status === 'error') return '⚠️ No se pudo guardar esta foto.';
   return 'Foto lista para guardar';
+}
+
+async function confirmarFotoConReintentos(ordenId, foto, intentos = 3) {
+  let ultimoError = null;
+  for (let intento = 1; intento <= intentos; intento++) {
+    const res = await appendOrderPhotoAtomic(ordenId, foto);
+    if (!res?.error) return res;
+    ultimoError = res.error;
+    if (intento < intentos) await new Promise(r => setTimeout(r, intento === 1 ? 500 : 1200));
+  }
+  throw ultimoError || new Error('No se pudo confirmar la foto en Supabase');
 }
 
 function mostrarPendientes(row) {
@@ -83,7 +94,55 @@ function mostrarPendientes(row) {
       row[PENDING_KEY] = actuales;
       mostrarPendientes(row);
     };
-    wrap.append(img, txt, del);
+    wrap.append(img, txt);
+    if (entry.status === 'error') {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.textContent = 'Reintentar foto';
+      retry.className = 'btn btn-ghost btn-sm';
+      retry.onclick = async ev => {
+        ev.preventDefault(); ev.stopPropagation();
+        const ordenId = document.getElementById('orden-id')?.value || '';
+        const itemId = row.dataset.itemId || '';
+        if (!ordenId || !itemId) {
+          showToast('⚠️ No se pudo identificar la orden o el artículo. La foto sigue pendiente.');
+          return;
+        }
+        const item = (state.ordenItems || []).find(it => it.id === itemId && it.ordenId === ordenId);
+        if (!item) {
+          showToast('⚠️ No se pudo identificar el artículo. La foto sigue pendiente.');
+          return;
+        }
+        retry.disabled = true;
+        try {
+          entry.status = entry.uploadedFoto ? 'confirming' : 'uploading';
+          entry.error = null;
+          mostrarPendientes(row);
+          let foto = entry.uploadedFoto;
+          if (!foto) {
+            foto = await storageManager.uploadFoto(entry.file, ordenId, 'item_inicial');
+            entry.uploadedFoto = foto;
+          }
+          foto.item = item.codigo;
+          foto.itemId = item.id;
+          foto.categoria = 'item_inicial';
+          entry.status = 'confirming';
+          mostrarPendientes(row);
+          await confirmarFotoConReintentos(ordenId, foto);
+          entry.status = 'saved';
+          limpiarGuardadasDeFila(row);
+          await persist();
+          showToast('✅ Foto de ' + item.codigo + ' guardada correctamente.');
+        } catch (error) {
+          entry.status = 'error';
+          entry.error = error;
+          mostrarPendientes(row);
+          showToast('⚠️ La foto sigue pendiente. Podés reintentar sin volver a guardar la orden.');
+        }
+      };
+      wrap.appendChild(retry);
+    }
+    wrap.appendChild(del);
     box.appendChild(wrap);
   });
 
@@ -114,9 +173,8 @@ document.addEventListener('change', ev => {
 }, true);
 
 function snapshotPendientes() {
-  return Array.from(document.querySelectorAll('#orden-items-list .orden-item-row')).map((row, index) => ({
+  return Array.from(document.querySelectorAll('#orden-items-list .orden-item-row')).map(row => ({
     row,
-    index,
     itemId: row.dataset.itemId || '',
     entries: entradasFila(row).filter(e => e.status !== 'saved')
   })).filter(x => x.entries.length);
@@ -173,8 +231,7 @@ async function guardarFotosPendientes(ordenId, pendientes) {
         // uploadedFoto se conserva y un reintento vuelve únicamente a la RPC.
         entry.status = 'confirming';
         mostrarPendientes(p.row);
-        const res = await appendOrderPhotoAtomic(orden.id, foto);
-        if (res?.error) throw res.error;
+        await confirmarFotoConReintentos(orden.id, foto);
 
         entry.status = 'saved';
         entry.error = null;
