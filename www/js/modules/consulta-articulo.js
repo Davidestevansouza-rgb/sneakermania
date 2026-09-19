@@ -74,7 +74,15 @@ function detalleHtml(o,it,regs,log){
 }
 
 export function verDetalleConsulta(id){const e=document.getElementById('cu-detail-'+id);if(e)e.classList.toggle('open');}
-export function verFotosConsulta(id){const e=document.getElementById('cu-gallery-'+id);if(!e)return;e.classList.toggle('open');pintarFotos().catch(()=>{});}
+export async function verFotosConsulta(id){
+  const box=document.getElementById('cu-gallery-'+id);
+  if(!box)return;
+  const refs=[...box.querySelectorAll('img[data-r2-ref]')].map(img=>img.dataset.r2Ref).filter(Boolean);
+  if(!refs.length)return;
+  const urls=(await Promise.all(refs.map(ref=>resolveImageUrl(ref).catch(()=>null)))).filter(Boolean);
+  if(!urls.length)return;
+  if(typeof window.ampliarImagen==='function') window.ampliarImagen(urls[0],urls);
+});}
 export function irBibliotecaConsulta(id){if(window.switchTab)window.switchTab('biblioteca');setTimeout(()=>{if(window.abrirUbicarEnBiblioteca)window.abrirUbicarEnBiblioteca(id);},80);}
 export function abrirOrdenConsulta(id){
   const o=(state.ordenes||[]).find(x=>String(x.id)===String(id));
@@ -116,7 +124,7 @@ export async function buscarFichaArticulo(){
   const cards=items.map(({it,regs})=>{const lav=tiene(regs,'lavado'),det=tiene(regs,'detallado','detalle'),ub=ubicacion(it),fs=fotosDe(o,it,regs),estado=it.entregado?'Entregado':(it.estado||o.estado||'Sin estado'),al=alerta(o,it,regs),art=[it.marca,it.modelo,it.descripcion,it.color].filter(Boolean).join(' · ')||'Artículo';
    return '<div class="cu-item"><button class="cu-photo cu-folder" onclick="verFotosConsulta(\''+escAttr(it.id)+'\')" aria-label="Abrir fotos">'+(fs[0]?'<img data-r2-ref="'+escAttr(fs[0])+'" src="" alt="Foto '+escAttr(it.codigo||'')+'">':'👟')+(fs.length?'<span>'+fs.length+'</span>':'')+'</button><div><div class="cu-code">'+escHtml(it.codigo||'—')+'</div><div class="cu-desc">'+escHtml(art)+'</div>'+(al.length?'<div class="cu-mini-alert">⚠ '+al.length+' alerta'+(al.length===1?'':'s')+'</div>':'')+'</div>'+
    '<div class="cu-statuses"><div class="cu-status '+(lav?'cu-ok':'')+'"><small>🧼 Lavado</small><strong>'+(lav?'✓ Sí':'Pendiente')+'</strong></div><div class="cu-status '+(det?'cu-ok':'')+'"><small>✨ Detallado</small><strong>'+(det?'✓ Sí':'Pendiente')+'</strong></div><button class="cu-status cu-action" onclick="irBibliotecaConsulta(\''+escAttr(it.id)+'\')"><small>📚 Biblioteca</small><strong>'+escHtml(ub||'Ubicar')+'</strong></button><div class="cu-status"><small>📦 Estado actual</small><strong>'+escHtml(estado)+'</strong></div></div>'+
-   '<div class="cu-gallery cu-inline-gallery" id="cu-gallery-'+escAttr(it.id)+'">'+fs.map(u=>'<img data-r2-ref="'+escAttr(u)+'" src="" alt="Foto del artículo">').join('')+'</div>'+
+   '<div class="cu-gallery cu-inline-gallery" id="cu-gallery-'+escAttr(it.id)+'" aria-hidden="true">'+fs.map(u=>'<img data-r2-ref="'+escAttr(u)+'" src="" alt="Foto del artículo">').join('')+'</div>'+
    '<div class="cu-expand"><button class="btn btn-ghost btn-sm" onclick="verDetalleConsulta(\''+escAttr(it.id)+'\')">Ver información completa</button></div>'+detalleHtml(o,it,regs,log)+'</div>';}).join('');
   const creadoPor=actorLog(log,a=>a.includes('Creó orden #')), editadoPor=actorLog(log,a=>a.includes('Editó orden #'),true);
   const servicios=servicioOrden(o,items.map(x=>x.it));
