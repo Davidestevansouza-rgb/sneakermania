@@ -16,6 +16,28 @@
 <link rel="stylesheet" href="styles/main.css">
 <link rel="stylesheet" href="styles/fixes.css">
 <link rel="stylesheet" href="styles/theme-negro-rojo.css">
+<style id="consulta-unificada-style">
+#tab-consulta{max-width:1180px}
+.consulta-search-panel{background:var(--card,#fff);border:1px solid var(--line);border-radius:16px;padding:14px 16px;margin-bottom:16px;box-shadow:0 2px 10px rgba(15,23,42,.04)}
+.consulta-search-row{display:flex;gap:10px;align-items:center}.consulta-search-input{flex:1;min-width:220px}
+.cu-order{background:var(--card,#fff);border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:0 5px 20px rgba(15,23,42,.06);margin-bottom:18px}
+.cu-order-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:18px 20px;background:linear-gradient(180deg,rgba(248,250,252,.8),transparent)}
+.cu-kicker{font-size:11px;font-weight:800;letter-spacing:.08em;color:#dc2626}.cu-client{font-size:20px;font-weight:800;margin:4px 0}.cu-meta,.cu-money{font-size:12px;color:var(--muted,#64748b)}
+.cu-paid{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;background:#eaf8ef;color:#166534}
+.cu-pending{background:#fff7ed;color:#9a3412}.cu-item{display:grid;grid-template-columns:82px minmax(150px,1.1fr) minmax(420px,2fr);gap:14px;align-items:center;padding:15px 20px;border-top:1px solid var(--line)}
+.cu-photo{width:82px;height:82px;border-radius:12px;overflow:hidden;background:#f1f5f9;display:flex;align-items:center;justify-content:center}.cu-photo img{width:100%;height:100%;object-fit:cover}.cu-code{font-weight:900;font-size:16px}.cu-desc{font-size:13px;margin-top:4px}
+.cu-statuses{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.cu-status{border:1px solid var(--line);border-radius:11px;padding:9px 10px;min-height:55px}.cu-status small{display:block;color:var(--muted,#64748b);margin-bottom:4px}.cu-status strong{font-size:13px}.cu-ok strong{color:#166534}
+@media(max-width:760px){.cu-order-head{padding:14px}.cu-item{grid-template-columns:72px 1fr;padding:13px}.cu-photo{width:72px;height:72px}.cu-statuses{grid-column:1/-1;grid-template-columns:repeat(2,1fr)}.consulta-search-row{flex-wrap:wrap}.consulta-search-row .btn{flex:1}.consulta-search-input{flex-basis:100%}}
+
+.cu-expand{grid-column:1/-1;text-align:right;margin-top:-4px}.cu-detail{grid-column:1/-1;display:none;border-top:1px dashed var(--line);padding-top:14px}.cu-detail.open{display:block}
+.cu-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.cu-detail h4{margin:4px 0 9px}.cu-detail-grid>div>div{font-size:13px;line-height:1.8}
+.cu-alerts{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}.cu-alerts span,.cu-mini-alert{font-size:11px;font-weight:700;color:#9a3412;background:#fff7ed;border-radius:999px;padding:4px 8px}.cu-mini-alert{display:inline-block;margin-top:7px}
+.cu-timeline{display:flex;gap:0;overflow-x:auto;padding:8px 0 14px}.cu-timeline>div{position:relative;min-width:145px;padding:0 12px 0 18px;border-top:2px solid var(--line)}.cu-timeline span{position:absolute;width:10px;height:10px;border-radius:50%;background:#16a34a;top:-6px;left:0}.cu-timeline b,.cu-timeline small{display:block;font-size:12px;margin-top:8px}.cu-timeline small{color:var(--muted,#64748b);margin-top:3px}.cu-detail-actions{display:flex;gap:8px;flex-wrap:wrap}.cu-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:12px}.cu-gallery img{width:100%;height:110px;object-fit:cover;border-radius:10px}
+@media(max-width:760px){.cu-detail-grid{grid-template-columns:1fr}.cu-expand{text-align:stretch}.cu-expand .btn{width:100%}}
+
+.cu-by{font-weight:600;letter-spacing:0;color:var(--muted,#64748b);text-transform:none}.cu-phone{font-size:13px;font-weight:700;margin:2px 0 7px}.cu-services{display:flex;gap:6px;flex-wrap:wrap;margin:9px 0}.cu-services span{padding:4px 8px;border-radius:999px;background:#f1f5f9;font-size:11px;font-weight:800}.cu-head-actions{display:flex;gap:8px;align-items:flex-end;flex-direction:column}.cu-folder{position:relative;border:0;padding:0;cursor:pointer}.cu-folder span{position:absolute;right:5px;bottom:5px;background:rgba(0,0,0,.75);color:white;border-radius:999px;padding:2px 6px;font-size:10px;font-weight:800}.cu-action{appearance:none;background:transparent;text-align:left;cursor:pointer;color:inherit}.cu-action:hover{background:rgba(248,250,252,.9)}.cu-inline-gallery{grid-column:1/-1}.cu-audit-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:4px 0 16px}.cu-audit-strip>div{background:#f8fafc;border-radius:10px;padding:10px}.cu-audit-strip small,.cu-audit-strip b,.cu-audit-strip em{display:block}.cu-audit-strip b{margin-top:4px}.cu-audit-strip em{font-size:11px;color:var(--muted,#64748b);font-style:normal;margin-top:2px}
+@media(max-width:760px){.cu-head-actions{align-items:flex-start}.cu-audit-strip{grid-template-columns:1fr}.cu-by{display:block;margin-top:3px}.cu-services{margin-top:7px}}
+.cu-inline-gallery{display:none!important}.cu-inline-gallery.open{display:grid!important}.cu-item-services{display:flex!important;flex-direction:row!important;align-items:center;gap:7px!important;flex-wrap:wrap!important;grid-column:1/-1;margin:8px 0 12px!important}.cu-item-services span{display:inline-flex!important;align-items:center;width:auto!important;white-space:nowrap;padding:6px 10px!important}</style>
 </head>
 <body>
 
@@ -61,6 +83,7 @@
         <button class="nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg></span>Dashboard</button>
         <button class="nav-item" data-tab="clientes" onclick="switchTab('clientes')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg></span>Clientes</button>
         <button class="nav-item" data-tab="ordenes" onclick="switchTab('ordenes')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3.5h6v2.5H9z" fill="currentColor" stroke="none"/><path d="M8 11h8M8 15h5"/></svg></span>Órdenes</button>
+        <button class="nav-item" data-tab="consulta" onclick="switchTab('consulta')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5M8 9h6M8 12h4"/></svg></span>Consulta rápida</button>
         <button class="nav-item" data-tab="biblioteca" onclick="switchTab('biblioteca')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4v16M4 4h3v16H4zM10 4h3v16h-3zM16 5l3.5-1 2 15.5-3.5 1z"/></svg></span>Biblioteca</button>
         <button class="nav-item" data-tab="ia" onclick="switchTab('ia')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" stroke="none"><path d="M12 2l1.8 5.6L19.4 9.4 13.8 11.2 12 17l-1.8-5.8L4.6 9.4l5.6-1.8z"/><circle cx="19" cy="18" r="2"/></svg></span>Análisis con IA</button>
         <button class="nav-item" data-tab="galeria" onclick="switchTab('galeria')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="15" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="M3 16l4.5-4 3 2.6L14.5 11 18 15"/></svg></span>Galería</button>
@@ -386,6 +409,22 @@
             <div class="hint" style="margin:6px 0;">Respaldo de artículos registrados (con sus fotos) por fecha y empleado, para pagar al lavador el fin de semana o fin de mes sin mezclar fotos de varios empleados.</div>
             <div id="prod-historial"></div>
           </div>
+        </div>
+
+        <!-- CONSULTA INTEGRAL DE ARTÍCULO -->
+        <div class="tab-section" id="tab-consulta">
+          <div class="page-head">
+            <div><h1 class="page-title">Consulta unificada</h1><div class="page-sub">Cliente, orden, artículo, foto, proceso, pago y ubicación de biblioteca en una sola pantalla.</div></div>
+          </div>
+          <div class="consulta-search-panel">
+            <div class="consulta-search-row">
+              <input id="consulta-articulo-q" class="input consulta-search-input" placeholder="N.º de orden exacto, cliente, código o artículo" onkeydown="if(event.key==='Enter')buscarFichaArticulo()">
+              <button class="btn btn-primary" onclick="buscarFichaArticulo()">Buscar</button>
+              <button class="btn btn-ghost" onclick="limpiarFichaArticulo()">Limpiar</button>
+            </div>
+            <div class="hint" style="margin-top:8px">N.º de orden es exacto: buscar 70 muestra únicamente la orden 70.</div>
+          </div>
+          <div id="consulta-resultados"><div class="empty-state">Busca una orden o artículo para ver toda su trazabilidad en un solo lugar.</div></div>
         </div>
 
         <!-- BIBLIOTECA -->
