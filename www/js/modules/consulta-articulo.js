@@ -77,13 +77,26 @@ export function verDetalleConsulta(id){const e=document.getElementById('cu-detai
 export function verFotosConsulta(id){const e=document.getElementById('cu-gallery-'+id);if(!e)return;e.classList.toggle('open');pintarFotos().catch(()=>{});}
 export function irBibliotecaConsulta(id){if(window.switchTab)window.switchTab('biblioteca');setTimeout(()=>{if(window.abrirUbicarEnBiblioteca)window.abrirUbicarEnBiblioteca(id);},80);}
 export function abrirOrdenConsulta(id){
-  // Igual que el botón "Ver" de Órdenes de servicio: abre el modal nativo
-  // correspondiente a esta orden, sin navegar a otra pantalla.
-  if(typeof window.viewOrdenDetalle==='function'){
-    window.viewOrdenDetalle(id);
-    return;
-  }
-  console.warn('Detalle de orden no disponible');
+  // Ir al listado nativo de Órdenes y dejar visible la tarjeta exacta.
+  if(typeof window.switchTab==='function') window.switchTab('ordenes');
+  setTimeout(()=>{
+    const o=(state.ordenes||[]).find(x=>String(x.id)===String(id));
+    if(!o)return;
+    const numero=String(o.numero||'');
+    const cards=[...document.querySelectorAll('#tab-ordenes .order-card, #tab-ordenes [data-orden-id], #tab-ordenes [data-order-id]')];
+    let card=cards.find(el=>String(el.dataset?.ordenId||el.dataset?.orderId||'')===String(id));
+    if(!card){
+      card=cards.find(el=>{
+        const t=(el.innerText||'').trim();
+        return new RegExp('(^|\\s)#?'+numero+'(\\s|$)').test(t);
+      });
+    }
+    if(card){
+      card.scrollIntoView({behavior:'smooth',block:'center'});
+      card.classList.add('cu-order-focus');
+      setTimeout(()=>card.classList.remove('cu-order-focus'),2200);
+    }
+  },120);
 }
 export async function buscarFichaArticulo(){
  const input=document.getElementById('consulta-articulo-q'),cont=document.getElementById('consulta-resultados');if(!input||!cont)return;const q=input.value.trim();
