@@ -1719,6 +1719,10 @@ async function sincronizarItemsDesdeFormulario(o) {
       };
       state.ordenItems.push(nuevo);
       await db.saveOrdenItem(nuevo);
+      // Vincular inmediatamente ESTA fila con el item definitivo recién creado.
+      // Las fotos diferidas leen este itemId después del guardado y nunca deben
+      // deducir el artículo por la posición visual de la fila.
+      fila.dataset.itemId = nuevo.id;
       idsVistos.add(nuevo.id);
       // Si el usuario tomó una foto de este artículo nuevo antes de guardar,
       // se sube ahora que ya tiene id y codigo.
