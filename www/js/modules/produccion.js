@@ -313,6 +313,14 @@ export async function registrarPares(btn) {
   // este mismo servicio? (de cualquier empleado)
   const yaRegistrado = (state.registroPares || []).find(r => (r.codigo || '') === codigoNorm && (r.servicio || '') === servicio);
   if (yaRegistrado) {
+    // Un servicio ya registrado pertenece exclusivamente al trabajador que lo
+    // creó. Nunca permitimos que otro usuario lo re-guarde: antes eso podía
+    // transferir empleado/usuario_id y afectar el conteo/pago del trabajador.
+    const uidActual = (state.session && state.session.userId) || null;
+    if (yaRegistrado.usuarioId && uidActual && yaRegistrado.usuarioId !== uidActual) {
+      showToast('El artículo ' + codigoNorm + ' ya fue registrado para "' + servicio + '" por ' + (yaRegistrado.empleado || 'otro trabajador') + '. No se puede modificar desde otro usuario.');
+      return;
+    }
     // El artículo+servicio ya estaba registrado: no se crea un registro
     // nuevo ni se vuelve a contar. Si la persona escribió algo NUEVO en
     // Observación, esa nota se INTEGRA (se agrega) al registro que ya
