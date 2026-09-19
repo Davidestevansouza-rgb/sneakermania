@@ -61,6 +61,7 @@
         <button class="nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg></span>Dashboard</button>
         <button class="nav-item" data-tab="clientes" onclick="switchTab('clientes')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg></span>Clientes</button>
         <button class="nav-item" data-tab="ordenes" onclick="switchTab('ordenes')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3.5h6v2.5H9z" fill="currentColor" stroke="none"/><path d="M8 11h8M8 15h5"/></svg></span>Órdenes</button>
+        <button class="nav-item" data-tab="consulta" onclick="switchTab('consulta')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5M8 9h6M8 12h4"/></svg></span>Consulta rápida</button>
         <button class="nav-item" data-tab="biblioteca" onclick="switchTab('biblioteca')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4v16M4 4h3v16H4zM10 4h3v16h-3zM16 5l3.5-1 2 15.5-3.5 1z"/></svg></span>Biblioteca</button>
         <button class="nav-item" data-tab="ia" onclick="switchTab('ia')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" stroke="none"><path d="M12 2l1.8 5.6L19.4 9.4 13.8 11.2 12 17l-1.8-5.8L4.6 9.4l5.6-1.8z"/><circle cx="19" cy="18" r="2"/></svg></span>Análisis con IA</button>
         <button class="nav-item" data-tab="galeria" onclick="switchTab('galeria')"><span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="15" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="M3 16l4.5-4 3 2.6L14.5 11 18 15"/></svg></span>Galería</button>
@@ -386,6 +387,22 @@
             <div class="hint" style="margin:6px 0;">Respaldo de artículos registrados (con sus fotos) por fecha y empleado, para pagar al lavador el fin de semana o fin de mes sin mezclar fotos de varios empleados.</div>
             <div id="prod-historial"></div>
           </div>
+        </div>
+
+        <!-- CONSULTA INTEGRAL DE ARTÍCULO -->
+        <div class="tab-section" id="tab-consulta">
+          <div class="page-head">
+            <div><h1 class="page-title">Consulta rápida</h1><div class="page-sub">Toda la trazabilidad de un artículo en un solo lugar</div></div>
+          </div>
+          <div class="card" style="padding:16px;margin-bottom:14px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <input id="consulta-articulo-q" class="input" style="flex:1;min-width:220px" placeholder="Orden exacta (ej. 70), código 70-2, cliente, marca o artículo" onkeydown="if(event.key==='Enter')buscarFichaArticulo()">
+              <button class="btn btn-primary" onclick="buscarFichaArticulo()">Buscar</button>
+              <button class="btn btn-ghost" onclick="limpiarFichaArticulo()">Limpiar</button>
+            </div>
+            <div class="hint" style="margin-top:8px">Si escribes un número de orden, la coincidencia es exacta: 70 muestra solamente la orden 70.</div>
+          </div>
+          <div id="consulta-resultados"><div class="empty-state">Busca una orden o artículo para ver toda su trazabilidad en un solo lugar.</div></div>
         </div>
 
         <!-- BIBLIOTECA -->
