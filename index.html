@@ -28,6 +28,12 @@
 .cu-photo{width:82px;height:82px;border-radius:12px;overflow:hidden;background:#f1f5f9;display:flex;align-items:center;justify-content:center}.cu-photo img{width:100%;height:100%;object-fit:cover}.cu-code{font-weight:900;font-size:16px}.cu-desc{font-size:13px;margin-top:4px}
 .cu-statuses{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.cu-status{border:1px solid var(--line);border-radius:11px;padding:9px 10px;min-height:55px}.cu-status small{display:block;color:var(--muted,#64748b);margin-bottom:4px}.cu-status strong{font-size:13px}.cu-ok strong{color:#166534}
 @media(max-width:760px){.cu-order-head{padding:14px}.cu-item{grid-template-columns:72px 1fr;padding:13px}.cu-photo{width:72px;height:72px}.cu-statuses{grid-column:1/-1;grid-template-columns:repeat(2,1fr)}.consulta-search-row{flex-wrap:wrap}.consulta-search-row .btn{flex:1}.consulta-search-input{flex-basis:100%}}
+
+.cu-expand{grid-column:1/-1;text-align:right;margin-top:-4px}.cu-detail{grid-column:1/-1;display:none;border-top:1px dashed var(--line);padding-top:14px}.cu-detail.open{display:block}
+.cu-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.cu-detail h4{margin:4px 0 9px}.cu-detail-grid>div>div{font-size:13px;line-height:1.8}
+.cu-alerts{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}.cu-alerts span,.cu-mini-alert{font-size:11px;font-weight:700;color:#9a3412;background:#fff7ed;border-radius:999px;padding:4px 8px}.cu-mini-alert{display:inline-block;margin-top:7px}
+.cu-timeline{display:flex;gap:0;overflow-x:auto;padding:8px 0 14px}.cu-timeline>div{position:relative;min-width:145px;padding:0 12px 0 18px;border-top:2px solid var(--line)}.cu-timeline span{position:absolute;width:10px;height:10px;border-radius:50%;background:#16a34a;top:-6px;left:0}.cu-timeline b,.cu-timeline small{display:block;font-size:12px;margin-top:8px}.cu-timeline small{color:var(--muted,#64748b);margin-top:3px}.cu-detail-actions{display:flex;gap:8px;flex-wrap:wrap}.cu-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:12px}.cu-gallery img{width:100%;height:110px;object-fit:cover;border-radius:10px}
+@media(max-width:760px){.cu-detail-grid{grid-template-columns:1fr}.cu-expand{text-align:stretch}.cu-expand .btn{width:100%}}
 </style>
 </head>
 <body>
