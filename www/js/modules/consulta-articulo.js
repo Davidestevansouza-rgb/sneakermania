@@ -76,7 +76,15 @@ function detalleHtml(o,it,regs,log){
 export function verDetalleConsulta(id){const e=document.getElementById('cu-detail-'+id);if(e)e.classList.toggle('open');}
 export function verFotosConsulta(id){const e=document.getElementById('cu-gallery-'+id);if(!e)return;e.classList.toggle('open');pintarFotos().catch(()=>{});}
 export function irBibliotecaConsulta(id){if(window.switchTab)window.switchTab('biblioteca');setTimeout(()=>{if(window.abrirUbicarEnBiblioteca)window.abrirUbicarEnBiblioteca(id);},80);}
-export function abrirOrdenConsulta(id){if(window.viewOrdenDetalle)window.viewOrdenDetalle(id);}
+export function abrirOrdenConsulta(id){
+  // Igual que el botón "Ver" de Órdenes de servicio: abre el modal nativo
+  // correspondiente a esta orden, sin navegar a otra pantalla.
+  if(typeof window.viewOrdenDetalle==='function'){
+    window.viewOrdenDetalle(id);
+    return;
+  }
+  console.warn('Detalle de orden no disponible');
+}
 export async function buscarFichaArticulo(){
  const input=document.getElementById('consulta-articulo-q'),cont=document.getElementById('consulta-resultados');if(!input||!cont)return;const q=input.value.trim();
  if(!q){cont.innerHTML='<div class="empty-state">Escribe un número de orden, código, cliente o artículo.</div>';return;}
