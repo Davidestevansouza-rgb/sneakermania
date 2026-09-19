@@ -304,10 +304,6 @@ const QC_ITEMS = [
   ['plantillas', 'Plantillas'], ['fotos', 'Fotografías finales']
 ];
 
-// Fotos tomadas en el formulario de nueva orden para artículos aún no guardados.
-// WeakMap: row (HTMLElement) → File. Se sube la foto al guardar la orden.
-const _pendingFotos = new WeakMap();
-
 // Variables con ámbito de módulo (reemplazan las globales window._*).
 let pagoQrOrdenId = null;
 let pagoEfectivoOrdenId = null;
@@ -1719,15 +1715,12 @@ async function sincronizarItemsDesdeFormulario(o) {
       };
       state.ordenItems.push(nuevo);
       await db.saveOrdenItem(nuevo);
+      // Vincular inmediatamente ESTA fila con el item definitivo recién creado.
+      // Las fotos diferidas leen este itemId después del guardado y nunca deben
+      // deducir el artículo por la posición visual de la fila.
+      fila.dataset.itemId = nuevo.id;
       idsVistos.add(nuevo.id);
-      // Si el usuario tomó una foto de este artículo nuevo antes de guardar,
-      // se sube ahora que ya tiene id y codigo.
-      const pendingFoto = _pendingFotos.get(fila);
-      if (pendingFoto) {
-        _pendingFotos.delete(fila);
-        try { await window.agregarFotoItem(nuevo.id, pendingFoto); } catch (e) { console.warn('No se pudo subir foto pendiente:', e); }
-      }
-    }
+}
   }
 
   // SEGURIDAD: nunca borrar un artículo solo porque no apareció en el DOM.
@@ -2387,22 +2380,10 @@ function actualizarBotonFiltroFechaOrden(activo) {
   if (btn) btn.classList.toggle('active', activo);
 }
 
-/** Maneja la selección de foto en el formulario de un artículo individual.
- *  Si el artículo ya existe (tiene itemId), sube la foto de inmediato.
- *  Si es un artículo nuevo (aún no guardado), guarda el File en _pendingFotos
- *  para subirlo justo después de crear el artículo al guardar la orden. */
+/** Compatibilidad del onchange del input. El módulo diferido es el único
+ * dueño real de la selección/subida para evitar dos pipelines de fotos. */
 function onFotoFilaItem(input) {
-  const file = input.files && input.files[0];
-  if (!file) return;
-  const row = input.closest('.articulo-row');
-  const itemId = row && row.dataset.itemId;
-  input.value = '';
-  if (itemId && window.agregarFotoItem) {
-    window.agregarFotoItem(itemId, file);
-  } else if (row) {
-    _pendingFotos.set(row, file);
-    if (window.showToast) window.showToast('📷 Foto guardada. Se sube al guardar la orden.');
-  }
+  if (input) input.value = '';
 }
 /** Guarda la orden sin cerrar el modal (modo keepOpen), para que el usuario
  *  pueda luego apretar "💰 Registrar pago" desde el mismo formulario.

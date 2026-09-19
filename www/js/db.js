@@ -469,10 +469,10 @@ export async function saveConfig(cfg) {
 /* ============================================================
    CARGA INICIAL DE DATOS DEL TENANT
    ============================================================ */
-async function fetchAllRows(table, { orderColumn = null, ascending = true, pageSize = 500 } = {}) {
+async function fetchAllRows(table, { orderColumn = null, ascending = true, pageSize = 500, columns = '*' } = {}) {
   const data = [];
   for (let from = 0; ; from += pageSize) {
-    let q = supabase.from(table).select('*').range(from, from + pageSize - 1);
+    let q = supabase.from(table).select(columns).range(from, from + pageSize - 1);
     if (orderColumn) q = q.order(orderColumn, { ascending });
     const page = await q;
     if (page.error) return { data: [], error: page.error };
@@ -486,17 +486,29 @@ async function fetchAllRows(table, { orderColumn = null, ascending = true, pageS
 export async function loadAllData() {
   if (!online() || !tenantId()) return false;
   try {
+    // Carga completa de las entidades operativas, pero sin columnas que la UI
+    // nunca usa. No se limita el historial: evita repetir el problema de filas
+    // faltantes y reduce Egress/PostgREST sin cambiar la fuente de verdad.
+    const CLIENTE_COLS = 'id,nombre,telefono,whatsapp,email,direccion,rfc,observaciones,eliminada,created_at';
+    const ORDEN_COLS = 'id,numero,cliente_id,marca,modelo,tipo_calzado,color,material,talla,cantidad_pares,estado_calzado,tratamiento_sugerido,tipos_servicio,prioridad,estado,observaciones,responsable,fecha_ingreso,fecha_estimada,fecha_entrega,precio,descuento,pagado,pagado_qr,pagado_efectivo,metodo_pago,fecha_pago,estado_pago,ia_resultado,ia_confianza,timeline_index,timeline_dates,control_calidad,firma_ingreso,firma_retiro,firma_recepcionista,entregado,extra';
+    const ITEM_COLS = 'id,orden_id,numero_item,codigo,descripcion,estado,tipo_servicio,responsable,fecha_ingreso,fecha_entrega_estimada,precio,entregado,fecha_entrega,marca,modelo,tipo_calzado,color,material,estado_calzado,tratamiento_sugerido,timeline_index,timeline_dates,control_calidad,biblioteca,registro_servicios';
+    const PARES_COLS = 'id,empleado,fecha,pares,foto_url,foto_urls,usuario_id,codigo,servicio,hora,observacion,created_at';
+
     const [cli, ord, gas, inv, log, cfg, notif, fact, pares, items] = await Promise.all([
-      supabase.from('clientes').select('*'),
-      supabase.from('ordenes').select('*'),
-      supabase.from('gastos').select('*'),
-      supabase.from('inventario').select('*'),
-      supabase.from('actividad_log').select('*').order('created_at', { ascending: false }).limit(100),
+      supabase.from('clientes').select(CLIENTE_COLS),
+      supabase.from('ordenes').select(ORDEN_COLS),
+      supabase.from('gastos').select('id,categoria,monto,fecha,descripcion'),
+      supabase.from('inventario').select('id,nombre,categoria,proveedor,cantidad,stock_minimo,precio_compra,fecha_compra,fecha_vencimiento'),
+      supabase.from('actividad_log').select('created_at,accion,datos').order('created_at', { ascending: false }).limit(100),
       supabase.from('configuracion_tenant').select('*').eq('tenant_id', tenantId()).maybeSingle(),
-      supabase.from('notificaciones').select('*').order('created_at', { ascending: false }).limit(100),
-      supabase.from('facturas').select('*'),
-      fetchAllRows('registro_pares', { orderColumn: 'created_at', ascending: false }),
-      fetchAllRows('orden_items', { orderColumn: 'numero_item', ascending: true })
+      supabase.from('notificaciones')
+        .select('id,tipo,texto,leida,prioridad,orden_id,inventario_id,dedupe_key,created_at')
+        .eq('leida', false)
+        .order('created_at', { ascending: false })
+        .limit(100),
+      supabase.from('facturas').select('id,numero,orden_id,cliente_id,nombre_cliente,total,created_at'),
+      fetchAllRows('registro_pares', { orderColumn: 'created_at', ascending: false, columns: PARES_COLS }),
+      fetchAllRows('orden_items', { orderColumn: 'numero_item', ascending: true, columns: ITEM_COLS })
     ]);
     if (!cli.error) {
       const todos = (cli.data || []).map(clienteFromDb);
@@ -518,7 +530,7 @@ export async function loadAllData() {
         id: n.id, tipo: n.tipo, texto: n.texto, leida: !!n.leida,
         prioridad: n.prioridad || 'Media',
         ordenId: n.orden_id || null, inventarioId: n.inventario_id || null,
-        fecha: n.created_at
+        dedupeKey: n.dedupe_key || null, fecha: n.created_at
       }));
     }
     if (!fact.error) {
