@@ -144,7 +144,7 @@ export function esEmpleado() { return rolActual() === 'Empleado'; }
 
 export const TABS_POR_ROL = {
   Administrador: null,
-  Supervisor: ['dashboard', 'clientes', 'ordenes', 'ia', 'galeria', 'produccion', 'biblioteca', 'facturas', 'inventario', 'agenda', 'notificaciones'],
+  Supervisor: ['dashboard', 'clientes', 'ordenes', 'consulta', 'ia', 'galeria', 'produccion', 'biblioteca', 'facturas', 'inventario', 'agenda', 'notificaciones'],
   Empleado: ['produccion', 'galeria', 'agenda', 'inventario']
 };
 
