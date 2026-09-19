@@ -82,7 +82,7 @@ export async function verFotosConsulta(id){
   const urls=(await Promise.all(refs.map(ref=>resolveImageUrl(ref).catch(()=>null)))).filter(Boolean);
   if(!urls.length)return;
   if(typeof window.ampliarImagen==='function') window.ampliarImagen(urls[0],urls);
-});}
+}
 export function irBibliotecaConsulta(id){if(window.switchTab)window.switchTab('biblioteca');setTimeout(()=>{if(window.abrirUbicarEnBiblioteca)window.abrirUbicarEnBiblioteca(id);},80);}
 export function abrirOrdenConsulta(id){
   const o=(state.ordenes||[]).find(x=>String(x.id)===String(id));
