@@ -17,6 +17,7 @@ import './hotfix-fotos-20260907.js';
 import { renderDashboard } from './modules/dashboard.js';
 import { renderClientes } from './modules/clientes.js';
 import { renderOrdenes, populateClienteSelect, migrateOrdenes } from './modules/ordenes.js';
+import { renderConsultaArticulo } from './modules/consulta-articulo.js';
 import './modules/cliente-orden.js'; // fusión "Nuevo cliente": cliente + artículos + foto/IA + precio + pago + WhatsApp en un solo modal
 import { populateIaOrderSelect } from './modules/ia.js';
 import { renderGaleria, populateGaleriaSelect } from './modules/galeria.js';
@@ -57,6 +58,7 @@ export function switchTab(tab) {
   if (tab === 'dashboard') renderDashboard();
   if (tab === 'clientes') renderClientes();
   if (tab === 'ordenes') renderOrdenes();
+  if (tab === 'consulta') renderConsultaArticulo();
   if (tab === 'galeria') renderGaleria();
   if (tab === 'produccion') void renderProduccion();
   if (tab === 'biblioteca') renderBiblioteca();
@@ -98,6 +100,7 @@ export function renderAll() {
   if (puedeVerTab('dashboard')) renderDashboard();
   if (puedeVerTab('clientes')) renderClientes();
   if (puedeVerTab('ordenes')) renderOrdenes();
+  if (puedeVerTab('consulta')) renderConsultaArticulo();
   if (puedeVerTab('inventario')) renderInventario();
   renderNotificaciones();
   renderConfiguracion();
