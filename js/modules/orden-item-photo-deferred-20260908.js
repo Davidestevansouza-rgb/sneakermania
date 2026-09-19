@@ -139,7 +139,10 @@ async function guardarFotosPendientes(ordenId, pendientes) {
   // Secuencial a propósito: máximo una compresión/subida pesada a la vez.
   for (const p of pendientes) {
     const itemIdActual = p.row?.dataset?.itemId || p.itemId;
-    const item = itemIdActual ? items.find(it => it.id === itemIdActual) : items[p.index];
+    // Seguridad crítica: una foto NUNCA se asigna por índice/posición.
+    // Si no existe un itemId exacto, se conserva pendiente/error para reintento
+    // en vez de correr el riesgo de vincularla al artículo vecino.
+    const item = itemIdActual ? items.find(it => it.id === itemIdActual) : null;
     if (!item) {
       p.entries.forEach(entry => {
         entry.status = 'error';
