@@ -10,7 +10,7 @@ import { escHtml, escAttr } from '../sanitize.js';
 import * as storageManager from '../storage-manager.js';
 import { limpiarCombo } from '../combo-search.js';
 
-const GALERIA_CATS_FULL = [['detalle', 'Lavado'], ['suela', 'Detallado'], ['laterales', 'Pintado y personalizado'], ['todos_pares', 'Todos los archivos']];
+const GALERIA_CATS_FULL = [['detalle', 'Lavado'], ['suela', 'Detallado'], ['laterales', 'Pintado y personalizado'], ['todos_pares', 'Fotos generales']];
 const PIXEL_TRANSPARENTE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 let _galeriaRenderGen = 0;
 
@@ -321,7 +321,7 @@ export async function renderGaleria() {
     const puedeSubir = esAdmin() || esSupervisor() || esEmpleado();
     const empleadoPuedeSubirAqui = !esEmpleado() || ['detalle', 'suela', 'laterales', 'todos_pares'].includes(key);
     const grupoId = 'gc-' + escAttr(o.id) + '-' + key;
-    const addLabel = (puedeSubir && empleadoPuedeSubirAqui ? '<label class="gallery-add" title="Agregar foto">+<input type="file" accept="image/*" style="display:none;" onchange="addGaleriaFoto(\'' + escAttr(o.id) + '\',\'' + key + '\',this.files[0],\'' + escAttr(itemFiltrado ? itemFiltrado.id : '') + '\')"></label>' : '');
+    const addLabel = (puedeSubir && empleadoPuedeSubirAqui ? '<label class="gallery-add" title="Agregar foto">+<input type="file" accept="image/jpeg,image/png,image/webp" style="display:none;" onchange="addGaleriaFoto(\'' + escAttr(o.id) + '\',\'' + key + '\',this.files[0],\'' + escAttr(itemFiltrado ? itemFiltrado.id : '') + '\')"></label>' : '');
     const thumbsHTML = fotos.map((foto, idx) => {
       const src = fotoUrlNavegable(foto);
       const isStorage = !!(foto.url && (foto.url.startsWith('http') || foto.url.startsWith('r2://')));
@@ -355,6 +355,13 @@ export async function vincularFotoGaleria(ordenId, categoria, urls, itemId) {
 
 export async function addGaleriaFoto(ordenId, cat, file, itemId) {
   if (!file) return;
+  const type = String(file.type || '').toLowerCase();
+  const compatible = type === 'image/jpeg' || type === 'image/png' || type === 'image/webp' ||
+    /\.(jpe?g|png|webp)$/i.test(String(file.name || ''));
+  if (!compatible) {
+    showToast('Formato no compatible. Usa fotografías JPEG, PNG o WebP.');
+    return;
+  }
   const o = ordenById(ordenId);
   migrateLegacyFotos(o);
   try {
