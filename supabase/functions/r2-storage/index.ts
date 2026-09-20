@@ -209,19 +209,55 @@ Deno.serve(async (req: Request) => {
       if (!prefix || primerSegmento(prefix) !== tenant) {
         return jsonResponse({ error: "No autorizado para listar ese prefijo" }, 403);
       }
-      const resp = await aws.fetch(
-        `${R2_ENDPOINT.replace(/\/+$/, "")}/${R2_BUCKET}?list-type=2&prefix=${encodeURIComponent(prefix + "/")}`,
-        { method: "GET" },
-      );
-      if (!resp.ok) return jsonResponse({ error: "No se pudo listar los archivos" }, 502);
-      const xml = await resp.text();
-      const nombres = [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]);
+
+      const decodeXml = (value: string) => value
+        .replaceAll("&amp;", "&")
+        .replaceAll("&lt;", "<")
+        .replaceAll("&gt;", ">")
+        .replaceAll("&quot;", '"')
+        .replaceAll("&#39;", "'");
+
+      const nombres: string[] = [];
+      let continuationToken = "";
+      let pages = 0;
+      const MAX_LIST_PAGES = 1000;
+
+      do {
+        const listUrl = new URL(`${R2_ENDPOINT.replace(/\/+$/, "")}/${R2_BUCKET}`);
+        listUrl.searchParams.set("list-type", "2");
+        listUrl.searchParams.set("max-keys", "1000");
+        listUrl.searchParams.set("prefix", prefix + "/");
+        if (continuationToken) {
+          listUrl.searchParams.set("continuation-token", continuationToken);
+        }
+
+        const resp = await aws.fetch(listUrl.toString(), { method: "GET" });
+        if (!resp.ok) return jsonResponse({ error: "No se pudo listar los archivos" }, 502);
+
+        const xml = await resp.text();
+        for (const match of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
+          nombres.push(decodeXml(match[1]));
+        }
+
+        const next = xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/);
+        continuationToken = next ? decodeXml(next[1]) : "";
+        pages++;
+        if (pages >= MAX_LIST_PAGES && continuationToken) {
+          return jsonResponse({
+            error: "Listado R2 excedió el límite de seguridad",
+            partialCount: nombres.length,
+            pages,
+          }, 413);
+        }
+      } while (continuationToken);
+
       return jsonResponse({
         files: nombres.map((key) => ({
           name: key.split("/").pop(),
           path: key,
           url: privateRef(key),
         })),
+        pages,
       });
     }
 
