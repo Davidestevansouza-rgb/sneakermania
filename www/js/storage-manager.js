@@ -91,6 +91,36 @@ function extraerPathR2(url) {
   } catch (_) { return null; }
 }
 
+/** Firma una sola ruta sin consultar SIGNED_URL_PENDING.
+ *  La usan tanto la ruta individual como el fallback del lote para evitar
+ *  esperarse a sí mismas cuando hay una firma compartida en curso.
+ */
+async function resolveImageUrlDirect(url, objectPath) {
+  const esReferenciaR2 = String(url || '').startsWith('r2://');
+  try {
+    const tid1 = tenantId();
+    const { data, error } = await invokeR2({
+      body: { action: 'signed-url', path: objectPath, expires: 3000 },
+      headers: tid1 ? { 'x-tenant-id': tid1 } : {}
+    });
+    if (!error && data?.url) {
+      SIGNED_URL_CACHE.set(objectPath, { url: data.url, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
+      return data.url;
+    }
+    if (esReferenciaR2) {
+      console.warn('No se pudo resolver referencia R2:', objectPath, error || data?.error || 'respuesta sin URL firmada');
+      return null;
+    }
+  } catch (e) {
+    if (esReferenciaR2) {
+      console.warn('No se pudo resolver referencia R2:', objectPath, e);
+      return null;
+    }
+    console.warn('No se pudo obtener URL firmada; se mantiene URL existente:', e);
+  }
+  return esReferenciaR2 ? null : url;
+}
+
 /** Obtiene una URL firmada para un objeto R2 sin guardar la firma en la BD.
  *  Mantiene compatibilidad: si no se puede firmar, devuelve la URL original.
  */
@@ -107,35 +137,15 @@ export async function resolveImageUrl(url, path = null) {
   const pending = SIGNED_URL_PENDING.get(objectPath);
   if (pending) return pending;
 
-  const solicitud = (async () => {
-    try {
-      const tid1 = tenantId();
-      const { data, error } = await invokeR2({
-        body: { action: 'signed-url', path: objectPath, expires: 3000 },
-        headers: tid1 ? { 'x-tenant-id': tid1 } : {}
-      });
-      if (!error && data?.url) {
-        SIGNED_URL_CACHE.set(objectPath, { url: data.url, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
-        return data.url;
-      }
-      if (esReferenciaR2) {
-        console.warn('No se pudo resolver referencia R2:', objectPath, error || data?.error || 'respuesta sin URL firmada');
-        return null;
-      }
-    } catch (e) {
-      if (esReferenciaR2) {
-        console.warn('No se pudo resolver referencia R2:', objectPath, e);
-        return null;
-      }
-      console.warn('No se pudo obtener URL firmada; se mantiene URL existente:', e);
-    }
-    return esReferenciaR2 ? null : url;
-  })().finally(() => {
-    SIGNED_URL_PENDING.delete(objectPath);
-  });
-
+  const solicitud = resolveImageUrlDirect(url, objectPath);
   SIGNED_URL_PENDING.set(objectPath, solicitud);
-  return solicitud;
+  try {
+    return await solicitud;
+  } finally {
+    if (SIGNED_URL_PENDING.get(objectPath) === solicitud) {
+      SIGNED_URL_PENDING.delete(objectPath);
+    }
+  }
 }
 
 export async function resolveImageUrls(fotos) {
@@ -143,7 +153,11 @@ export async function resolveImageUrls(fotos) {
 
   const resultados = new Array(fotos.length);
   const faltantes = new Map();
+  const promesasPorPath = new Map();
 
+  // Primera pasada sin awaits: antes de ceder el event loop dejamos registrados
+  // todos los paths que este lote necesita. Así otro lote simultáneo puede
+  // compartir la misma promesa en vez de invocar r2-storage otra vez.
   for (let i = 0; i < fotos.length; i++) {
     const f = fotos[i] || {};
     const url = typeof f.url === 'string' ? f.url : '';
@@ -153,24 +167,39 @@ export async function resolveImageUrls(fotos) {
       resultados[i] = { ...f, resolvedUrl: esReferenciaR2 ? null : url };
       continue;
     }
+
     const cached = SIGNED_URL_CACHE.get(objectPath);
     if (cached && cached.expiresAt > Date.now()) {
       resultados[i] = { ...f, resolvedUrl: cached.url };
       continue;
     }
-    const pending = SIGNED_URL_PENDING.get(objectPath);
-    if (pending) {
-      resultados[i] = { ...f, resolvedUrl: await pending };
-      continue;
-    }
+
     if (!faltantes.has(objectPath)) faltantes.set(objectPath, []);
     faltantes.get(objectPath).push(i);
+
+    const pending = SIGNED_URL_PENDING.get(objectPath);
+    if (pending) promesasPorPath.set(objectPath, pending);
   }
 
-  const paths = [...faltantes.keys()];
-  for (let from = 0; from < paths.length; from += 100) {
-    const lote = paths.slice(from, from + 100);
+  const pathsNuevos = [...faltantes.keys()].filter(path => !promesasPorPath.has(path));
+  const deferred = new Map();
+
+  // Reservar los paths nuevos ANTES del primer await.
+  for (const path of pathsNuevos) {
+    let resolver;
+    const promise = new Promise(resolve => { resolver = resolve; });
+    deferred.set(path, { promise, resolver });
+    SIGNED_URL_PENDING.set(path, promise);
+    promesasPorPath.set(path, promise);
+  }
+
+  // Procesar lotes de hasta 100 de forma secuencial, manteniendo los locks por
+  // path visibles para cualquier llamada concurrente.
+  for (let from = 0; from < pathsNuevos.length; from += 100) {
+    const lote = pathsNuevos.slice(from, from + 100);
+    const porPath = new Map();
     let batchOk = false;
+
     try {
       const tid = tenantId();
       const { data, error } = await invokeR2({
@@ -178,29 +207,63 @@ export async function resolveImageUrls(fotos) {
         headers: tid ? { 'x-tenant-id': tid } : {}
       });
       if (!error && Array.isArray(data?.urls)) {
-        const porPath = new Map(data.urls.filter(x => x?.path && x?.url).map(x => [x.path, x.url]));
-        for (const path of lote) {
-          const signed = porPath.get(path) || null;
-          if (signed) SIGNED_URL_CACHE.set(path, { url: signed, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
-          for (const idx of faltantes.get(path) || []) {
-            const foto = fotos[idx] || {};
-            resultados[idx] = { ...foto, resolvedUrl: signed || (String(foto.url || '').startsWith('r2://') ? null : foto.url) };
-          }
+        for (const item of data.urls) {
+          if (item?.path && item?.url) porPath.set(item.path, item.url);
         }
         batchOk = true;
       }
     } catch (e) {
       console.warn('No se pudo resolver lote de URLs R2; se usa fallback individual:', e);
     }
+
     if (!batchOk) {
       await mapConcurrencia(lote, SIGNED_URL_CONCURRENCY, async path => {
         const indices = faltantes.get(path) || [];
         const muestra = fotos[indices[0]] || {};
-        const signed = await resolveImageUrl(muestra.url, path);
-        for (const idx of indices) resultados[idx] = { ...(fotos[idx] || {}), resolvedUrl: signed };
+        const rawUrl = typeof muestra.url === 'string' ? muestra.url : '';
+        const signed = await resolveImageUrlDirect(rawUrl, path);
+        porPath.set(path, signed);
       });
     }
+
+    for (const path of lote) {
+      const indices = faltantes.get(path) || [];
+      const muestra = fotos[indices[0]] || {};
+      const rawUrl = typeof muestra.url === 'string' ? muestra.url : '';
+      let resolved = porPath.has(path) ? porPath.get(path) : null;
+      if (!resolved && !rawUrl.startsWith('r2://')) resolved = rawUrl || null;
+
+      if (resolved && resolved !== rawUrl) {
+        SIGNED_URL_CACHE.set(path, { url: resolved, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
+      }
+
+      const d = deferred.get(path);
+      if (d) {
+        d.resolver(resolved);
+        if (SIGNED_URL_PENDING.get(path) === d.promise) SIGNED_URL_PENDING.delete(path);
+      }
+    }
   }
+
+  // Resolver tanto paths nuevos como firmas que ya estaban en curso al entrar.
+  await Promise.all([...faltantes.entries()].map(async ([path, indices]) => {
+    const pending = promesasPorPath.get(path);
+    let resolved = null;
+    try {
+      resolved = pending ? await pending : null;
+    } catch (_) {
+      resolved = null;
+    }
+    for (const idx of indices) {
+      const foto = fotos[idx] || {};
+      const rawUrl = typeof foto.url === 'string' ? foto.url : '';
+      resultados[idx] = {
+        ...foto,
+        resolvedUrl: resolved || (rawUrl.startsWith('r2://') ? null : rawUrl)
+      };
+    }
+  }));
+
   return resultados;
 }
 
