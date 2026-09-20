@@ -9,56 +9,44 @@ Crea automáticamente:
   - El usuario administrador del cliente (correo + contraseña)
   - La configuración inicial (moneda del país, etc.)
 
-Cada cliente entra al MISMO sitio web pero ve SOLO su negocio
-(sus clientes, sus órdenes, su dinero). Están separados y seguros.
+Cada cliente entra al MISMO sitio web pero ve SOLO su negocio.
 
+CONFIGURACIÓN SEGURA OBLIGATORIA
+-----------------------------------------------------------
+Los scripts ya NO guardan una clave privilegiada dentro del código.
+
+Antes de usarlos, configura en Windows la NUEVA clave rotada como
+variable de entorno del usuario:
+
+  setx SUPABASE_SERVICE_KEY "PEGA_AQUI_LA_NUEVA_CLAVE"
+
+Después CIERRA esa ventana de CMD y abre una nueva. La variable
+SUPABASE_SERVICE_KEY no debe copiarse a GitHub, archivos .py, .bat,
+capturas ni mensajes.
+
+Opcionalmente puedes configurar SUPABASE_URL si alguna vez cambias
+de proyecto. Si no existe, se usa el proyecto actual.
 
 CÓMO USARLO (en tu PC con Windows)
 -----------------------------------------------------------
-1) Asegúrate de tener Python instalado (el mismo que usas para
-   "python -m http.server"). Si ese comando te funciona, ya lo tienes.
-
-2) Haz doble clic en el archivo:  "Crear Cliente.bat"
-
-3) Te va a preguntar:
-   - Nombre del negocio del cliente
-   - Correo del administrador
-   - Contraseña inicial
-   - País / moneda
-
-4) Al terminar te muestra los datos de acceso. Cópialos y
-   entrégaselos al cliente:
-
-      Sitio web : https://charming-gaufre-2a49f0.netlify.app
-      Usuario   : (el correo que pusiste)
-      Contraseña: (la que pusiste)
-
+1) Asegúrate de tener Python instalado.
+2) Configura SUPABASE_SERVICE_KEY como se indicó arriba.
+3) Haz doble clic en "Crear Cliente.bat".
+4) Completa nombre del negocio, correo, contraseña y país/moneda.
 
 CÓMO CREAR UN EMPLEADO O SUPERVISOR
 -----------------------------------------------------------
-Los empleados NO pueden crear su propio acceso desde la app
-(por seguridad). Tú los das de alta así:
-
-1) Doble clic en "Crear Empleado.bat"
-2) Elige el negocio (cliente) de la lista
-3) Pon: nombre, correo, contraseña y rol (Empleado o Supervisor)
-4) Entrega los datos de acceso al empleado
-
-El empleado entra al mismo sitio y NO ve finanzas.
-
+1) Doble clic en "Crear Empleado.bat".
+2) Elige el negocio.
+3) Pon nombre, correo, contraseña y rol.
+4) Entrega los datos de acceso al empleado.
 
 IMPORTANTE - SEGURIDAD
 -----------------------------------------------------------
-- El archivo "crear_cliente.py" contiene una clave secreta.
-- NO lo subas a internet, NO lo publiques en Netlify, NO lo
-  compartas. Úsalo solo en tu computadora.
-- El sitio web público (Netlify) NO tiene esta clave, por eso
-  es seguro darlo a los clientes.
+- Una clave service/secret de Supabase tiene privilegios elevados.
+- Si alguna clave fue publicada en GitHub, trátala como comprometida:
+  primero elimina su uso del código y luego rótala/revócala.
+- No guardes claves nuevas dentro del repositorio.
+- Los scripts fallan de forma segura si SUPABASE_SERVICE_KEY no existe.
 
-
-PRECIO SUGERIDO PARA VENDER
------------------------------------------------------------
-- Instalación / alta del cliente: cobro único.
-- Mensualidad por uso y soporte.
-(Tú decides los montos según tu mercado.)
 =============================================================
