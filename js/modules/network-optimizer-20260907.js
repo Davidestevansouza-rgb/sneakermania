@@ -60,7 +60,9 @@ function resumeNetworkLoops() {
   if (!state.session?.loggedIn || !onlineNow()) return;
   startNotificationSync();
   startRealtimeAgenda();
-  startRealtimeConfig();
+  const cfgActiva = document.getElementById('tab-configuracion')?.classList.contains('active') ||
+    document.getElementById('tab-seguridad')?.classList.contains('active');
+  if (cfgActiva) startRealtimeConfig();
 }
 
 if (typeof window !== 'undefined' && !window.__smNetworkOptimizerInstalled) {
