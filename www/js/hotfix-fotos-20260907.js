@@ -53,8 +53,8 @@ import { state } from './state.js';
     finally { resolviendo.delete(img); }
   }
 
-  function resolverR2En(root) {
-    normalizarTodas();
+  function resolverR2En(root, normalizar = true) {
+    if (normalizar) normalizarTodas();
     if (!root) return;
     if (root.matches && root.matches('img[src^="r2://"]')) resolverImagenR2(root);
     const imgs = root.querySelectorAll ? root.querySelectorAll('img[src^="r2://"], img[data-sm-r2-src]') : [];
@@ -83,10 +83,9 @@ import { state } from './state.js';
   }
 
   const observer = new MutationObserver(mutations => {
-    normalizarTodas();
     for (const m of mutations) {
       if (m.type === 'attributes' && m.target?.tagName === 'IMG') resolverImagenR2(m.target);
-      for (const node of m.addedNodes || []) if (node && node.nodeType === 1) resolverR2En(node);
+      for (const node of m.addedNodes || []) if (node && node.nodeType === 1) resolverR2En(node, false);
     }
   });
 
@@ -94,8 +93,6 @@ import { state } from './state.js';
     normalizarTodas();
     resolverR2En(document);
     observer.observe(document.documentElement, { childList:true, subtree:true, attributes:true, attributeFilter:['src'] });
-    const timerNorm = setInterval(normalizarTodas, 500);
-    setTimeout(() => clearInterval(timerNorm), 15000);
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciarObserver, { once:true }); else iniciarObserver();
 
@@ -128,8 +125,8 @@ import { state } from './state.js';
   };
 
   if (!tryInstall()) {
-    const timer = setInterval(() => { normalizarTodas(); if (tryInstall()) clearInterval(timer); }, 100);
-    setTimeout(() => clearInterval(timer), 15000);
+    // Respaldo acotado para cargas excepcionales: dos intentos, sin polling.
+    setTimeout(() => { normalizarTodas(); if (!tryInstall()) setTimeout(tryInstall, 1000); }, 0);
   }
   window.addEventListener('online', () => resolverR2En(document));
 })();

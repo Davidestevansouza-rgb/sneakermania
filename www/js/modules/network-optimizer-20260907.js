@@ -13,10 +13,13 @@ function onlineNow() {
   return typeof navigator === 'undefined' || navigator.onLine !== false;
 }
 
+// Evita ejecutar valida_sesion cada 20 s cuando el resultado reciente sigue vigente.
+// Las demás RPC continúan exactamente igual.
 if (supabase && typeof supabase.rpc === 'function' && !supabase.__smRpcOptimized) {
   const originalRpc = supabase.rpc.bind(supabase);
   supabase.rpc = async function(fn, args, options) {
     if (fn !== 'valida_sesion') return originalRpc(fn, args, options);
+
     if (!onlineNow()) {
       return { data: lastValidationData, error: null, count: null, status: 200, statusText: 'offline-cache' };
     }
@@ -57,7 +60,9 @@ function resumeNetworkLoops() {
   if (!state.session?.loggedIn || !onlineNow()) return;
   startNotificationSync();
   startRealtimeAgenda();
-  startRealtimeConfig();
+  const cfgActiva = document.getElementById('tab-configuracion')?.classList.contains('active') ||
+    document.getElementById('tab-seguridad')?.classList.contains('active');
+  if (cfgActiva) startRealtimeConfig();
 }
 
 if (typeof window !== 'undefined' && !window.__smNetworkOptimizerInstalled) {
