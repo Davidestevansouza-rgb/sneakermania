@@ -123,18 +123,24 @@ async function fotoUrlAFile(foto, nombreArchivo) {
     const objectPath = foto.path || (esR2 ? foto.url.slice(5).replace(/^\/+/, '') : null);
 
     if (objectPath) {
-      const tid = tenantId();
-      const { data, error } = await supabase.functions.invoke('r2-storage', {
-        body: { action: 'download', path: objectPath },
-        headers: tid ? { 'x-tenant-id': tid } : {}
-      });
-      if (error || !(data instanceof Blob) || data.size <= 0) {
-        console.warn('No se pudo descargar la foto R2 para WhatsApp:', objectPath, error || 'respuesta vacía');
+      // La Edge Function firma el acceso, pero los bytes de la imagen se
+      // descargan directamente desde R2. Así evitamos que Supabase Edge
+      // retransmita fotos completas y reducimos Edge/Egress.
+      const secureUrlR2 = await storageManager.resolveImageUrl(foto.url, objectPath);
+      if (!secureUrlR2) {
+        console.warn('No se pudo obtener URL firmada R2 para WhatsApp:', objectPath);
         return null;
       }
+      const respR2 = await fetch(secureUrlR2);
+      if (!respR2.ok) {
+        console.warn('No se pudo descargar la foto R2 para WhatsApp:', objectPath, respR2.status);
+        return null;
+      }
+      const blobR2 = await respR2.blob();
+      if (!blobR2 || blobR2.size <= 0) return null;
       const lower = objectPath.toLowerCase();
-      const mime = lower.endsWith('.png') ? 'image/png' : lower.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
-      return new File([data], nombreArchivo || 'foto.jpg', { type: mime });
+      const mime = blobR2.type || (lower.endsWith('.png') ? 'image/png' : lower.endsWith('.webp') ? 'image/webp' : 'image/jpeg');
+      return new File([blobR2], nombreArchivo || 'foto.jpg', { type: mime });
     }
 
     const secureUrl = await storageManager.resolveImageUrl(foto.url, foto.path);
