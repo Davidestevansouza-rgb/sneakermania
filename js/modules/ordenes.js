@@ -398,16 +398,22 @@ function soloFechaISO(v) {
 }
 
 let _refreshItemsOrdenesEnCurso = false;
+const _refreshItemsUltimoIntento = new Map();
+const REFRESH_ITEMS_RETRY_MS = 60 * 1000;
 export function renderOrdenes() {
   // Una caché local puede quedar parcial si otro dispositivo actualizó los
   // artículos. Al entrar a Órdenes, refrescamos en segundo plano las órdenes
   // cuyo número de artículos cargados es menor que cantidadPares. Es solo
   // lectura: nunca crea, borra ni modifica artículos en Supabase.
   if (!_refreshItemsOrdenesEnCurso && navigator.onLine) {
+    const ahora = Date.now();
     const incompletas = (state.ordenes || []).filter(o => {
       const esperado = Number(o.cantidadPares) || 0;
-      return esperado > 0 && itemsDeOrden(o.id).length < esperado;
+      if (!(esperado > 0 && itemsDeOrden(o.id).length < esperado)) return false;
+      const ultimo = _refreshItemsUltimoIntento.get(o.id) || 0;
+      return (ahora - ultimo) >= REFRESH_ITEMS_RETRY_MS;
     });
+    incompletas.forEach(o => _refreshItemsUltimoIntento.set(o.id, ahora));
     if (incompletas.length) {
       _refreshItemsOrdenesEnCurso = true;
       Promise.all(incompletas.map(o => db.refreshOrdenItems(o.id)))
