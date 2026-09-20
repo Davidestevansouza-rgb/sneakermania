@@ -1766,9 +1766,18 @@ async function sincronizarItemsDesdeFormulario(o) {
   // pulsó explícitamente ✕ sobre ESE artículo durante esta edición.
   for (const item of existentes) {
     if (_itemsEliminadosExplicitamente.has(item.id) && !item.entregado) {
-      state.ordenItems = state.ordenItems.filter(it => it.id !== item.id);
-      await db.deleteOrdenItem(item.id);
+      const deleteResult = await db.deleteOrdenItem(item.id);
       _itemsEliminadosExplicitamente.delete(item.id);
+
+      // Solo quitar del estado local cuando Supabase confirmó el DELETE.
+      // Si la BD lo bloquea (por ejemplo porque el artículo ya tiene
+      // Producción), el artículo debe seguir visible y no puede parecer
+      // borrado hasta la próxima recarga.
+      if (deleteResult?.ok) {
+        state.ordenItems = state.ordenItems.filter(it => it.id !== item.id);
+      } else {
+        showToast('⚠️ No se eliminó el artículo ' + (item.codigo || '') + '. El servidor no confirmó el borrado.');
+      }
     }
   }
 
