@@ -2,14 +2,24 @@
 """
 ALTA DE CLIENTES — Sistema SeS (VERSION DIAGNOSTICO 2)
 Sin pre-check roto. Muestra el error REAL.
+
+Requiere la variable de entorno SUPABASE_SERVICE_KEY.
+Opcional: SUPABASE_URL para apuntar a otro proyecto.
 """
 import json
+import os
 import urllib.request
 import urllib.error
 
-SUPABASE_URL = "https://ypgyfgbftfvouobmsync.supabase.co"
-SERVICE_KEY  = "sb_secret_N3fzzlAMkUACwsDW--VZag_wCWM3_tr"
-SITIO_WEB    = "https://charming-gaufre-2a49f0.netlify.app"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://ypgyfgbftfvouobmsync.supabase.co").rstrip("/")
+SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
+SITIO_WEB = "https://charming-gaufre-2a49f0.netlify.app"
+
+if not SERVICE_KEY:
+    raise RuntimeError(
+        "Falta SUPABASE_SERVICE_KEY. Configura la clave privilegiada como variable de entorno; "
+        "no la guardes dentro del repositorio."
+    )
 
 MONEDAS = {
     "1": ("Bolivia", "BO", "BOB", "Bs"),
@@ -73,7 +83,6 @@ def main():
     tenant_id = None
     auth_id = None
     try:
-        # 1) Tenant
         print("[1/4] Creando tenant...")
         t = api("/rest/v1/tenants", "POST", {
             "nombre": negocio, "email": email, "pais": pais,
@@ -82,7 +91,6 @@ def main():
         tenant_id = t[0]["id"]
         print("  -> OK, tenant_id = " + str(tenant_id))
 
-        # 2) Usuario en Auth
         print("[2/4] Creando usuario en Auth...")
         a = api("/auth/v1/admin/users", "POST", {
             "email": email, "password": passwd, "email_confirm": True,
@@ -90,7 +98,6 @@ def main():
         auth_id = a["id"]
         print("  -> OK, auth_id = " + str(auth_id))
 
-        # 3) Fila en public.users
         print("[3/4] Insertando en public.users...")
         api("/rest/v1/users", "POST", {
             "id": auth_id, "tenant_id": tenant_id, "nombre": "Administrador",
@@ -98,7 +105,6 @@ def main():
         })
         print("  -> OK")
 
-        # 4) Configuracion
         print("[4/4] Creando configuracion_tenant...")
         api("/rest/v1/configuracion_tenant", "POST", {
             "tenant_id": tenant_id, "nombre_negocio": negocio,
@@ -118,7 +124,6 @@ def main():
     except Exception as e:
         print("\nERROR: no se pudo crear el cliente.")
         print("Motivo REAL: " + str(e))
-        # Limpiar si algo se creo a medias
         try:
             if auth_id:
                 api("/auth/v1/admin/users/" + auth_id, "DELETE")
