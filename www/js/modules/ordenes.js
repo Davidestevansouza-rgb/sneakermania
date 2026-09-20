@@ -2276,6 +2276,30 @@ async function eliminarOrdenPermanente(id) {
   if (!(state.session && state.session.role === 'Administrador')) { showToast('Solo el Administrador puede eliminar definitivamente'); return; }
   const o = (state.ordenesEliminadas || []).find(x => x.id === id);
   if (!o) return;
+
+  // Integridad referencial: la base actual NO tiene FK orden_items -> ordenes.
+  // Borrar solo el padre dejaría artículos huérfanos persistentes. Por eso
+  // comprobamos el servidor y fallamos de forma segura si todavía hay hijos.
+  if (!supabase || !navigator.onLine) {
+    showToast('Necesitas conexión para eliminar definitivamente una orden.');
+    return;
+  }
+  try {
+    const { count, error } = await supabase
+      .from('orden_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('orden_id', id);
+    if (error) throw error;
+    if ((count || 0) > 0) {
+      showToast('No se puede eliminar definitivamente: la orden todavía tiene artículos. Elimínalos primero de forma segura.');
+      return;
+    }
+  } catch (e) {
+    console.error('No se pudo verificar artículos antes del borrado definitivo:', e);
+    showToast('No se pudo verificar la integridad de la orden. No se eliminó nada.');
+    return;
+  }
+
   if (!confirm('¿Eliminar DEFINITIVAMENTE la orden #' + o.numero + '?\n\nEsta acción NO se puede deshacer — se perderá para siempre.')) return;
   const backup = state.ordenesEliminadas.slice();
   // Guardamos también los artículos/pares de esta orden (para poder
@@ -2290,14 +2314,9 @@ async function eliminarOrdenPermanente(id) {
     showToast('No se pudo eliminar definitivamente: ' + (res.error.message || 'error del servidor'));
     return;
   }
-  // En el servidor, orden_items tiene ON DELETE CASCADE contra ordenes, así
-  // que ya se borraron ahí. Pero la CACHÉ LOCAL (state.ordenItems) no se
-  // entera sola: si no se limpia acá, esos artículos quedan "huérfanos" en
-  // memoria (y en el caché offline) apuntando a una orden que ya no existe,
-  // y siguen apareciendo en pantallas que leen todos los artículos sin
-  // pasar por la orden — por ejemplo Biblioteca, que seguía mostrándolos
-  // como si estuvieran guardados en un estante aunque la orden ya se había
-  // eliminado. Por eso se filtran acá también.
+  // La comprobación anterior garantiza que el servidor no tenía artículos
+  // hijos antes de borrar el padre. Limpiamos también cualquier residuo de
+  // caché local para mantener state coherente.
   if (itemsBackup.length) {
     state.ordenItems = (state.ordenItems || []).filter(it => it.ordenId !== id);
     if (window.renderBiblioteca) window.renderBiblioteca();
