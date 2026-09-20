@@ -20,6 +20,12 @@ function initSafety() {
   corregirEtiquetasBlanqueamiento();
 }
 
+function asegurarFechaProduccionActual() {
+  if (!esEmpleado()) return;
+  const fecha = document.getElementById('prod-fecha');
+  if (fecha) fecha.value = todayISO(0);
+}
+
 function asegurarHistorialEmpleadoVisible() {
   if (!esEmpleado()) return;
   const panel = document.getElementById('prod-historial-panel');
@@ -192,6 +198,7 @@ function envolverProduccion() {
   const original = window.registrarPares;
   if (typeof original !== 'function' || original.__smSafetyProd) return;
   const wrapper = async function(...args) {
+    asegurarFechaProduccionActual();
     const r = await original.apply(this, args);
     corregirEtiquetasBlanqueamiento();
     enlazarHistorialProduccion();
@@ -207,6 +214,7 @@ function envolverNavegacion() {
   const wrapper = function(tab, ...args) {
     const r = original.call(this, tab, ...args);
     if (tab === 'produccion') {
+      asegurarFechaProduccionActual();
       enlazarHistorialProduccion();
       asegurarHistorialEmpleadoVisible();
       corregirEtiquetasBlanqueamiento();
