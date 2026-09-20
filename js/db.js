@@ -300,6 +300,17 @@ export async function siguienteOrdenNumero() {
   return numero;
 }
 export const deleteOrden = (id) => pushDelete('ordenes', id);
+
+export async function deleteOrdenPapeleraSeguro(id) {
+  if (!online() || !supabase) return { error: new Error('Necesitas conexión para eliminar definitivamente') };
+  try {
+    const { data, error } = await supabase.rpc('eliminar_orden_papelera_seguro', { p_order_id: id });
+    if (error) throw error;
+    return { ok: true, data };
+  } catch (e) {
+    return { error: e };
+  }
+}
 export const saveGasto = (g) => pushUpsert('gastos', gastoToDb(g));
 export const deleteGasto = (id) => pushDelete('gastos', id);
 
@@ -340,6 +351,17 @@ function registroParFromDb(r) {
 }
 export const saveRegistroPar = (r) => pushUpsert('registro_pares', registroParToDb(r));
 export const deleteRegistroPar = (id) => pushDelete('registro_pares', id);
+
+export async function deleteRegistroParSeguro(id) {
+  if (!online() || !supabase) return { error: new Error('Necesitas conexión para eliminar un registro de producción') };
+  try {
+    const { data, error } = await supabase.rpc('eliminar_registro_produccion_seguro', { p_registro_id: id });
+    if (error) throw error;
+    return { ok: true, data };
+  } catch (e) {
+    return { error: e };
+  }
+}
 
 /* --- orden_items --- */
 function itemToDb(it) {
