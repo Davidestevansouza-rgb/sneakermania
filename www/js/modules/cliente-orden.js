@@ -383,7 +383,11 @@ export async function guardarClienteOrden(btn) {
       state.clientes.push(cliente);
       logActivity('Registró nuevo cliente ' + cliente.nombre);
       await persist();
-      await db.saveCliente(cliente);
+      const clienteSave = await db.saveCliente(cliente);
+      if (!clienteSave?.ok) {
+        if (clienteSave?.queued) throw new Error('CLIENT_SAVE_PENDING_SYNC');
+        throw (clienteSave?.error || new Error('CLIENT_SAVE_NOT_CONFIRMED'));
+      }
     }
 
     // 2) Orden — usar SIEMPRE el contador atómico de Supabase cuando hay conexión.
@@ -424,11 +428,16 @@ export async function guardarClienteOrden(btn) {
     state.ordenes.push(orden);
     logActivity('Creó orden #' + orden.numero + ' para ' + cliente.nombre);
     await persist();
-    await db.saveOrden(orden);
+    const ordenSave = await db.saveOrden(orden);
+    if (!ordenSave?.ok) {
+      if (ordenSave?.queued) throw new Error('ORDER_SAVE_PENDING_SYNC');
+      throw (ordenSave?.error || new Error('ORDER_SAVE_NOT_CONFIRMED'));
+    }
 
     // 3) Pares (ítems), cada uno con su análisis de IA (editado o no) y su foto.
     if (!Array.isArray(state.ordenItems)) state.ordenItems = [];
     let numeroItem = 1;
+    let fotosFallidas = 0;
     for (const fila of filas) {
       const descripcion = fila.querySelector('.co-desc-input').value.trim();
       const tipoServicioPar = Array.from(fila.querySelectorAll('.co-servicio-chk:checked')).map(c => c.value);
@@ -445,7 +454,12 @@ export async function guardarClienteOrden(btn) {
         estadoCalzado: ia.estadoCalzado, tratamientoSugerido: ia.tratamientoSugerido
       };
       state.ordenItems.push(item);
-      await db.saveOrdenItem(item);
+      const itemSave = await db.saveOrdenItem(item);
+      if (!itemSave?.ok) {
+        if (itemSave?.queued) throw new Error('ORDER_ITEM_SAVE_PENDING_SYNC');
+        state.ordenItems = state.ordenItems.filter(x => x.id !== item.id);
+        throw (itemSave?.error || new Error('ORDER_ITEM_SAVE_NOT_CONFIRMED'));
+      }
       numeroItem++;
 
       // Resumen a nivel de orden (para tickets/QR que muestran un solo artículo).
@@ -459,8 +473,10 @@ export async function guardarClienteOrden(btn) {
         try {
           const fotoData = await storageManager.uploadFoto(entry.file, orden.id, 'todos_pares');
           fotoData.item = item.codigo;
+          fotoData.itemId = item.id;
           orden.extra.fotos.push(fotoData);
         } catch (e) {
+          fotosFallidas++;
           console.error('No se pudo subir la foto del artículo ' + item.codigo + ':', e);
           showToast('El artículo ' + item.codigo + ' se guardó, pero su foto no se pudo subir.');
         }
@@ -468,14 +484,20 @@ export async function guardarClienteOrden(btn) {
     }
     orden.cantidadPares = itemsDeOrden(orden.id).length || 1;
     await persist();
-    await db.saveOrden(orden);
+    const ordenFinalSave = await db.saveOrden(orden);
+    if (!ordenFinalSave?.ok) {
+      if (ordenFinalSave?.queued) throw new Error('ORDER_FINAL_SAVE_PENDING_SYNC');
+      throw (ordenFinalSave?.error || new Error('ORDER_FINAL_SAVE_NOT_CONFIRMED'));
+    }
 
     closeModal('modal-cliente-orden');
     if (window.renderClientes) window.renderClientes();
     if (window.renderOrdenes) window.renderOrdenes();
     if (window.populateGaleriaSelect) window.populateGaleriaSelect();
     if (document.getElementById('tab-galeria') && document.getElementById('tab-galeria').classList.contains('active') && window.renderGaleria) window.renderGaleria();
-    showToast('Cliente y orden registrados');
+    showToast(fotosFallidas
+      ? 'Cliente y orden registrados, pero ' + fotosFallidas + ' foto(s) no se pudieron subir. Agrégalas desde la orden.'
+      : 'Cliente y orden registrados');
 
     // El método de pago y el envío por WhatsApp ahora se eligen en el
     // propio formulario, antes de guardar. Si se marcó la casilla, el
@@ -486,7 +508,11 @@ export async function guardarClienteOrden(btn) {
     abrirExitoClienteOrden(orden.id);
   } catch (e) {
     console.error(e);
-    showToast('Error al registrar el cliente y la orden');
+    if (String(e?.message || '').includes('PENDING_SYNC')) {
+      showToast('Guardado pendiente de sincronizar. No repitas el registro; revisa la orden al volver la conexión.');
+    } else {
+      showToast('No se completó el registro. Recarga los datos antes de volver a intentarlo.');
+    }
   } finally { restore(); }
 }
 
