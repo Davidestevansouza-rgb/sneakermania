@@ -447,7 +447,7 @@ export async function logRemote(accion) {
 export async function fetchActivityLogRange(desde, hasta) {
   if (!online() || !supabase || !tenantId()) return null;
   try {
-    let q = supabase.from('actividad_log').select('*').order('created_at', { ascending: false }).limit(1000);
+    let q = supabase.from('actividad_log').select('created_at,accion,datos').order('created_at', { ascending: false }).limit(1000);
     if (desde) q = q.gte('created_at', desde + 'T00:00:00');
     if (hasta) q = q.lte('created_at', hasta + 'T23:59:59');
     const { data, error } = await q;
@@ -458,6 +458,27 @@ export async function fetchActivityLogRange(desde, hasta) {
     }));
   } catch (e) {
     console.error('No se pudo buscar la bitácora por fecha:', e);
+    return null;
+  }
+}
+
+export async function fetchLatestActivityLog(limit = 100) {
+  if (!online() || !supabase || !tenantId()) return null;
+  try {
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 200));
+    const { data, error } = await supabase
+      .from('actividad_log')
+      .select('created_at,accion,datos')
+      .order('created_at', { ascending: false })
+      .limit(safeLimit);
+    if (error) throw error;
+    return (data || []).map(r => ({
+      fecha: r.created_at,
+      accion: r.accion,
+      usuario: (r.datos && r.datos.usuario) || '—'
+    }));
+  } catch (e) {
+    console.error('No se pudo recargar la bitácora:', e);
     return null;
   }
 }

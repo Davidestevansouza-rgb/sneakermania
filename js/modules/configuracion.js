@@ -320,7 +320,12 @@ export function stopRealtimeConfig() {
 
 export async function recargarBitacora() {
   try {
-    await db.loadAllData();
+    const actividad = await db.fetchLatestActivityLog(100);
+    if (actividad === null) {
+      showToast('No se pudo actualizar la bitácora');
+      return;
+    }
+    state.activityLog = actividad;
     renderActivityLog();
     showToast('Bitácora actualizada');
   } catch (e) { console.error(e); showToast('No se pudo actualizar la bitácora'); }
