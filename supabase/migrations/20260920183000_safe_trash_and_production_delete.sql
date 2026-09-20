@@ -6,7 +6,7 @@
 create or replace function public.eliminar_orden_papelera_seguro(p_order_id uuid)
 returns jsonb
 language plpgsql
-security definer
+security invoker
 set search_path = 'public'
 as $$
 declare
@@ -87,7 +87,7 @@ grant execute on function public.eliminar_orden_papelera_seguro(uuid) to service
 create or replace function public.eliminar_registro_produccion_seguro(p_registro_id uuid)
 returns jsonb
 language plpgsql
-security definer
+security invoker
 set search_path = 'public'
 as $$
 declare
