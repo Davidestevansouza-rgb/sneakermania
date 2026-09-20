@@ -5,21 +5,26 @@
   (uso privado del dueño)
 =============================================================
 Crea la cuenta de acceso de un empleado o supervisor para un
-cliente (negocio) ya existente. Elige el negocio de una lista,
-pones los datos y listo: el empleado ya puede entrar.
+cliente (negocio) ya existente.
 
-Ejecutalo con doble clic en "Crear Empleado.bat"
+Requiere la variable de entorno SUPABASE_SERVICE_KEY.
+Opcional: SUPABASE_URL para apuntar a otro proyecto.
 =============================================================
 """
 import json
+import os
 import urllib.request
 import urllib.error
 
-# ===== CONFIGURACION PRIVADA (no compartir este archivo) =====
-SUPABASE_URL = "https://ypgyfgbftfvouobmsync.supabase.co"
-SERVICE_KEY  = "sb_secret_N3fzzlAMkUACwsDW--VZag_wCWM3_tr"
-SITIO_WEB    = "https://charming-gaufre-2a49f0.netlify.app"
-# =============================================================
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://ypgyfgbftfvouobmsync.supabase.co").rstrip("/")
+SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
+SITIO_WEB = "https://charming-gaufre-2a49f0.netlify.app"
+
+if not SERVICE_KEY:
+    raise RuntimeError(
+        "Falta SUPABASE_SERVICE_KEY. Configura la clave privilegiada como variable de entorno; "
+        "no la guardes dentro del repositorio."
+    )
 
 
 def api(path, method="GET", body=None):
@@ -58,7 +63,6 @@ def main():
     print("=" * 55)
     print()
 
-    # 1) Elegir el negocio (tenant)
     print("Cargando negocios...\n")
     tenants = api("/rest/v1/tenants?select=id,nombre,email&order=nombre")
     if not tenants:
@@ -81,7 +85,6 @@ def main():
     tenant = tenants[idx]
     tenant_id = tenant["id"]
 
-    # 2) Datos del empleado
     print("\nNegocio elegido: " + tenant["nombre"])
     nombre = preguntar("Nombre del empleado: ")
     email  = preguntar("Correo del empleado: ").lower()
@@ -101,13 +104,11 @@ def main():
 
     auth_id = None
     try:
-        # 3) Crear cuenta de acceso (auth)
         a = api("/auth/v1/admin/users", "POST", {
             "email": email, "password": passwd, "email_confirm": True,
         })
         auth_id = a["id"]
 
-        # 4) Fila en users con el rol
         api("/rest/v1/users", "POST", {
             "id": auth_id, "tenant_id": tenant_id, "nombre": nombre,
             "email": email, "rol": rol, "activo": True,
