@@ -15,6 +15,12 @@ import { appendOrderPhotoAtomic } from '../photo-store.js';
 const PENDING_KEY = '__smDeferredOrderItemPhotos';
 let seq = 0;
 
+function esImagenCompatible(file) {
+  const type = String(file?.type || '').toLowerCase();
+  if (type === 'image/jpeg' || type === 'image/png' || type === 'image/webp') return true;
+  return /\.(jpe?g|png|webp)$/i.test(String(file?.name || ''));
+}
+
 function filaDeInput(input) {
   return input?.closest?.('#orden-items-list .orden-item-row') || null;
 }
@@ -154,8 +160,15 @@ document.addEventListener('change', ev => {
   if (!(input instanceof HTMLInputElement) || input.type !== 'file') return;
   const row = filaDeInput(input);
   if (!row) return;
-  const files = Array.from(input.files || []).filter(f => f && ((f.type || '').startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name || '')));
-  if (!files.length) return;
+  const elegidos = Array.from(input.files || []).filter(Boolean);
+  const files = elegidos.filter(esImagenCompatible);
+  if (elegidos.length !== files.length) {
+    showToast('⚠️ Formato no compatible. Usa fotografías JPEG, PNG o WebP.');
+  }
+  if (!files.length) {
+    input.value = '';
+    return;
+  }
 
   // Este módulo es el único dueño del guardado diferido de fotos de artículos.
   // Evita que otros handlers históricos suban la misma selección por duplicado.
@@ -175,6 +188,7 @@ document.addEventListener('change', ev => {
 function snapshotPendientes() {
   return Array.from(document.querySelectorAll('#orden-items-list .orden-item-row')).map(row => ({
     row,
+    rowKey: row.dataset.smRowKey || '',
     itemId: row.dataset.itemId || '',
     entries: entradasFila(row).filter(e => e.status !== 'saved')
   })).filter(x => x.entries.length);
@@ -196,7 +210,12 @@ async function guardarFotosPendientes(ordenId, pendientes) {
 
   // Secuencial a propósito: máximo una compresión/subida pesada a la vez.
   for (const p of pendientes) {
-    const itemIdActual = p.row?.dataset?.itemId || p.itemId;
+    const bindings = typeof window !== 'undefined' && window.__smOrdenItemRowBindings instanceof Map
+      ? window.__smOrdenItemRowBindings
+      : null;
+    const itemIdVinculado = p.rowKey && bindings ? (bindings.get(p.rowKey) || '') : '';
+    const itemIdActual = p.row?.dataset?.itemId || p.itemId || itemIdVinculado;
+    if (itemIdActual && p.row && !p.row.dataset.itemId) p.row.dataset.itemId = String(itemIdActual);
     // Seguridad crítica: una foto NUNCA se asigna por índice/posición.
     // Si no existe un itemId exacto, se conserva pendiente/error para reintento
     // en vez de correr el riesgo de vincularla al artículo vecino.
