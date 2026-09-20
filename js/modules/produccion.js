@@ -525,21 +525,39 @@ export async function registrarPares(btn) {
 }
 
 export async function eliminarRegistroPar(id) {
-  if (!(state.session && state.session.role === 'Administrador')) { showToast('Solo el Administrador puede eliminar registros'); return; }
-  if (!confirm('¿Eliminar este registro de artículos?')) return;
-  if (!Array.isArray(state.registroPares)) state.registroPares = [];
-  const backup = state.registroPares.slice();
-  state.registroPares = state.registroPares.filter(r => r.id !== id);
-  void renderProduccion();
-  const res = await db.deleteRegistroPar(id);
-  if (res && res.error && !res.queued) {
-    state.registroPares = backup;
-    await renderProduccion();
-    showToast('No se pudo eliminar: ' + (res.error.message || 'error del servidor'));
+  if (!(state.session && state.session.role === 'Administrador')) {
+    showToast('Solo el Administrador puede eliminar registros');
     return;
   }
+  const registro = (state.registroPares || []).find(r => r.id === id);
+  if (!registro) { showToast('Registro no encontrado'); return; }
+  if (!confirm('¿Eliminar este registro de Producción?\n\nSe quitará el servicio del artículo y se recalculará su estado. Las fotos físicas se conservarán como respaldo.')) return;
+
+  const res = await db.deleteRegistroParSeguro(id);
+  if (!res?.ok) {
+    showToast('No se pudo eliminar: ' + (res?.error?.message || 'error del servidor'));
+    return;
+  }
+
+  state.registroPares = (state.registroPares || []).filter(r => r.id !== id);
+  const info = res.data || {};
+  const item = (state.ordenItems || []).find(it => it.id === info.item_id || it.codigo === info.codigo);
+  if (item) {
+    if (item.registroServicios && typeof item.registroServicios === 'object' && info.servicio) {
+      delete item.registroServicios[info.servicio];
+    }
+    item.estado = info.estado || 'Recibido y registrado';
+    item.responsable = info.responsable || '';
+  }
+
   await persist();
-  showToast('Registro eliminado');
+  await renderProduccion();
+  if (item) {
+    try { await sincronizarEstadoOrdenDesdeItems(item.ordenId); } catch (_) {}
+  }
+  if (window.renderOrdenes) window.renderOrdenes();
+  logActivity('Eliminó registro de Producción ' + (registro.codigo || '') + (registro.servicio ? ' (' + registro.servicio + ')' : ''));
+  showToast('Registro de Producción eliminado');
 }
 
 /* ---------------- Historial de producción por fecha ----------------
@@ -568,7 +586,7 @@ export async function renderHistorialProduccion(miGen = null) {
   // función retorna antes si no la hay), así que se muestran las miniaturas.
   const hayFechaActiva = !!(fechaEl && fechaEl.value);
   cont.innerHTML = '<div style="margin-bottom:8px;font-weight:700;">' + fmtDate(fecha) + (empleado ? ' · ' + escHtml(empleado) : '') + '</div><div id="prod-historial-kpi" class="kpi-grid" style="margin-bottom:12px;"></div><div id="prod-historial-lista"></div>';
-  await renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: false, tituloVacio: 'No hay artículos registrados en esta fecha' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: hayFechaActiva, mostrarEmpleado: puedeVerEmpleadoProd(true) }, gen);
+  await renderResumenPares('prod-historial-kpi', 'prod-historial-lista', registros, { permitirEliminar: true, tituloVacio: 'No hay artículos registrados en esta fecha' + (empleado ? ' para ' + empleado : '') + '.', mostrarFotos: hayFechaActiva, mostrarEmpleado: puedeVerEmpleadoProd(true) }, gen);
 }
 
 /** Atajo: junta los últimos 7 días (incluyendo hoy) en un solo resumen,
