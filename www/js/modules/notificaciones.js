@@ -10,6 +10,11 @@ import * as db from '../db.js';
 
 const NOTIF_SYNC_MS = 5 * 60 * 1000;
 
+function puedeSincronizarNotificaciones() {
+  const rol = state?.session?.role;
+  return rol === 'Administrador' || rol === 'Supervisor';
+}
+
 function onlineNow() {
   return typeof navigator === 'undefined' || navigator.onLine !== false;
 }
@@ -116,7 +121,7 @@ async function existingDedupeKeys(keys) {
 }
 
 export async function syncNotifications() {
-  if (notifSyncRunning || !state.session?.loggedIn || !onlineNow()) return;
+  if (notifSyncRunning || !state.session?.loggedIn || !puedeSincronizarNotificaciones() || !onlineNow()) return;
   notifSyncRunning = true;
   try {
     // Regla simple y definitiva:
@@ -203,6 +208,7 @@ let notifSyncInterval=null;
 let onlineHandlerInstalled=false;
 function onBackOnline(){if(state.session?.loggedIn)syncNotifications();}
 export function startNotificationSync(){
+  if(!puedeSincronizarNotificaciones()){ stopNotificationSync(); return; }
   if(!onlineHandlerInstalled&&typeof window!=='undefined'){window.addEventListener('online',onBackOnline);onlineHandlerInstalled=true;}
   if(notifSyncInterval)return;
   if(onlineNow())syncNotifications();
