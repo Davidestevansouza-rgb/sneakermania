@@ -107,8 +107,27 @@ function lineaArticuloMinima(it) {
  *  orden, o null si todavía no tiene ninguna. La usa el envío automático
  *  de WhatsApp al registrar la orden y el botón "💬 WhatsApp". */
 function primeraFotoGeneralOrden(o) {
-  const fotos = o && o.extra && Array.isArray(o.extra.fotos) ? o.extra.fotos : [];
-  return fotos.find(f => f.categoria === 'todos_pares') || null;
+  if (!o || !o.extra) return null;
+
+  // Estructura normal: extra.fotos es un array de objetos { categoria, url, path }.
+  if (Array.isArray(o.extra.fotos)) {
+    const directa = o.extra.fotos.find(f => f && f.categoria === 'todos_pares');
+    if (directa) return directa;
+  }
+
+  // Compatibilidad con órdenes recientes guardadas como extra.extra.fotos[].
+  if (o.extra.extra && Array.isArray(o.extra.extra.fotos)) {
+    const anidada = o.extra.extra.fotos.find(f => f && f.categoria === 'todos_pares');
+    if (anidada) return anidada;
+  }
+
+  // Compatibilidad adicional con el formato por categorías:
+  // extra.fotos.todos_pares = [...]
+  if (o.extra.fotos && !Array.isArray(o.extra.fotos) && Array.isArray(o.extra.fotos.todos_pares)) {
+    return o.extra.fotos.todos_pares[0] || null;
+  }
+
+  return null;
 }
 
 /** Descarga una foto ya subida (por su URL) y la convierte en File, para
