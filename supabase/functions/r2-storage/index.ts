@@ -140,10 +140,17 @@ Deno.serve(async (req: Request) => {
 
       const uniquePaths = [...new Set(cleanPaths)];
       const signedUrls = await Promise.all(uniquePaths.map(async (cleanPath) => {
-        const objectUrl = `${R2_ENDPOINT.replace(/\/+$/, "")}/${R2_BUCKET}/${cleanPath}`;
-        const signed = await aws.sign(new Request(objectUrl, { method: "GET" }), {
-          aws: { signQuery: true, expires },
+        const objectUrl = new URL(`${R2_ENDPOINT.replace(/\/+$/, "")}/${R2_BUCKET}/${cleanPath}`);
+        // aws4fetch no acepta "expires" como opción de aws.sign(). Para S3/R2
+        // la expiración debe formar parte del query ANTES de calcular la firma.
+        objectUrl.searchParams.set("X-Amz-Expires", String(expires));
+        const signed = await aws.sign(new Request(objectUrl.toString(), { method: "GET" }), {
+          aws: { signQuery: true },
         });
+        const actualExpires = Number(new URL(signed.url).searchParams.get("X-Amz-Expires"));
+        if (actualExpires !== expires) {
+          throw new Error("No se pudo aplicar la expiración solicitada a la URL firmada");
+        }
         return { url: signed.url, path: cleanPath };
       }));
 
