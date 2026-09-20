@@ -111,29 +111,48 @@ Deno.serve(async (req: Request) => {
     const payload = await req.json().catch(() => ({}));
     const action = payload.action;
 
-    if (action === "signed-url") {
-      if (typeof payload.path !== "string" || !payload.path) {
-        return jsonResponse({ error: "Falta 'path'" }, 400);
-      }
-      const cleanPath = limpiarPath(payload.path);
-      if (primerSegmento(cleanPath) !== tenant) {
-        return jsonResponse({ error: "No autorizado para leer ese path" }, 403);
-      }
-      if (cleanPath.length > 500 || /[\r\n]/.test(cleanPath)) {
-        return jsonResponse({ error: "Path invalido" }, 400);
-      }
-
+    if (action === "signed-url" || action === "signed-urls") {
       const requested = Number(payload.expires);
       const expires = Number.isFinite(requested)
         ? Math.max(60, Math.min(MAX_SIGNED_URL_SECONDS, Math.floor(requested)))
         : MAX_SIGNED_URL_SECONDS;
-      const objectUrl = `${R2_ENDPOINT.replace(/\/+$/, "")}/${R2_BUCKET}/${cleanPath}`;
-      const signed = await aws.sign(new Request(objectUrl, { method: "GET" }), {
-        aws: { signQuery: true, expires },
-      });
-      return jsonResponse({ url: signed.url, path: cleanPath, expiresIn: expires });
-    }
 
+      const rawPaths = action === "signed-urls" ? payload.paths : [payload.path];
+      if (!Array.isArray(rawPaths) || rawPaths.length === 0) {
+        return jsonResponse({ error: action === "signed-urls" ? "Falta paths" : "Falta path" }, 400);
+      }
+      if (rawPaths.length > 100) {
+        return jsonResponse({ error: "Demasiados paths; máximo 100 por solicitud" }, 413);
+      }
+
+      const cleanPaths: string[] = [];
+      for (const rawPath of rawPaths) {
+        if (typeof rawPath !== "string" || !rawPath) return jsonResponse({ error: "Path invalido" }, 400);
+        const cleanPath = limpiarPath(rawPath);
+        if (primerSegmento(cleanPath) !== tenant) {
+          return jsonResponse({ error: "No autorizado para leer ese path" }, 403);
+        }
+        if (cleanPath.length > 500 || /[\r\n]/.test(cleanPath)) {
+          return jsonResponse({ error: "Path invalido" }, 400);
+        }
+        cleanPaths.push(cleanPath);
+      }
+
+      const uniquePaths = [...new Set(cleanPaths)];
+      const signedUrls = await Promise.all(uniquePaths.map(async (cleanPath) => {
+        const objectUrl = `${R2_ENDPOINT.replace(/\/+$/, "")}/${R2_BUCKET}/${cleanPath}`;
+        const signed = await aws.sign(new Request(objectUrl, { method: "GET" }), {
+          aws: { signQuery: true, expires },
+        });
+        return { url: signed.url, path: cleanPath };
+      }));
+
+      if (action === "signed-url") {
+        const first = signedUrls[0];
+        return jsonResponse({ url: first.url, path: first.path, expiresIn: expires });
+      }
+      return jsonResponse({ urls: signedUrls, expiresIn: expires });
+    }
     if (action === "download") {
       if (typeof payload.path !== "string" || !payload.path) {
         return jsonResponse({ error: "Falta 'path'" }, 400);

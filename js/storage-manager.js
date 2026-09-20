@@ -140,22 +140,77 @@ export async function resolveImageUrl(url, path = null) {
 
 export async function resolveImageUrls(fotos) {
   if (!Array.isArray(fotos) || !fotos.length || !sesionR2Activa()) return [];
-  // Limita la cantidad de firmas simultáneas para no saturar Safari/Chrome
-  // móvil ni el Edge Function cuando una galería contiene muchas imágenes.
-  return mapConcurrencia(fotos, SIGNED_URL_CONCURRENCY, async f => ({
-    ...f,
-    resolvedUrl: await resolveImageUrl(f?.url, f?.path)
-  }));
+
+  const resultados = new Array(fotos.length);
+  const faltantes = new Map();
+
+  for (let i = 0; i < fotos.length; i++) {
+    const f = fotos[i] || {};
+    const url = typeof f.url === 'string' ? f.url : '';
+    const esReferenciaR2 = url.startsWith('r2://');
+    const objectPath = f.path || extraerPathR2(url);
+    if (!objectPath) {
+      resultados[i] = { ...f, resolvedUrl: esReferenciaR2 ? null : url };
+      continue;
+    }
+    const cached = SIGNED_URL_CACHE.get(objectPath);
+    if (cached && cached.expiresAt > Date.now()) {
+      resultados[i] = { ...f, resolvedUrl: cached.url };
+      continue;
+    }
+    const pending = SIGNED_URL_PENDING.get(objectPath);
+    if (pending) {
+      resultados[i] = { ...f, resolvedUrl: await pending };
+      continue;
+    }
+    if (!faltantes.has(objectPath)) faltantes.set(objectPath, []);
+    faltantes.get(objectPath).push(i);
+  }
+
+  const paths = [...faltantes.keys()];
+  for (let from = 0; from < paths.length; from += 100) {
+    const lote = paths.slice(from, from + 100);
+    let batchOk = false;
+    try {
+      const tid = tenantId();
+      const { data, error } = await invokeR2({
+        body: { action: 'signed-urls', paths: lote, expires: 3000 },
+        headers: tid ? { 'x-tenant-id': tid } : {}
+      });
+      if (!error && Array.isArray(data?.urls)) {
+        const porPath = new Map(data.urls.filter(x => x?.path && x?.url).map(x => [x.path, x.url]));
+        for (const path of lote) {
+          const signed = porPath.get(path) || null;
+          if (signed) SIGNED_URL_CACHE.set(path, { url: signed, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
+          for (const idx of faltantes.get(path) || []) {
+            const foto = fotos[idx] || {};
+            resultados[idx] = { ...foto, resolvedUrl: signed || (String(foto.url || '').startsWith('r2://') ? null : foto.url) };
+          }
+        }
+        batchOk = true;
+      }
+    } catch (e) {
+      console.warn('No se pudo resolver lote de URLs R2; se usa fallback individual:', e);
+    }
+    if (!batchOk) {
+      await mapConcurrencia(lote, SIGNED_URL_CONCURRENCY, async path => {
+        const indices = faltantes.get(path) || [];
+        const muestra = fotos[indices[0]] || {};
+        const signed = await resolveImageUrl(muestra.url, path);
+        for (const idx of indices) resultados[idx] = { ...(fotos[idx] || {}), resolvedUrl: signed };
+      });
+    }
+  }
+  return resultados;
 }
 
 /**
- * Resuelve un lote de URLs firmadas con concurrencia controlada.
- * @param {Array<{url:string, path?:string}>} fotos
+ * Resuelve un lote de URLs firmadas compartiendo una sola autenticación
+ * por hasta 100 objetos R2.
  */
 export async function resolveImageUrlsBatch(fotos) {
   return resolveImageUrls(fotos);
 }
-
 /**
  * Prefetch en BACKGROUND con la misma concurrencia controlada y cache compartida.
  * @param {Array<{url:string, path?:string}>} fotos
@@ -175,31 +230,30 @@ function imagenesEn(root) {
 export async function secureImageUrlsInDom(root = document) {
   if (!root || !sesionR2Activa()) return;
   const imgs = imagenesEn(root);
-  await mapConcurrencia(imgs, SIGNED_URL_CONCURRENCY, async img => {
+  const pendientes = [];
+  for (const img of imgs) {
     if (!img.hasAttribute('loading')) img.setAttribute('loading', 'lazy');
-
     const srcActual = img.getAttribute('src') || '';
     if (srcActual.startsWith('r2://')) img.dataset.r2Source = srcActual;
     const fuenteR2 = img.dataset.r2Source || (srcActual.startsWith('r2://') ? srcActual : '');
-    if (!fuenteR2) return;
-
-    // Si ya tiene una URL HTTP resuelta y no está marcada como no disponible,
-    // no vuelve a firmarla por una mutación DOM ajena.
-    if (!srcActual.startsWith('r2://') && srcActual && srcActual !== PIXEL_TRANSPARENTE && img.dataset.r2Unavailable !== 'true') return;
-
-    const signed = await resolveImageUrl(fuenteR2);
+    if (!fuenteR2) continue;
+    if (!srcActual.startsWith('r2://') && srcActual && srcActual !== PIXEL_TRANSPARENTE && img.dataset.r2Unavailable !== 'true') continue;
+    pendientes.push({ img, url: fuenteR2 });
+  }
+  if (!pendientes.length) return;
+  const resueltas = await resolveImageUrls(pendientes.map(x => ({ url: x.url })));
+  for (let i = 0; i < pendientes.length; i++) {
+    const img = pendientes[i].img;
+    const signed = resueltas[i]?.resolvedUrl || null;
     if (signed) {
       if (img.getAttribute('src') !== signed) img.setAttribute('src', signed);
       delete img.dataset.r2Unavailable;
     } else {
-      // La referencia persistente queda en data-r2-source. Un fallo temporal
-      // nunca borra el r2:// original ni convierte el problema en pérdida de foto.
       if (img.getAttribute('src') !== PIXEL_TRANSPARENTE) img.setAttribute('src', PIXEL_TRANSPARENTE);
       img.dataset.r2Unavailable = 'true';
     }
-  });
+  }
 }
-
 if (typeof window !== 'undefined') {
   const iniciarSeguridadImagenes = () => {
     secureImageUrlsInDom(document).catch(() => {});
