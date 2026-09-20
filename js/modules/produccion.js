@@ -359,7 +359,10 @@ export async function registrarPares(btn) {
             fotoUrl: fotosExistentes[0] || nuevasFotoUrls[0] || ''
           });
           await persist();
-          await db.saveRegistroPar(state.registroPares[idx]);
+          const registroUpdate = await db.saveRegistroPar(state.registroPares[idx]);
+          if (registroUpdate?.error && !registroUpdate?.queued) {
+            throw registroUpdate.error;
+          }
           // Vincula también las fotos nuevas a la Galería de la orden.
           const itemVinc = (state.ordenItems || []).find(it => (it.codigo || '') === codigoNorm);
           const catGaleria = SERVICIO_A_GALERIA_CAT[servicio];
@@ -468,9 +471,13 @@ export async function registrarPares(btn) {
         const nuevoEstado = SERVICIO_A_ESTADO_ITEM[servicio];
         if (nuevoEstado) itemActualizado.estado = nuevoEstado;
         try {
-          await db.saveOrdenItem(itemActualizado);
+          const itemUpdate = await db.saveOrdenItem(itemActualizado);
+          if (itemUpdate?.error && !itemUpdate?.queued) throw itemUpdate.error;
           await sincronizarEstadoOrdenDesdeItems(itemActualizado.ordenId);
-        } catch (e) { console.error('No se pudo actualizar el artículo:', e); }
+        } catch (e) {
+          console.error('No se pudo actualizar el artículo:', e);
+          showToast('⚠️ El servicio quedó registrado, pero no se confirmó la actualización del estado del artículo. Recarga y avisa al administrador.');
+        }
         // Vincula las fotos que se acaban de subir (del lavador, el
         // detallista o el pintor) a la Galería de la orden del artículo, en
         // la categoría que le corresponde a este servicio — así aparecen
