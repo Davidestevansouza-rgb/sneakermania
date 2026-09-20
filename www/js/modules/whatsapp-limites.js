@@ -81,33 +81,49 @@ export async function enviarWhatsAppConFoto(numero, mensaje, file) {
   }
 
   try {
-    if (file) {
-      const a = document.createElement('a');
-      const objectUrl = URL.createObjectURL(file);
-      a.href = objectUrl;
-      a.download = file.name || 'foto-orden.jpg';
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        URL.revokeObjectURL(objectUrl);
-        a.remove();
-      }, 2000);
-    }
+    // Con archivo, usar Web Share API para entregar la foto + texto al
+    // sistema nativo de iOS/Android. Un enlace wa.me puede preseleccionar
+    // el número y el texto, pero NO puede adjuntar un File local.
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({
+        files: [file],
+        text: mensaje,
+        title: file.name || 'Foto de la orden'
+      });
+    } else {
+      // Respaldo: conserva el flujo directo al número guardado. Si había foto
+      // pero el navegador no permite compartir archivos, se prepara una copia
+      // local y se avisa al usuario para adjuntarla manualmente.
+      if (file) {
+        const a = document.createElement('a');
+        const objectUrl = URL.createObjectURL(file);
+        a.href = objectUrl;
+        a.download = file.name || 'foto-orden.jpg';
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(objectUrl);
+          a.remove();
+        }, 2000);
+      }
 
-    const texto = mensaje + (file ? '\n\n📷 Foto de la orden preparada para adjuntar en este chat.' : '');
-    const url = `https://wa.me/${tel}?text=${encodeURIComponent(texto)}`;
-    window.open(url, '_blank');
+      const texto = mensaje + (file ? '\n\n📷 Foto preparada para adjuntar manualmente.' : '');
+      const url = `https://wa.me/${tel}?text=${encodeURIComponent(texto)}`;
+      window.open(url, '_blank');
+    }
   } catch (e) {
-    console.error('Error al abrir WhatsApp:', e);
-    showToast('No se pudo abrir WhatsApp');
+    // Cancelar el panel de compartir no debe contarse como mensaje enviado.
+    if (e?.name === 'AbortError') return false;
+    console.error('Error al compartir por WhatsApp:', e);
+    showToast('No se pudo compartir por WhatsApp');
     return false;
   }
 
   const total = incrementarContador();
   const limite = Number(state.config?.whatsapp_limite_mensual) || 100;
   showToast(file
-    ? `WhatsApp abierto en el cliente correcto. Foto preparada (${total}/${limite})`
+    ? `Foto y mensaje preparados para compartir (${total}/${limite})`
     : `Mensaje enviado (${total}/${limite} este mes)`, 'info');
   return true;
 }
