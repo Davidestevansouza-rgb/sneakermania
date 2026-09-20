@@ -729,7 +729,8 @@ export async function saveOrden(btn, opts = {}) {
   let target;
   let descuentoNuevo = false; // para notificar solo cuando el descuento cambia de verdad
   let esNuevaOrden = false;   // para enviar el WhatsApp automático de registro
-  let fotoGeneralParaWhatsApp = null; // primera "foto general" recién cargada, para ir junto con el mensaje
+  let fotoGeneralParaWhatsApp = null; // compatibilidad; WhatsApp actual es texto-only
+  let fotosGeneralesFallidas = 0;
   try {
     if (id) {
       const o = ordenById(id);
@@ -769,7 +770,11 @@ export async function saveOrden(btn, opts = {}) {
         try {
           const fotoData = await storageManager.uploadFoto(f.file, target.id, 'todos_pares');
           target.extra.fotos.push(fotoData);
-        } catch (e) { console.error('No se pudo subir una foto general:', e); }
+        } catch (e) {
+          fotosGeneralesFallidas++;
+          console.error('No se pudo subir una foto general:', e);
+          showToast('⚠️ Una foto general no se pudo subir. La orden podrá guardarse, pero esa foto deberá agregarse nuevamente.');
+        }
       }
       limpiarFotosGeneralesPendientes();
     }
@@ -808,12 +813,16 @@ export async function saveOrden(btn, opts = {}) {
       const ordenIdInput = document.getElementById('orden-id');
       if (ordenIdInput) ordenIdInput.value = target.id;
       renderOrdenes();
-      showToast('✅ Orden guardada');
+      showToast(fotosGeneralesFallidas
+        ? '⚠️ Orden guardada, pero ' + fotosGeneralesFallidas + ' foto(s) general(es) no se subieron.'
+        : '✅ Orden guardada');
       return target.id;
     }
     closeModal('modal-orden');
     renderOrdenes();
-    showToast('Orden guardada');
+    showToast(fotosGeneralesFallidas
+      ? '⚠️ Orden guardada, pero ' + fotosGeneralesFallidas + ' foto(s) general(es) no se subieron.'
+      : 'Orden guardada');
     return target.id;
   } catch (e) {
     console.error(e);
