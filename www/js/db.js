@@ -390,9 +390,10 @@ export const deleteOrdenItem = (id) => pushDelete('orden_items', id);
 export async function refreshOrdenItems(ordenId) {
   if (!online() || !supabase || !tenantId() || !ordenId) return { error: 'NO_CONNECTION' };
   try {
+    const ITEM_REFRESH_COLS = 'id,orden_id,numero_item,codigo,descripcion,estado,tipo_servicio,responsable,fecha_ingreso,fecha_entrega_estimada,precio,entregado,fecha_entrega,marca,modelo,tipo_calzado,color,material,estado_calzado,tratamiento_sugerido,timeline_index,timeline_dates,control_calidad,biblioteca,registro_servicios';
     const { data, error } = await supabase
       .from('orden_items')
-      .select('*')
+      .select(ITEM_REFRESH_COLS)
       .eq('orden_id', ordenId)
       .order('numero_item', { ascending: true });
     if (error) throw error;
