@@ -1394,7 +1394,19 @@ export function viewOrdenDetalle(id, preselectItemId) {
 
 /** Devuelve los ítems (pares) activos de una orden, en orden por número. */
 export function itemsDeOrden(ordenId) {
-  return (state.ordenItems || []).filter(it => it.ordenId === ordenId).sort((a, b) => a.numeroItem - b.numeroItem);
+  const ids = new Set();
+  const codigos = new Set();
+  return (state.ordenItems || [])
+    .filter(it => it.ordenId === ordenId)
+    .filter(it => {
+      const id = it?.id ? String(it.id) : '';
+      const codigo = it?.codigo ? String(it.codigo) : '';
+      if ((id && ids.has(id)) || (codigo && codigos.has(codigo))) return false;
+      if (id) ids.add(id);
+      if (codigo) codigos.add(codigo);
+      return true;
+    })
+    .sort((a, b) => a.numeroItem - b.numeroItem);
 }
 
 /** Agrega una fila al formulario de la orden para cargar un par (ítem).
@@ -1410,6 +1422,29 @@ export function itemsDeOrden(ordenId) {
  *  recepcionista cambia la cantidad de pares. */
 const _itemsEliminadosExplicitamente = new Set();
 
+function vincularFilaAItem(fila, itemId) {
+  if (!fila || !itemId) return;
+  fila.dataset.itemId = String(itemId);
+  const rowKey = fila.dataset.smRowKey || '';
+  if (!rowKey || typeof window === 'undefined') return;
+  if (!(window.__smOrdenItemRowBindings instanceof Map)) window.__smOrdenItemRowBindings = new Map();
+  window.__smOrdenItemRowBindings.set(rowKey, String(itemId));
+}
+
+function deduplicarOrdenItemsLocal() {
+  const ids = new Set();
+  const codigos = new Set();
+  state.ordenItems = (state.ordenItems || []).filter(it => {
+    const id = it?.id ? String(it.id) : '';
+    const codigo = it?.codigo ? String(it.codigo) : '';
+    const codeKey = codigo ? String(it?.ordenId || '') + '|' + codigo : '';
+    if ((id && ids.has(id)) || (codeKey && codigos.has(codeKey))) return false;
+    if (id) ids.add(id);
+    if (codeKey) codigos.add(codeKey);
+    return true;
+  });
+}
+
 function agregarFilaItemOrden(item, opts) {
   const cont = document.getElementById('orden-items-list');
   if (!cont) return;
@@ -1417,6 +1452,8 @@ function agregarFilaItemOrden(item, opts) {
   const row = document.createElement('div');
   row.className = 'orden-item-row articulo-row';
   row.dataset.itemId = item ? item.id : '';
+  row.dataset.smRowKey = item?.id ? 'item-' + item.id : 'draft-' + crypto.randomUUID();
+  if (item?.id) vincularFilaAItem(row, item.id);
   if (o.masivo) row.dataset.masivo = '1';
   const codigo = item ? item.codigo : (o.codigoPreview || '(nuevo)');
   const desc = item ? (item.descripcion || '') : (o.descripcionDefault || '');
@@ -1475,7 +1512,7 @@ function agregarFilaItemOrden(item, opts) {
     '<div style="margin-top:8px;">' +
       '<label class="btn btn-ghost btn-sm" style="cursor:pointer;font-size:11px;" title="Agregar foto de este artículo">' +
         '📷 Agregar foto' +
-        '<input type="file" accept="image/*" capture="environment" style="display:none;" onchange="onFotoFilaItem(this)">' +
+        '<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" style="display:none;" onchange="onFotoFilaItem(this)">' +
       '</label>' +
     '</div>';
   cont.appendChild(row);
@@ -1703,7 +1740,8 @@ async function sincronizarItemsDesdeFormulario(o) {
         item.fechaIngreso = fechaIngreso;
         item.fechaEntregaEstimada = fechaEntregaEstimada;
         item.precio = precio;
-        await db.saveOrdenItem(item);
+        const itemSaveResult = await db.saveOrdenItem(item);
+        if (!itemSaveResult?.ok) throw (itemSaveResult?.error || new Error('ORDER_ITEM_SAVE_NOT_CONFIRMED'));
       }
     } else {
       const numeroItem = siguienteNumero++;
@@ -1713,12 +1751,12 @@ async function sincronizarItemsDesdeFormulario(o) {
         fechaIngreso, fechaEntregaEstimada, precio,
         estado: 'Recibido y registrado', entregado: false, fechaEntrega: null
       };
+      // Vincular ANTES del await: el UUID ya es definitivo y así ninguna
+      // actualización asíncrona del DOM puede dejar la foto sin artículo.
+      vincularFilaAItem(fila, nuevo.id);
       state.ordenItems.push(nuevo);
-      await db.saveOrdenItem(nuevo);
-      // Vincular inmediatamente ESTA fila con el item definitivo recién creado.
-      // Las fotos diferidas leen este itemId después del guardado y nunca deben
-      // deducir el artículo por la posición visual de la fila.
-      fila.dataset.itemId = nuevo.id;
+      const itemSaveResult = await db.saveOrdenItem(nuevo);
+      if (!itemSaveResult?.ok) throw (itemSaveResult?.error || new Error('ORDER_ITEM_SAVE_NOT_CONFIRMED'));
       idsVistos.add(nuevo.id);
 }
   }
@@ -1734,14 +1772,19 @@ async function sincronizarItemsDesdeFormulario(o) {
     }
   }
 
+  // Reconciliar solo el estado local. La BD ya impone unicidad; esto evita
+  // una tarjeta duplicada transitoria cuando coinciden una respuesta de
+  // guardado y un refresco/render local.
+  deduplicarOrdenItemsLocal();
+  await persist();
+
   // "Cantidad de artículos" es lo que el cliente dejó al ingresar la orden —
   // lo escribe el recepcionista a mano en "Registro General de los Artículos"
   // y NO se recalcula acá. Registrar cada par individual es opcional y
   // puede hacerse después, así que el conteo de filas cargadas no siempre
-  // coincide con la cantidad real que trajo el cliente (antes esta línea
-  // sobrescribía el valor manual con itemsDeOrden(o.id).length, borrando
-  // lo que se había puesto a mano).
-  await db.saveOrden(o);
+  // coincide con la cantidad real que trajo el cliente.
+  const ordenSaveResult = await db.saveOrden(o);
+  if (!ordenSaveResult?.ok) throw (ordenSaveResult?.error || new Error('ORDER_SAVE_NOT_CONFIRMED'));
 }
 
 
