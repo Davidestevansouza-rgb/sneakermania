@@ -59,7 +59,8 @@ function resumeNetworkLoops() {
   offlineApplied = false;
   if (!state.session?.loggedIn || !onlineNow()) return;
   startNotificationSync();
-  startRealtimeAgenda();
+  const agendaActiva = document.getElementById('tab-agenda')?.classList.contains('active');
+  if (agendaActiva) startRealtimeAgenda();
   const cfgActiva = document.getElementById('tab-configuracion')?.classList.contains('active') ||
     document.getElementById('tab-seguridad')?.classList.contains('active');
   if (cfgActiva) startRealtimeConfig();

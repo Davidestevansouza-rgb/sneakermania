@@ -26,7 +26,7 @@ import { renderFinanzas } from './modules/finanzas.js';
 import { initFacturasTab } from './modules/facturas.js';
 import { renderInventario } from './modules/inventario.js';
 import { renderReportes } from './modules/reportes.js';
-import { renderAgenda } from './modules/agenda.js';
+import { renderAgenda, startRealtimeAgenda, stopRealtimeAgenda } from './modules/agenda.js';
 import { renderNotificaciones } from './modules/notificaciones.js';
 import { renderEmpleados } from './modules/empleados.js';
 import { renderConfiguracion, applyBrandLogo, startRealtimeConfig, stopRealtimeConfig } from './modules/configuracion.js';
@@ -69,7 +69,13 @@ export function switchTab(tab) {
   if (tab === 'finanzas') renderFinanzas();
   if (tab === 'facturas') initFacturasTab();
   if (tab === 'inventario') renderInventario();
-  if (tab === 'agenda') renderAgenda();
+  if (tab === 'agenda') {
+    startRealtimeAgenda();
+    renderAgenda();
+  } else {
+    // Agenda necesita tiempo real solo mientras alguien la está mirando.
+    stopRealtimeAgenda();
+  }
   if (tab === 'reportes') renderReportes();
   if (tab === 'notificaciones') renderNotificaciones();
   if (tab === 'empleados') renderEmpleados();
