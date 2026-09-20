@@ -2353,18 +2353,14 @@ export async function enviarWhatsAppOrden(ordenId) {
   if (!o) return;
   const c = clienteById(o.clienteId);
   if (!c) return;
-  // El mensaje al cliente lleva EXACTAMENTE la misma información del QR de la
-  // orden (detalle completo par por par, totales, etc.), sin repetir datos.
-  const msg = 'Hola ' + (c.nombre || '') + ' 👟\n\n' + ordenQrText(o) + '\n\n¡Gracias por tu confianza!';
-  const fotoGeneral = primeraFotoGeneralOrden(o);
-  const file = fotoGeneral ? await fotoUrlAFile(fotoGeneral, 'orden-' + o.numero + '.jpg') : null;
 
-  if (window.enviarWhatsAppConFoto) {
-    window.enviarWhatsAppConFoto(c.whatsapp || '', msg, file);
-  } else if (window.enviarWhatsApp) {
+  const msg = 'Hola ' + (c.nombre || '') + ' 👟\n\n' + ordenQrText(o) + '\n\n¡Gracias por tu confianza!';
+
+  // WhatsApp solo texto: no resolvemos ni descargamos fotos desde R2.
+  // Esto evita invocaciones/egress adicionales y mantiene un flujo estable.
+  if (window.enviarWhatsApp) {
     window.enviarWhatsApp(c.whatsapp || '', msg);
   } else {
-    // Fallback si el módulo no está cargado
     const url = 'https://wa.me/' + (c.whatsapp || '').replace(/[^0-9]/g, '') + '?text=' + encodeURIComponent(msg);
     window.open(url, '_blank');
   }
@@ -2405,11 +2401,11 @@ function enviarWhatsAppAutomatico(o, encabezado, fotoFile) {
     const c = clienteById(o.clienteId);
     if (!c) return;
     const tel = (c.whatsapp || '').replace(/[^0-9]/g, '');
-    if (!tel) return; // sin número no hay envío
+    if (!tel) return;
     const msg = (encabezado ? encabezado + '\n\n' : '') + ordenQrText(o) + '\n\n¡Gracias por tu confianza!';
-    if (window.enviarWhatsAppConFoto) {
-      window.enviarWhatsAppConFoto(tel, msg, fotoFile || null);
-    } else if (window.enviarWhatsApp) {
+
+    // Modo texto-only: ignoramos fotoFile intencionalmente.
+    if (window.enviarWhatsApp) {
       window.enviarWhatsApp(tel, msg);
     } else {
       window.open('https://wa.me/' + tel + '?text=' + encodeURIComponent(msg), '_blank');
