@@ -11,8 +11,6 @@ import { state, setState, seedData, loadCache, puedeVerTab, tabInicial } from '.
 import { showToast, setConnStatus, bindPrimerGestoAudio } from './ui.js';
 import * as db from './db.js';
 import { initBiometricLoginUI, restorePersistedSession } from './auth.js';
-import './hotfix-fotos-20260907.js';
-
 // Módulos de features (cada uno se auto-registra en window).
 import { renderDashboard } from './modules/dashboard.js';
 import { renderClientes } from './modules/clientes.js';
@@ -31,7 +29,7 @@ import { renderReportes } from './modules/reportes.js';
 import { renderAgenda } from './modules/agenda.js';
 import { renderNotificaciones } from './modules/notificaciones.js';
 import { renderEmpleados } from './modules/empleados.js';
-import { renderConfiguracion, applyBrandLogo } from './modules/configuracion.js';
+import { renderConfiguracion, applyBrandLogo, startRealtimeConfig, stopRealtimeConfig } from './modules/configuracion.js';
 import { autoDailyBackup } from './modules/backup.js';
 import './modules/whatsapp-limites.js';
 import './modules/push-notifications.js';
@@ -44,6 +42,9 @@ import './modules/seguimiento-selector-mobile-fix-20260908.js';
 import './modules/seguimiento-button-speed-20260908.js';
 import './modules/mobile-touch-stability-20260908.js';
 import './modules/galeria-notificaciones-fix-20260909.js';
+// Cargar el hotfix histórico después de los módulos que envuelve. Así se instala
+// una sola vez sin polling de espera durante el arranque.
+import './hotfix-fotos-20260907.js';
 
 /* ============================================================
    NAVEGACIÓN
@@ -72,7 +73,14 @@ export function switchTab(tab) {
   if (tab === 'reportes') renderReportes();
   if (tab === 'notificaciones') renderNotificaciones();
   if (tab === 'empleados') renderEmpleados();
-  if (tab === 'configuracion' || tab === 'seguridad') renderConfiguracion();
+  if (tab === 'configuracion' || tab === 'seguridad') {
+    startRealtimeConfig();
+    renderConfiguracion();
+  } else {
+    // La configuración cambia muy raramente. Mantener este canal abierto en
+    // todas las pantallas generaba trabajo Realtime continuo sin beneficio.
+    stopRealtimeConfig();
+  }
   if (tab === 'ia') populateIaOrderSelect();
 }
 
