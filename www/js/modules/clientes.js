@@ -64,26 +64,42 @@ export async function saveCliente(btn) {
   };
   if (!data.nombre) { showToast('Falta completar: Nombre'); document.getElementById('cliente-nombre').focus(); return; }
   if (!data.whatsapp) { showToast('Falta completar: Número de WhatsApp'); document.getElementById('cliente-whatsapp').focus(); return; }
-  const restore = lockBtn(btn);   // evita doble guardado
+
+  const restore = lockBtn(btn);
   try {
-    let registro;
+    const existente = id ? clienteById(id) : null;
+    if (id && !existente) throw new Error('CLIENT_NOT_FOUND');
+
+    // No mutar el estado visible hasta que Supabase acepte la escritura
+    // (o la cola offline la haya registrado). Así nunca mostramos "guardado"
+    // ante un rechazo permanente del servidor.
+    const registro = id
+      ? { ...existente, ...data }
+      : { ...data, id: crypto.randomUUID() };
+
+    const saveResult = await db.saveCliente(registro);
+    if (!saveResult?.ok && !saveResult?.queued) {
+      throw (saveResult?.error || new Error('CLIENT_SAVE_NOT_CONFIRMED'));
+    }
+
     if (id) {
-      registro = clienteById(id);
-      Object.assign(registro, data);
+      Object.assign(existente, data);
       logActivity('Editó cliente ' + data.nombre);
     } else {
-      data.id = crypto.randomUUID();   // UUID real (corrige el uso de Date.now())
-      state.clientes.push(data);
-      registro = data;
+      state.clientes.push(registro);
       logActivity('Registró nuevo cliente ' + data.nombre);
     }
+
     await persist();
-    await db.saveCliente(registro);
     closeModal('modal-cliente');
     renderClientes();
-    showToast('Cliente guardado');
-  } catch (e) { console.error(e); showToast('Error al guardar el cliente'); }
-  finally { restore(); }
+    showToast(saveResult?.queued
+      ? 'Cliente guardado localmente; se sincronizará al volver la conexión'
+      : 'Cliente guardado');
+  } catch (e) {
+    console.error(e);
+    showToast('No se pudo confirmar el guardado del cliente. Reintenta.');
+  } finally { restore(); }
 }
 
 /** Elimina un cliente (solo Administrador, con confirmación previa). */
