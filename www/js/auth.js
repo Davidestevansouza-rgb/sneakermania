@@ -6,7 +6,7 @@ import { state, loadCache, setState, seedData, persist, puedeVerTab, puedeEditar
 import { showToast, logActivity, setConnStatus } from './ui.js';
 import * as db from './db.js';
 import { startNotificationSync, stopNotificationSync } from './modules/notificaciones.js';
-import { startRealtimeAgenda, stopRealtimeAgenda } from './modules/agenda.js';
+import { stopRealtimeAgenda } from './modules/agenda.js';
 import { stopRealtimeConfig } from './modules/configuracion.js';
 import { hasPin, saveSessionForPin, getSavedSession, clearPin } from './pin.js';
 import { biometricDisponible, registrarBiometria, verificarBiometria, hasBiometric, biometricOfferAnswered, ofrecerActivarBiometria, saveBiometricSession, getBiometricSession } from './biometric.js';
@@ -367,7 +367,6 @@ export async function onAuthenticated(authUser) {
 
   // Cada módulo ya es idempotente: no crea canales/timers duplicados.
   startNotificationSync();
-  startRealtimeAgenda();
   return true;
 }
 
