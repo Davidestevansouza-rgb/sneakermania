@@ -2292,56 +2292,28 @@ async function restaurarOrden(id) {
 
 /** Elimina una orden DEFINITIVAMENTE desde la Papelera (no se puede deshacer). */
 async function eliminarOrdenPermanente(id) {
-  if (!(state.session && state.session.role === 'Administrador')) { showToast('Solo el Administrador puede eliminar definitivamente'); return; }
+  if (!(state.session && state.session.role === 'Administrador')) {
+    showToast('Solo el Administrador puede eliminar definitivamente');
+    return;
+  }
   const o = (state.ordenesEliminadas || []).find(x => x.id === id);
   if (!o) return;
+  if (!confirm('¿Eliminar DEFINITIVAMENTE la orden #' + o.numero + '?\n\nSe eliminarán también sus artículos. Si tiene Producción o factura, el servidor bloqueará la operación.')) return;
 
-  // Integridad referencial: la base actual NO tiene FK orden_items -> ordenes.
-  // Borrar solo el padre dejaría artículos huérfanos persistentes. Por eso
-  // comprobamos el servidor y fallamos de forma segura si todavía hay hijos.
-  if (!supabase || !navigator.onLine) {
-    showToast('Necesitas conexión para eliminar definitivamente una orden.');
-    return;
-  }
-  try {
-    const { count, error } = await supabase
-      .from('orden_items')
-      .select('id', { count: 'exact', head: true })
-      .eq('orden_id', id);
-    if (error) throw error;
-    if ((count || 0) > 0) {
-      showToast('No se puede eliminar definitivamente: la orden todavía tiene artículos. Elimínalos primero de forma segura.');
-      return;
-    }
-  } catch (e) {
-    console.error('No se pudo verificar artículos antes del borrado definitivo:', e);
-    showToast('No se pudo verificar la integridad de la orden. No se eliminó nada.');
+  const res = await db.deleteOrdenPapeleraSeguro(id);
+  if (!res?.ok) {
+    const msg = res?.error?.message || 'error del servidor';
+    showToast('No se pudo eliminar definitivamente: ' + msg);
     return;
   }
 
-  if (!confirm('¿Eliminar DEFINITIVAMENTE la orden #' + o.numero + '?\n\nEsta acción NO se puede deshacer — se perderá para siempre.')) return;
-  const backup = state.ordenesEliminadas.slice();
-  // Guardamos también los artículos/pares de esta orden (para poder
-  // restaurarlos en la caché local si el borrado falla en el servidor).
-  const itemsBackup = (state.ordenItems || []).filter(it => it.ordenId === id);
-  state.ordenesEliminadas = state.ordenesEliminadas.filter(x => x.id !== id);
-  if (window.renderPapeleras) window.renderPapeleras();
-  const res = await db.deleteOrden(id);
-  if (res && res.error && !res.queued) {
-    state.ordenesEliminadas = backup;
-    if (window.renderPapeleras) window.renderPapeleras();
-    showToast('No se pudo eliminar definitivamente: ' + (res.error.message || 'error del servidor'));
-    return;
-  }
-  // La comprobación anterior garantiza que el servidor no tenía artículos
-  // hijos antes de borrar el padre. Limpiamos también cualquier residuo de
-  // caché local para mantener state coherente.
-  if (itemsBackup.length) {
-    state.ordenItems = (state.ordenItems || []).filter(it => it.ordenId !== id);
-    if (window.renderBiblioteca) window.renderBiblioteca();
-  }
-  logActivity('Eliminó definitivamente la orden #' + o.numero);
+  state.ordenesEliminadas = (state.ordenesEliminadas || []).filter(x => x.id !== id);
+  state.ordenItems = (state.ordenItems || []).filter(it => it.ordenId !== id);
+  state.notificaciones = (state.notificaciones || []).filter(n => n.ordenId !== id);
   await persist();
+  if (window.renderPapeleras) window.renderPapeleras();
+  renderOrdenes();
+  logActivity('Eliminó definitivamente la orden #' + o.numero + ' de forma segura');
   showToast('Orden #' + o.numero + ' eliminada definitivamente');
 }
 
