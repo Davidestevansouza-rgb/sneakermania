@@ -446,6 +446,7 @@ const EG_ORDER_COLS = 'id,numero,cliente_id,marca,modelo,tipo_calzado,color,mate
 const EG_ORDER_SLIM_COLS = 'id,numero,cliente_id,prioridad,estado,responsable,fecha_ingreso,fecha_estimada,fecha_entrega,precio,descuento,pagado,pagado_qr,pagado_efectivo,metodo_pago,fecha_pago,estado_pago,cantidad_pares,entregado';
 const EG_ITEM_COLS = 'id,orden_id,numero_item,codigo,descripcion,estado,tipo_servicio,responsable,fecha_ingreso,fecha_entrega_estimada,precio,entregado,fecha_entrega,marca,modelo,tipo_calzado,color,material,estado_calzado,tratamiento_sugerido,timeline_index,timeline_dates,control_calidad,biblioteca,registro_servicios';
 const EG_PARES_COLS = 'id,empleado,fecha,pares,foto_url,foto_urls,usuario_id,codigo,servicio,hora,observacion,created_at';
+const EG_CONFIG_MIN_COLS = 'tenant_id,nombre_negocio,whatsapp_negocio,email_negocio,prefijo_factura,mensaje_whatsapp_template,color_primario,moneda,simbolo_moneda,siguiente_orden,siguiente_factura,logo_url,updated_at';
 
 function egressMeta() {
   if (!state._egress || typeof state._egress !== 'object') {
@@ -460,6 +461,7 @@ function egressMeta() {
       libraryLoaded: false,
       agendaLoaded: false,
       fullOperationalLoaded: false,
+      configFull: false,
       productionDates: {},
       galleryPageIds: [],
       galleryCursor: null,
@@ -1110,6 +1112,25 @@ export async function loadAgendaData() {
   }
 }
 
+export async function loadFullConfig() {
+  const meta = egressMeta();
+  if (meta.configFull) return { ok: true, data: state.config || {} };
+  if (!online() || !tenantId()) return { error: 'NO_CONNECTION' };
+  try {
+    const { data, error } = await supabase.from('configuracion_tenant')
+      .select('*')
+      .eq('tenant_id', tenantId())
+      .maybeSingle();
+    if (error) throw error;
+    if (data) state.config = data;
+    meta.configFull = true;
+    return { ok: true, data: state.config || {} };
+  } catch (e) {
+    console.error('No se pudo cargar la configuración completa:', e);
+    return { error: e };
+  }
+}
+
 export async function loadInitialDataForRole() {
   if (!online() || !tenantId()) return false;
   try {
@@ -1134,6 +1155,7 @@ export async function loadInitialDataForRole() {
     meta.libraryLoaded = false;
     meta.agendaLoaded = false;
     meta.fullOperationalLoaded = false;
+    meta.configFull = false;
     meta.productionDates = {};
     meta.galleryPageIds = [];
     meta.galleryCursor = null;
@@ -1143,7 +1165,7 @@ export async function loadInitialDataForRole() {
     const common = [
       loadProductionDate(todayISO(0), { ownOnly: role === 'Empleado' }),
       supabase.from('inventario').select('id,nombre,categoria,proveedor,cantidad,stock_minimo,precio_compra,fecha_compra,fecha_vencimiento').eq('tenant_id', tenantId()),
-      supabase.from('configuracion_tenant').select('*').eq('tenant_id', tenantId()).maybeSingle()
+      supabase.from('configuracion_tenant').select(EG_CONFIG_MIN_COLS).eq('tenant_id', tenantId()).maybeSingle()
     ];
     if (role !== 'Empleado') {
       common.push(loadDashboardData());
@@ -1206,6 +1228,7 @@ export async function ensureTabData(tab) {
     else if (tab === 'produccion' && !meta.productionDates[todayISO(0)]) await loadProductionDate(todayISO(0), { ownOnly: state.session?.role === 'Empleado' });
     else if (tab === 'biblioteca') await loadBibliotecaCurrent();
     else if (tab === 'agenda') await loadAgendaData();
+    else if (tab === 'configuracion' || tab === 'seguridad') await loadFullConfig();
     else if (['consulta','ia','finanzas','facturas','reportes'].includes(tab) && !meta.fullOperationalLoaded) {
       // Estas pantallas todavía dependen de colecciones históricas completas.
       // Se conserva su comportamiento exacto, pero el costo se paga solo si
