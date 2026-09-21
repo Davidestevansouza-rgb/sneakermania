@@ -183,6 +183,7 @@ function ordenFromDb(r) {
   base.firmaRetiro = r.firma_retiro || base.firmaRetiro;
   base.firmaRecepcionista = r.firma_recepcionista || base.firmaRecepcionista;
   base.entregado = r.entregado != null ? r.entregado : base.entregado;
+  base._egressSlim = false;
   return base;
 }
 
@@ -489,7 +490,8 @@ function ordenSlimFromDb(r) {
     estadoPago: r.estado_pago || 'Pendiente',
     cantidadPares: Number(r.cantidad_pares || 0),
     entregado: !!r.entregado,
-    extra: { fotos: [] }
+    extra: { fotos: [] },
+    _egressSlim: true
   };
 }
 
