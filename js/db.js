@@ -604,7 +604,8 @@ async function loadOrderContextsByIds(ids, opts = {}) {
     .from('ordenes')
     .select(EG_ORDER_COLS)
     .eq('tenant_id', tenantId())
-    .in('id', unique);
+    .in('id', unique)
+    .or('extra->>eliminada.is.null,extra->>eliminada.eq.false');
   if (error) throw error;
   const orders = (data || []).map(ordenFromDb).filter(o => !o.eliminada);
   state.ordenes = mergeById(state.ordenes || [], orders);
@@ -629,6 +630,7 @@ export async function loadOrderPage({ limit = 20, beforeNumero = null, reset = f
       .from('ordenes')
       .select(EG_ORDER_COLS, beforeNumero == null ? { count: 'exact' } : undefined)
       .eq('tenant_id', tenantId())
+      .or('extra->>eliminada.is.null,extra->>eliminada.eq.false')
       .order('numero', { ascending: false })
       .limit(Math.max(1, Number(limit) || 20));
     if (beforeNumero != null) q = q.lt('numero', Number(beforeNumero));
@@ -779,6 +781,7 @@ async function remoteSearchCandidateOrderIds(text) {
     const { data } = await supabase.from('ordenes')
       .select('id')
       .eq('tenant_id', tenantId())
+      .or('extra->>eliminada.is.null,extra->>eliminada.eq.false')
       .eq('numero', Number(norm))
       .limit(10);
     (data || []).forEach(r => ids.add(r.id));
@@ -804,6 +807,7 @@ async function remoteSearchCandidateOrderIds(text) {
       supabase.from('ordenes')
         .select('id')
         .eq('tenant_id', tenantId())
+        .or('extra->>eliminada.is.null,extra->>eliminada.eq.false')
         .or('marca.ilike.' + p + ',modelo.ilike.' + p + ',talla.ilike.' + p + ',color.ilike.' + p)
         .limit(120),
       supabase.from('clientes')
@@ -819,6 +823,7 @@ async function remoteSearchCandidateOrderIds(text) {
       const { data: byClient, error: byClientErr } = await supabase.from('ordenes')
         .select('id')
         .eq('tenant_id', tenantId())
+        .or('extra->>eliminada.is.null,extra->>eliminada.eq.false')
         .in('cliente_id', clientIds)
         .order('numero', { ascending: false })
         .limit(200);
@@ -922,6 +927,7 @@ export async function loadGalleryPage(target = 20, { reset = false } = {}) {
         .from('ordenes')
         .select(EG_ORDER_COLS)
         .eq('tenant_id', tenantId())
+        .or('extra->>eliminada.is.null,extra->>eliminada.eq.false')
         .order('numero', { ascending: false })
         .limit(scanSize);
       if (meta.galleryCursor != null) q = q.lt('numero', Number(meta.galleryCursor));
@@ -1003,10 +1009,12 @@ export async function loadDashboardData() {
       .or('extra->>eliminada.is.null,extra->>eliminada.eq.false');
     const countPromise = supabase.from('clientes')
       .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', tenantId());
+      .eq('tenant_id', tenantId())
+      .or('eliminada.is.null,eliminada.eq.false');
     const clientNamesPromise = supabase.from('clientes')
       .select('id,nombre')
-      .eq('tenant_id', tenantId());
+      .eq('tenant_id', tenantId())
+      .or('eliminada.is.null,eliminada.eq.false');
     const gastosPromise = role === 'Administrador'
       ? supabase.from('gastos').select('id,categoria,monto,fecha,descripcion').eq('tenant_id', tenantId())
       : Promise.resolve({ data: [], error: null });
