@@ -871,7 +871,7 @@ export async function loadGalleryPage(target = 20, { reset = false } = {}) {
 
     while (added.length < wanted && meta.galleryHasMore && safety < 12) {
       safety++;
-      const scanSize = Math.max(30, Math.min(80, (wanted - added.length) * 2));
+      const scanSize = Math.max(20, Math.min(50, (wanted - added.length) + 10));
       let q = supabase
         .from('ordenes')
         .select(EG_ORDER_COLS)
@@ -892,17 +892,24 @@ export async function loadGalleryPage(target = 20, { reset = false } = {}) {
       state.ordenes = mergeById(state.ordenes || [], orders);
       await hydrateOrders(orders, { includeProduction: true });
 
+      let reachedTarget = false;
+      let lastProcessedNumero = null;
       for (const o of orders) {
-        if (meta.galleryPageIds.includes(o.id) || added.includes(o.id)) continue;
-        if (orderHasGalleryPhotos(o)) {
+        lastProcessedNumero = Number(o.numero);
+        if (!meta.galleryPageIds.includes(o.id) && !added.includes(o.id) && orderHasGalleryPhotos(o)) {
           added.push(o.id);
-          if (added.length >= wanted) break;
+          if (added.length >= wanted) {
+            reachedTarget = true;
+            break;
+          }
         }
       }
 
-      const nums = raw.map(r => Number(r.numero)).filter(Number.isFinite);
-      if (nums.length) meta.galleryCursor = Math.min(...nums);
-      if (raw.length < scanSize) meta.galleryHasMore = false;
+      // El cursor avanza solo hasta la última orden realmente examinada. Si
+      // el lote contenía más candidatas de las necesarias, quedan disponibles
+      // para la siguiente página y nunca se saltan carpetas.
+      if (Number.isFinite(lastProcessedNumero)) meta.galleryCursor = lastProcessedNumero;
+      if (!reachedTarget && raw.length < scanSize) meta.galleryHasMore = false;
     }
 
     meta.galleryPageIds = [...new Set(meta.galleryPageIds.concat(added))];
