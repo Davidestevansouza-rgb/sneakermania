@@ -922,7 +922,7 @@ export async function loadGalleryPage(target = 20, { reset = false } = {}) {
 
     while (added.length < wanted && meta.galleryHasMore && safety < 12) {
       safety++;
-      const scanSize = Math.max(20, Math.min(50, (wanted - added.length) + 10));
+      const scanSize = Math.max(1, Math.min(30, wanted - added.length));
       let q = supabase
         .from('ordenes')
         .select(EG_ORDER_COLS)
