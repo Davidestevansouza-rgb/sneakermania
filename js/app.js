@@ -49,7 +49,10 @@ import './hotfix-fotos-20260907.js';
 /* ============================================================
    NAVEGACIÓN
    ============================================================ */
-export function switchTab(tab) {
+let _switchTabGen = 0;
+let _globalSearchTimer = null;
+let _globalSearchSeq = 0;
+export async function switchTab(tab) {
   if (!puedeVerTab(tab)) {
     showToast('No tienes acceso a esta sección');
     tab = tabInicial();
@@ -59,6 +62,11 @@ export function switchTab(tab) {
   document.querySelectorAll('.tab-section').forEach(s => s.classList.remove('active'));
   const sec = document.getElementById('tab-' + tab);
   if (sec) sec.classList.add('active');
+  const miGen = ++_switchTabGen;
+  if (sec) sec.setAttribute('aria-busy', 'true');
+  try { await db.ensureTabData(tab); } catch (e) { console.warn('Carga bajo demanda falló:', e); }
+  if (miGen !== _switchTabGen) return;
+  if (sec) sec.removeAttribute('aria-busy');
   if (tab === 'dashboard') renderDashboard();
   if (tab === 'clientes') renderClientes();
   if (tab === 'ordenes') renderOrdenes();
@@ -101,14 +109,28 @@ export function closeMobileMenu() {
 
 export function handleGlobalSearch(q) {
   const filtroTexto = document.getElementById('filtro-orden-texto');
-  if (!q) {
-    if (filtroTexto) filtroTexto.value = '';
+  const valor = String(q || '').trim();
+  if (filtroTexto) filtroTexto.value = valor;
+  clearTimeout(_globalSearchTimer);
+
+  if (!valor) {
+    _globalSearchSeq++;
     renderOrdenes();
     return;
   }
-  switchTab('ordenes');
-  if (filtroTexto) filtroTexto.value = q;
+
+  // Cambia de pestaña enseguida, pero la búsqueda remota se hace con debounce
+  // para no consultar PostgREST por cada tecla.
+  void switchTab('ordenes');
+  const seq = ++_globalSearchSeq;
   renderOrdenes();
+  _globalSearchTimer = setTimeout(async () => {
+    await db.searchOrdersGlobal(valor, 40);
+    if (seq !== _globalSearchSeq) return;
+    const actual = (document.getElementById('global-search')?.value || '').trim();
+    if (actual !== valor) return;
+    renderOrdenes();
+  }, 320);
 }
 
 export function renderAll() {
