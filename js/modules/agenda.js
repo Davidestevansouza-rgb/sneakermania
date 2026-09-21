@@ -143,7 +143,8 @@ function mapOrdenRealtime(row) {
     estadoPago: row.estado_pago ?? row.estadoPago,
     totalPares: row.total_pares ?? row.totalPares,
     tenantId: row.tenant_id ?? row.tenantId,
-    eliminada: ordenEliminadaDesdeFila(row)
+    eliminada: ordenEliminadaDesdeFila(row),
+    _egressSlim: false
   };
 }
 
