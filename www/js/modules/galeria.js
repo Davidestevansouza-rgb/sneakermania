@@ -358,6 +358,11 @@ async function renderGaleriaTodos(miGen) {
 export async function renderGaleria() {
   const miGen = ++_galeriaRenderGen;
   const sel = document.getElementById('galeria-orden-select');
+  const eg = db.getEgressMeta ? db.getEgressMeta() : null;
+  // En el modo paginado, la entrada normal a Galería abre el listado de
+  // carpetas (20 reales con fotos) en vez de elegir silenciosamente la
+  // primera orden cargada.
+  if (sel && !sel.value && eg && eg.optimized) sel.value = '__ALL__';
   if (!state.ordenes.length) {
     document.getElementById('galeria-content').innerHTML = '<div class="empty-state"><div class="big">📷</div>No hay órdenes registradas</div>';
     return;
