@@ -633,6 +633,37 @@ export async function loadProductionDate(fecha = todayISO(0)) {
   }
 }
 
+export async function loadProductionRange(desde, hasta) {
+  if (!online() || !tenantId() || !desde || !hasta) return { error: 'NO_CONNECTION' };
+  try {
+    const { data, error } = await supabase
+      .from('registro_pares')
+      .select(EG_PARES_COLS)
+      .eq('tenant_id', tenantId())
+      .gte('fecha', desde)
+      .lte('fecha', hasta)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const rows = (data || []).map(registroParFromDb);
+    const otros = (state.registroPares || []).filter(r => !(r.fecha >= desde && r.fecha <= hasta));
+    state.registroPares = mergeById(otros, rows);
+    const d = new Date(desde + 'T12:00:00');
+    const fin = new Date(hasta + 'T12:00:00');
+    const meta = egressMeta();
+    while (!isNaN(d.getTime()) && d <= fin) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      meta.productionDates[y + '-' + m + '-' + day] = true;
+      d.setDate(d.getDate() + 1);
+    }
+    return { ok: true, rows };
+  } catch (e) {
+    console.error('No se pudo cargar el rango de Producción:', e);
+    return { error: e };
+  }
+}
+
 export async function findProductionExisting(codigo, servicio) {
   if (!online() || !tenantId() || !codigo || !servicio) return null;
   try {
@@ -744,6 +775,12 @@ async function remoteSearchCandidateOrderIds(text) {
   }
 
   return [...ids].slice(0, 120);
+}
+
+export async function fetchOrderContextById(id) {
+  if (!id) return null;
+  const rows = await loadOrderContextsByIds([id], { includeProduction: true });
+  return rows[0] || (state.ordenes || []).find(o => o.id === id) || null;
 }
 
 export async function searchOrdersGlobal(text, limit = 30) {
