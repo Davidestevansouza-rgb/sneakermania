@@ -530,7 +530,8 @@ async function loadSlimOrderContextsByIds(ids) {
   const { data, error } = await supabase.from('ordenes')
     .select(EG_ORDER_SLIM_COLS)
     .eq('tenant_id', tenantId())
-    .in('id', unique);
+    .in('id', unique)
+    .or('extra->>eliminada.is.null,extra->>eliminada.eq.false');
   if (error) throw error;
   const rows = (data || []).map(ordenSlimFromDb);
   mergeSlimOrdersIntoState(rows);
@@ -998,7 +999,8 @@ export async function loadDashboardData() {
     const role = state.session && state.session.role;
     const orderPromise = supabase.from('ordenes')
       .select(EG_ORDER_SLIM_COLS)
-      .eq('tenant_id', tenantId());
+      .eq('tenant_id', tenantId())
+      .or('extra->>eliminada.is.null,extra->>eliminada.eq.false');
     const countPromise = supabase.from('clientes')
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', tenantId());
@@ -1082,6 +1084,7 @@ export async function loadAgendaData() {
       supabase.from('ordenes')
         .select(EG_ORDER_SLIM_COLS)
         .eq('tenant_id', tenantId())
+        .or('extra->>eliminada.is.null,extra->>eliminada.eq.false')
         .neq('estado', 'Entregado')
     ]);
     if (itemsRes.error) throw itemsRes.error;
