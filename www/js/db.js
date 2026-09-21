@@ -442,11 +442,16 @@ function egressMeta() {
       libraryLoaded: false,
       agendaLoaded: false,
       fullOperationalLoaded: false,
-      productionDates: {}
+      productionDates: {},
+      galleryPageIds: [],
+      galleryCursor: null,
+      galleryHasMore: true,
+      galleryInitialized: false
     };
   }
   if (!Array.isArray(state._egress.orderPageIds)) state._egress.orderPageIds = [];
   if (!state._egress.productionDates || typeof state._egress.productionDates !== 'object') state._egress.productionDates = {};
+  if (!Array.isArray(state._egress.galleryPageIds)) state._egress.galleryPageIds = [];
   return state._egress;
 }
 
@@ -612,15 +617,16 @@ export async function loadNextOrderPage(limit = 30) {
   return loadOrderPage({ limit, beforeNumero: meta.orderCursor, reset: false });
 }
 
-export async function loadProductionDate(fecha = todayISO(0)) {
+export async function loadProductionDate(fecha = todayISO(0), opts = {}) {
   if (!online() || !tenantId()) return { error: 'NO_CONNECTION' };
   try {
-    const { data, error } = await supabase
+    let q = supabase
       .from('registro_pares')
       .select(EG_PARES_COLS)
       .eq('tenant_id', tenantId())
-      .eq('fecha', fecha)
-      .order('created_at', { ascending: false });
+      .eq('fecha', fecha);
+    if (opts.ownOnly && userId()) q = q.eq('usuario_id', userId());
+    const { data, error } = await q.order('created_at', { ascending: false });
     if (error) throw error;
     const rows = (data || []).map(registroParFromDb);
     const otros = (state.registroPares || []).filter(r => r.fecha !== fecha);
@@ -831,6 +837,87 @@ export async function searchGalleryItems(text, limit = 20) {
   }).slice(0, limit);
 }
 
+
+function orderHasGalleryPhotos(order) {
+  if (!order) return false;
+  const orderPhotos = order.extra && Array.isArray(order.extra.fotos) ? order.extra.fotos : [];
+  if (orderPhotos.length) return true;
+  const codes = new Set((state.ordenItems || []).filter(it => it.ordenId === order.id).map(it => it.codigo).filter(Boolean));
+  if (!codes.size) return false;
+  return (state.registroPares || []).some(r => {
+    if (!codes.has(r.codigo)) return false;
+    const urls = Array.isArray(r.fotoUrls) ? r.fotoUrls : (r.fotoUrl ? [r.fotoUrl] : []);
+    return urls.length > 0;
+  });
+}
+
+export async function loadGalleryPage(target = 20, { reset = false } = {}) {
+  if (!online() || !tenantId()) return { error: 'NO_CONNECTION' };
+  const meta = egressMeta();
+  try {
+    if (reset) {
+      meta.galleryPageIds = [];
+      meta.galleryCursor = null;
+      meta.galleryHasMore = true;
+      meta.galleryInitialized = false;
+    }
+    if (!meta.galleryHasMore && meta.galleryInitialized) {
+      return { ok: true, ids: [], hasMore: false };
+    }
+
+    const wanted = Math.max(1, Number(target) || 20);
+    const added = [];
+    let safety = 0;
+
+    while (added.length < wanted && meta.galleryHasMore && safety < 12) {
+      safety++;
+      const scanSize = Math.max(30, Math.min(80, (wanted - added.length) * 2));
+      let q = supabase
+        .from('ordenes')
+        .select(EG_ORDER_COLS)
+        .eq('tenant_id', tenantId())
+        .order('numero', { ascending: false })
+        .limit(scanSize);
+      if (meta.galleryCursor != null) q = q.lt('numero', Number(meta.galleryCursor));
+
+      const { data, error } = await q;
+      if (error) throw error;
+      const raw = data || [];
+      if (!raw.length) {
+        meta.galleryHasMore = false;
+        break;
+      }
+
+      const orders = raw.map(ordenFromDb).filter(o => !o.eliminada);
+      state.ordenes = mergeById(state.ordenes || [], orders);
+      await hydrateOrders(orders, { includeProduction: true });
+
+      for (const o of orders) {
+        if (meta.galleryPageIds.includes(o.id) || added.includes(o.id)) continue;
+        if (orderHasGalleryPhotos(o)) {
+          added.push(o.id);
+          if (added.length >= wanted) break;
+        }
+      }
+
+      const nums = raw.map(r => Number(r.numero)).filter(Number.isFinite);
+      if (nums.length) meta.galleryCursor = Math.min(...nums);
+      if (raw.length < scanSize) meta.galleryHasMore = false;
+    }
+
+    meta.galleryPageIds = [...new Set(meta.galleryPageIds.concat(added))];
+    meta.galleryInitialized = true;
+    return { ok: true, ids: added, hasMore: meta.galleryHasMore };
+  } catch (e) {
+    console.error('No se pudo cargar la página de Galería:', e);
+    return { error: e };
+  }
+}
+
+export async function loadNextGalleryPage(limit = 30) {
+  return loadGalleryPage(limit, { reset: false });
+}
+
 export async function loadAllClients() {
   const meta = egressMeta();
   if (meta.clientsFull) return { ok: true, rows: state.clientes || [] };
@@ -955,10 +1042,13 @@ export async function loadInitialDataForRole() {
     meta.agendaLoaded = false;
     meta.fullOperationalLoaded = false;
     meta.productionDates = {};
+    meta.galleryPageIds = [];
+    meta.galleryCursor = null;
+    meta.galleryHasMore = true;
+    meta.galleryInitialized = false;
 
     const common = [
-      loadOrderPage({ limit: 20, reset: false }),
-      loadProductionDate(todayISO(0)),
+      loadProductionDate(todayISO(0), { ownOnly: role === 'Empleado' }),
       supabase.from('inventario').select('id,nombre,categoria,proveedor,cantidad,stock_minimo,precio_compra,fecha_compra,fecha_vencimiento').eq('tenant_id', tenantId()),
       supabase.from('configuracion_tenant').select('*').eq('tenant_id', tenantId()).maybeSingle()
     ];
@@ -978,12 +1068,12 @@ export async function loadInitialDataForRole() {
     }
 
     const results = await Promise.all(common);
-    const inv = results[2];
-    const cfg = results[3];
+    const inv = results[1];
+    const cfg = results[2];
     if (inv && !inv.error) state.inventario = (inv.data || []).map(invFromDb);
     if (cfg && !cfg.error && cfg.data) state.config = cfg.data;
 
-    let idx = 4;
+    let idx = 3;
     if (role !== 'Empleado') {
       idx++; // loadDashboardData()
       const notif = results[idx++];
@@ -1018,7 +1108,9 @@ export async function ensureTabData(tab) {
   try {
     if (tab === 'dashboard') await loadDashboardData();
     else if (tab === 'clientes') await loadAllClients();
-    else if (tab === 'produccion' && !meta.productionDates[todayISO(0)]) await loadProductionDate(todayISO(0));
+    else if (tab === 'ordenes' && !(meta.orderPageIds || []).length) await loadOrderPage({ limit: 20, reset: false });
+    else if (tab === 'galeria' && !meta.galleryInitialized) await loadGalleryPage(20, { reset: true });
+    else if (tab === 'produccion' && !meta.productionDates[todayISO(0)]) await loadProductionDate(todayISO(0), { ownOnly: state.session?.role === 'Empleado' });
     else if (tab === 'biblioteca') await loadBibliotecaCurrent();
     else if (tab === 'agenda') await loadAgendaData();
     else if (['consulta','ia','finanzas','facturas','reportes'].includes(tab) && !meta.fullOperationalLoaded) {
