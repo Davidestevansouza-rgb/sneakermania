@@ -271,6 +271,13 @@ export function mostrarInfoArticuloProduccion() {
     return;
   }
   cont.innerHTML = renderItemCardHTML(item);
+  // En Producción esta tarjeta es solo informativa: se mantiene visible la
+  // foto existente, pero no se permite agregar/cambiar fotos desde aquí.
+  // La carga de fotos del servicio sigue disponible en el formulario normal
+  // de Producción y el resto de pantallas no se modifica.
+  cont.querySelectorAll('label[title="Agregar foto de este artículo"]').forEach(el => {
+    el.style.setProperty('display', 'none', 'important');
+  });
 }
 
 export async function registrarPares(btn) {
