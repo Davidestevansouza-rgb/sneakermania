@@ -170,13 +170,13 @@ export function renderBiblioteca() {
 
     '<div class="panel" id="biblioteca-historial-panel">' +
       '<div class="panel-head" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
-        '<div class="panel-title" style="margin:0;">Registrados en biblioteca</div>' +
+        '<div class="panel-title" style="margin:0;">Histórico de registros en biblioteca</div>' +
         '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
           '<input type="date" id="biblioteca-filtro-fecha" onchange="renderBibliotecaLista()">' +
-          '<button class="btn btn-ghost btn-sm" onclick="limpiarFiltroFechaBiblioteca()">Ver todos</button>' +
+          '<button class="btn btn-ghost btn-sm" onclick="limpiarFiltroFechaBiblioteca()">Limpiar</button>' +
         '</div>' +
       '</div>' +
-      '<div class="hint" style="margin:6px 0;">Muestra únicamente los artículos que siguen actualmente en biblioteca. Puedes filtrar por fecha de ingreso.</div>' +
+      '<div class="hint" style="margin:6px 0;">Elige una fecha para consultar el histórico. Así no se descargan fotos y registros antiguos mientras no los necesites.</div>' +
       '<div id="biblioteca-lista"></div>' +
     '</div>';
 
@@ -238,16 +238,28 @@ function renderBibliotecaMapa() {
   '</div>';
 }
 
-export function renderBibliotecaLista() {
+export async function renderBibliotecaLista() {
   const el = document.getElementById('biblioteca-lista');
   if (!el) return;
   const fechaEl = document.getElementById('biblioteca-filtro-fecha');
   const fecha = fechaEl ? fechaEl.value : '';
-  let items = itemsConRegistroBiblioteca();
-  if (fecha) items = items.filter(it => it.biblioteca.fecha === fecha);
+  if (!fecha) {
+    el.innerHTML = '<div class="hint">Selecciona una fecha para ver los registros históricos de Biblioteca.</div>';
+    return;
+  }
 
+  el.innerHTML = '<div class="hint">Cargando registros del ' + escHtml(fecha) + '…</div>';
+  if (navigator.onLine) {
+    const r = await db.loadBibliotecaDate(fecha);
+    if (r && r.error) {
+      el.innerHTML = '<div class="hint">No se pudo consultar el histórico. Revisa la conexión e intenta nuevamente.</div>';
+      return;
+    }
+  }
+
+  let items = itemsConRegistroBiblioteca().filter(it => it.biblioteca && it.biblioteca.fecha === fecha);
   if (!items.length) {
-    el.innerHTML = '<div class="hint">' + (fecha ? 'No hay artículos registrados en biblioteca ese día.' : 'Todavía no hay artículos registrados en biblioteca.') + '</div>';
+    el.innerHTML = '<div class="hint">No hay artículos registrados en biblioteca ese día.</div>';
     return;
   }
 
