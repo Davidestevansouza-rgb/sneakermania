@@ -7,7 +7,7 @@
    se reintentan al reconectar (ver flushQueue).
    ============================================================ */
 import { supabase } from './config.js';
-import { state, enqueue, getQueue, setQueue, clearQueue } from './state.js';
+import { state, enqueue, getQueue, setQueue, clearQueue, todayISO } from './state.js';
 
 /* ---------- Helpers ---------- */
 function tenantId() { return state.session && state.session.tenantId; }
@@ -409,6 +409,602 @@ export const deleteOrdenItem = (id) => pushDelete('orden_items', id);
 /** Recarga desde Supabase únicamente los artículos de una orden.
  *  Se usa al mostrar Órdenes para reparar una caché local parcial sin
  *  modificar ni recrear artículos en la base. */
+
+/* ============================================================
+   CARGA EFICIENTE / EGRESS
+   ============================================================
+   La app ya no necesita precargar todo el histórico en cada login.
+   Estas funciones mantienen la misma fuente de verdad (Supabase), pero:
+   - cargan 20 órdenes al inicio;
+   - agregan 30 por página cuando hace falta;
+   - buscan órdenes/artículos antiguos directamente en Postgres;
+   - Producción carga el día actual y consulta código+servicio exactos;
+   - pantallas históricas pesadas se hidratan solo al abrirlas.
+   Ninguna función borra datos.
+   ============================================================ */
+
+const EG_CLIENT_COLS = 'id,nombre,telefono,whatsapp,email,direccion,rfc,observaciones,eliminada,created_at';
+const EG_ORDER_COLS = 'id,numero,cliente_id,marca,modelo,tipo_calzado,color,material,talla,cantidad_pares,estado_calzado,tratamiento_sugerido,tipos_servicio,prioridad,estado,observaciones,responsable,fecha_ingreso,fecha_estimada,fecha_entrega,precio,descuento,pagado,pagado_qr,pagado_efectivo,metodo_pago,fecha_pago,estado_pago,ia_resultado,ia_confianza,timeline_index,timeline_dates,control_calidad,firma_ingreso,firma_retiro,firma_recepcionista,entregado,extra';
+const EG_ORDER_SLIM_COLS = 'id,numero,cliente_id,prioridad,estado,responsable,fecha_ingreso,fecha_estimada,fecha_entrega,precio,descuento,pagado,pagado_qr,pagado_efectivo,metodo_pago,fecha_pago,estado_pago,cantidad_pares,entregado';
+const EG_ITEM_COLS = 'id,orden_id,numero_item,codigo,descripcion,estado,tipo_servicio,responsable,fecha_ingreso,fecha_entrega_estimada,precio,entregado,fecha_entrega,marca,modelo,tipo_calzado,color,material,estado_calzado,tratamiento_sugerido,timeline_index,timeline_dates,control_calidad,biblioteca,registro_servicios';
+const EG_PARES_COLS = 'id,empleado,fecha,pares,foto_url,foto_urls,usuario_id,codigo,servicio,hora,observacion,created_at';
+
+function egressMeta() {
+  if (!state._egress || typeof state._egress !== 'object') {
+    state._egress = {
+      optimized: true,
+      orderPageIds: [],
+      orderCursor: null,
+      orderHasMore: true,
+      orderTotal: null,
+      clientsFull: false,
+      dashboardLoaded: false,
+      libraryLoaded: false,
+      agendaLoaded: false,
+      fullOperationalLoaded: false,
+      productionDates: {}
+    };
+  }
+  if (!Array.isArray(state._egress.orderPageIds)) state._egress.orderPageIds = [];
+  if (!state._egress.productionDates || typeof state._egress.productionDates !== 'object') state._egress.productionDates = {};
+  return state._egress;
+}
+
+export function getEgressMeta() {
+  return egressMeta();
+}
+
+function mergeById(base, incoming) {
+  const map = new Map((base || []).filter(Boolean).map(x => [x.id, x]));
+  (incoming || []).filter(Boolean).forEach(x => {
+    const prev = map.get(x.id);
+    map.set(x.id, prev ? { ...prev, ...x } : x);
+  });
+  return Array.from(map.values());
+}
+
+function ordenSlimFromDb(r) {
+  return {
+    id: r.id,
+    numero: r.numero,
+    clienteId: r.cliente_id || null,
+    prioridad: r.prioridad || 'Media',
+    estado: r.estado || 'Recibido y registrado',
+    responsable: r.responsable || '',
+    fechaIngreso: r.fecha_ingreso || '',
+    fechaEstimada: r.fecha_estimada || '',
+    fechaEntrega: r.fecha_entrega || null,
+    precio: Number(r.precio || 0),
+    descuento: Number(r.descuento || 0),
+    pagado: Number(r.pagado || 0),
+    pagadoQR: Number(r.pagado_qr || 0),
+    pagadoEfectivo: Number(r.pagado_efectivo || 0),
+    metodoPago: r.metodo_pago || '',
+    fechaPago: r.fecha_pago || null,
+    estadoPago: r.estado_pago || 'Pendiente',
+    cantidadPares: Number(r.cantidad_pares || 0),
+    entregado: !!r.entregado,
+    extra: { fotos: [] }
+  };
+}
+
+async function loadClientsByIds(ids) {
+  const unique = [...new Set((ids || []).filter(Boolean))];
+  if (!unique.length) return [];
+  const { data, error } = await supabase
+    .from('clientes')
+    .select(EG_CLIENT_COLS)
+    .eq('tenant_id', tenantId())
+    .in('id', unique);
+  if (error) throw error;
+  const rows = (data || []).map(clienteFromDb).filter(c => !c.eliminada);
+  state.clientes = mergeById(state.clientes || [], rows);
+  return rows;
+}
+
+async function loadProductionByCodes(codes) {
+  const unique = [...new Set((codes || []).filter(Boolean))];
+  if (!unique.length) return [];
+  const out = [];
+  for (let i = 0; i < unique.length; i += 80) {
+    const chunk = unique.slice(i, i + 80);
+    const { data, error } = await supabase
+      .from('registro_pares')
+      .select(EG_PARES_COLS)
+      .eq('tenant_id', tenantId())
+      .in('codigo', chunk);
+    if (error) throw error;
+    out.push(...(data || []).map(registroParFromDb));
+  }
+  state.registroPares = mergeById(state.registroPares || [], out);
+  return out;
+}
+
+async function hydrateOrders(orders, opts = {}) {
+  const includeProduction = opts.includeProduction !== false;
+  const ids = [...new Set((orders || []).map(o => o.id).filter(Boolean))];
+  const clientIds = [...new Set((orders || []).map(o => o.clienteId).filter(Boolean))];
+  if (!ids.length) {
+    await loadClientsByIds(clientIds);
+    return [];
+  }
+
+  const [{ data: itemRows, error: itemErr }] = await Promise.all([
+    supabase.from('orden_items')
+      .select(EG_ITEM_COLS)
+      .eq('tenant_id', tenantId())
+      .in('orden_id', ids)
+      .order('numero_item', { ascending: true }),
+    loadClientsByIds(clientIds)
+  ]);
+  if (itemErr) throw itemErr;
+  const items = (itemRows || []).map(itemFromDb);
+  state.ordenItems = mergeById(state.ordenItems || [], items);
+  if (includeProduction) {
+    await loadProductionByCodes(items.map(it => it.codigo));
+  }
+  return items;
+}
+
+async function loadOrderContextsByIds(ids, opts = {}) {
+  const unique = [...new Set((ids || []).filter(Boolean))].slice(0, 120);
+  if (!unique.length) return [];
+  const { data, error } = await supabase
+    .from('ordenes')
+    .select(EG_ORDER_COLS)
+    .eq('tenant_id', tenantId())
+    .in('id', unique);
+  if (error) throw error;
+  const orders = (data || []).map(ordenFromDb).filter(o => !o.eliminada);
+  state.ordenes = mergeById(state.ordenes || [], orders);
+  await hydrateOrders(orders, opts);
+  return orders;
+}
+
+export async function loadOrderPage({ limit = 20, beforeNumero = null, reset = false } = {}) {
+  if (!online() || !tenantId()) return { error: 'NO_CONNECTION' };
+  const meta = egressMeta();
+  try {
+    if (reset) {
+      state.ordenes = [];
+      state.ordenItems = [];
+      state.clientes = [];
+      meta.orderPageIds = [];
+      meta.orderCursor = null;
+      meta.orderHasMore = true;
+    }
+
+    let q = supabase
+      .from('ordenes')
+      .select(EG_ORDER_COLS, beforeNumero == null ? { count: 'exact' } : undefined)
+      .eq('tenant_id', tenantId())
+      .order('numero', { ascending: false })
+      .limit(Math.max(1, Number(limit) || 20));
+    if (beforeNumero != null) q = q.lt('numero', Number(beforeNumero));
+
+    const { data, error, count } = await q;
+    if (error) throw error;
+    const raw = data || [];
+    const orders = raw.map(ordenFromDb).filter(o => !o.eliminada);
+    state.ordenes = mergeById(state.ordenes || [], orders);
+
+    const pageIds = orders.map(o => o.id);
+    meta.orderPageIds = [...new Set(meta.orderPageIds.concat(pageIds))];
+    if (raw.length) meta.orderCursor = Math.min(...raw.map(r => Number(r.numero)).filter(Number.isFinite));
+    if (beforeNumero == null && Number.isFinite(count)) meta.orderTotal = count;
+    meta.orderHasMore = raw.length >= Math.max(1, Number(limit) || 20);
+
+    await hydrateOrders(orders, { includeProduction: true });
+
+    const maxNumero = orders.reduce((max, o) => Math.max(max, Number(o.numero) || 0), 0);
+    if (maxNumero + 1 > state.nextOrderNum) state.nextOrderNum = maxNumero + 1;
+
+    return { ok: true, orders, hasMore: meta.orderHasMore, total: meta.orderTotal, cursor: meta.orderCursor };
+  } catch (e) {
+    console.error('No se pudo cargar la página de órdenes:', e);
+    return { error: e };
+  }
+}
+
+export async function loadNextOrderPage(limit = 30) {
+  const meta = egressMeta();
+  if (!meta.orderHasMore || meta.orderCursor == null) return { ok: true, orders: [], hasMore: false };
+  return loadOrderPage({ limit, beforeNumero: meta.orderCursor, reset: false });
+}
+
+export async function loadProductionDate(fecha = todayISO(0)) {
+  if (!online() || !tenantId()) return { error: 'NO_CONNECTION' };
+  try {
+    const { data, error } = await supabase
+      .from('registro_pares')
+      .select(EG_PARES_COLS)
+      .eq('tenant_id', tenantId())
+      .eq('fecha', fecha)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const rows = (data || []).map(registroParFromDb);
+    const otros = (state.registroPares || []).filter(r => r.fecha !== fecha);
+    state.registroPares = mergeById(otros, rows);
+    egressMeta().productionDates[fecha] = true;
+    return { ok: true, rows };
+  } catch (e) {
+    console.error('No se pudo cargar Producción de la fecha:', e);
+    return { error: e };
+  }
+}
+
+export async function findProductionExisting(codigo, servicio) {
+  if (!online() || !tenantId() || !codigo || !servicio) return null;
+  try {
+    const { data, error } = await supabase
+      .from('registro_pares')
+      .select(EG_PARES_COLS)
+      .eq('tenant_id', tenantId())
+      .eq('codigo', codigo)
+      .eq('servicio', servicio)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+    const row = registroParFromDb(data);
+    state.registroPares = mergeById(state.registroPares || [], [row]);
+    return row;
+  } catch (e) {
+    console.error('No se pudo comprobar el registro existente:', e);
+    return null;
+  }
+}
+
+export async function fetchItemContextByCode(codigo) {
+  const clean = String(codigo || '').trim().replace(/[#\s]/g, '');
+  if (!online() || !tenantId() || !clean) return null;
+  try {
+    const { data, error } = await supabase
+      .from('orden_items')
+      .select(EG_ITEM_COLS)
+      .eq('tenant_id', tenantId())
+      .eq('codigo', clean)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+
+    const item = itemFromDb(data);
+    state.ordenItems = mergeById(state.ordenItems || [], [item]);
+    await loadOrderContextsByIds([item.ordenId], { includeProduction: true });
+    return (state.ordenItems || []).find(it => it.id === item.id) || item;
+  } catch (e) {
+    console.error('No se pudo buscar el artículo ' + clean + ':', e);
+    return null;
+  }
+}
+
+function normalizeSearch(v) {
+  return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function safeProbe(v) {
+  return String(v || '').replace(/[,%()]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
+async function remoteSearchCandidateOrderIds(text) {
+  const norm = normalizeSearch(text);
+  const tokens = norm.split(' ').filter(Boolean);
+  if (!tokens.length) return [];
+  const probe = safeProbe(tokens[0]);
+  const ids = new Set();
+
+  if (/^\d+$/.test(norm)) {
+    const { data } = await supabase.from('ordenes')
+      .select('id')
+      .eq('tenant_id', tenantId())
+      .eq('numero', Number(norm))
+      .limit(10);
+    (data || []).forEach(r => ids.add(r.id));
+  }
+
+  if (/^\d+-\d+$/.test(norm)) {
+    const { data } = await supabase.from('orden_items')
+      .select('orden_id')
+      .eq('tenant_id', tenantId())
+      .eq('codigo', norm)
+      .limit(10);
+    (data || []).forEach(r => ids.add(r.orden_id));
+  }
+
+  if (probe) {
+    const p = '%' + probe + '%';
+    const [items, orders, clients] = await Promise.all([
+      supabase.from('orden_items')
+        .select('orden_id')
+        .eq('tenant_id', tenantId())
+        .or('codigo.ilike.' + p + ',descripcion.ilike.' + p + ',marca.ilike.' + p + ',modelo.ilike.' + p + ',talla.ilike.' + p + ',color.ilike.' + p)
+        .limit(200),
+      supabase.from('ordenes')
+        .select('id')
+        .eq('tenant_id', tenantId())
+        .or('marca.ilike.' + p + ',modelo.ilike.' + p + ',talla.ilike.' + p + ',color.ilike.' + p)
+        .limit(120),
+      supabase.from('clientes')
+        .select('id')
+        .eq('tenant_id', tenantId())
+        .or('nombre.ilike.' + p + ',telefono.ilike.' + p + ',whatsapp.ilike.' + p)
+        .limit(120)
+    ]);
+    if (!items.error) (items.data || []).forEach(r => ids.add(r.orden_id));
+    if (!orders.error) (orders.data || []).forEach(r => ids.add(r.id));
+    if (!clients.error && (clients.data || []).length) {
+      const clientIds = (clients.data || []).map(r => r.id);
+      const { data: byClient, error: byClientErr } = await supabase.from('ordenes')
+        .select('id')
+        .eq('tenant_id', tenantId())
+        .in('cliente_id', clientIds)
+        .order('numero', { ascending: false })
+        .limit(200);
+      if (!byClientErr) (byClient || []).forEach(r => ids.add(r.id));
+    }
+  }
+
+  return [...ids].slice(0, 120);
+}
+
+export async function searchOrdersGlobal(text, limit = 30) {
+  const norm = normalizeSearch(text);
+  if (!norm) return [];
+  try {
+    const ids = await remoteSearchCandidateOrderIds(norm);
+    await loadOrderContextsByIds(ids, { includeProduction: true });
+    const tokens = norm.split(' ').filter(Boolean);
+    const itemsByOrder = new Map();
+    (state.ordenItems || []).forEach(it => {
+      if (!itemsByOrder.has(it.ordenId)) itemsByOrder.set(it.ordenId, []);
+      itemsByOrder.get(it.ordenId).push(it);
+    });
+    const found = (state.ordenes || []).filter(o => ids.includes(o.id)).filter(o => {
+      const cli = (state.clientes || []).find(c => c.id === o.clienteId);
+      const items = itemsByOrder.get(o.id) || [];
+      const hay = normalizeSearch([
+        o.numero, o.marca, o.modelo, o.talla, o.color,
+        cli && cli.nombre, cli && cli.telefono, cli && cli.whatsapp,
+        ...items.flatMap(it => [it.codigo, it.descripcion, it.marca, it.modelo, it.talla, it.color])
+      ].filter(Boolean).join(' '));
+      return tokens.every(t => hay.includes(t));
+    }).sort((a,b) => Number(b.numero || 0) - Number(a.numero || 0)).slice(0, limit);
+    egressMeta().lastSearchOrderIds = found.map(o => o.id);
+    return found;
+  } catch (e) {
+    console.error('No se pudo buscar órdenes en Supabase:', e);
+    return [];
+  }
+}
+
+export async function searchGalleryItems(text, limit = 20) {
+  const norm = normalizeSearch(text);
+  if (!norm) return [];
+  await searchOrdersGlobal(norm, 80);
+  const ids = new Set(egressMeta().lastSearchOrderIds || []);
+  const tokens = norm.split(' ').filter(Boolean);
+  return (state.ordenItems || []).filter(it => ids.has(it.ordenId)).filter(it => {
+    const o = (state.ordenes || []).find(x => x.id === it.ordenId);
+    const cli = o ? (state.clientes || []).find(c => c.id === o.clienteId) : null;
+    const hay = normalizeSearch([
+      it.codigo, it.descripcion, it.marca, it.modelo, it.talla, it.color, it.tipoCalzado, it.material,
+      o && o.numero, o && o.marca, o && o.modelo, o && o.talla, o && o.color,
+      cli && cli.nombre, cli && cli.telefono, cli && cli.whatsapp
+    ].filter(Boolean).join(' '));
+    return tokens.every(t => hay.includes(t));
+  }).slice(0, limit);
+}
+
+export async function loadAllClients() {
+  const meta = egressMeta();
+  if (meta.clientsFull) return { ok: true, rows: state.clientes || [] };
+  try {
+    const { data, error } = await supabase
+      .from('clientes')
+      .select(EG_CLIENT_COLS)
+      .eq('tenant_id', tenantId())
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const todos = (data || []).map(clienteFromDb);
+    state.clientes = todos.filter(c => !c.eliminada);
+    state.clientesEliminados = todos.filter(c => c.eliminada);
+    meta.clientsFull = true;
+    return { ok: true, rows: state.clientes };
+  } catch (e) {
+    console.error('No se pudieron cargar los clientes:', e);
+    return { error: e };
+  }
+}
+
+export async function loadDashboardData() {
+  const meta = egressMeta();
+  if (meta.dashboardLoaded) return { ok: true };
+  try {
+    const role = state.session && state.session.role;
+    const orderPromise = supabase.from('ordenes')
+      .select(EG_ORDER_SLIM_COLS)
+      .eq('tenant_id', tenantId());
+    const countPromise = supabase.from('clientes')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId());
+    const gastosPromise = role === 'Administrador'
+      ? supabase.from('gastos').select('id,categoria,monto,fecha,descripcion').eq('tenant_id', tenantId())
+      : Promise.resolve({ data: [], error: null });
+    const [ord, cliCount, gas] = await Promise.all([orderPromise, countPromise, gastosPromise]);
+    if (ord.error) throw ord.error;
+    state.dashboardOrders = (ord.data || []).map(ordenSlimFromDb);
+    state.dashboardClientCount = Number.isFinite(cliCount.count) ? cliCount.count : (state.clientes || []).length;
+    if (!gas.error && role === 'Administrador') state.gastos = (gas.data || []).map(gastoFromDb);
+    meta.dashboardLoaded = true;
+    return { ok: true };
+  } catch (e) {
+    console.error('No se pudo cargar el resumen del Dashboard:', e);
+    return { error: e };
+  }
+}
+
+export async function loadBibliotecaCurrent() {
+  const meta = egressMeta();
+  if (meta.libraryLoaded) return { ok: true };
+  try {
+    const { data, error } = await supabase.from('orden_items')
+      .select(EG_ITEM_COLS)
+      .eq('tenant_id', tenantId())
+      .eq('entregado', false)
+      .or('estado.eq.Biblioteca,timeline_index.gte.5,biblioteca->>ubicacion.not.is.null');
+    if (error) throw error;
+    const items = (data || []).map(itemFromDb);
+    state.ordenItems = mergeById(state.ordenItems || [], items);
+    await loadOrderContextsByIds(items.map(it => it.ordenId), { includeProduction: false });
+    meta.libraryLoaded = true;
+    return { ok: true, rows: items };
+  } catch (e) {
+    console.error('No se pudo cargar Biblioteca actual:', e);
+    return { error: e };
+  }
+}
+
+export async function loadAgendaData() {
+  const meta = egressMeta();
+  if (meta.agendaLoaded) return { ok: true };
+  try {
+    const [itemsRes, ordersRes] = await Promise.all([
+      supabase.from('orden_items')
+        .select(EG_ITEM_COLS)
+        .eq('tenant_id', tenantId())
+        .eq('entregado', false)
+        .not('fecha_entrega_estimada', 'is', null),
+      supabase.from('ordenes')
+        .select(EG_ORDER_SLIM_COLS)
+        .eq('tenant_id', tenantId())
+        .neq('estado', 'Entregado')
+    ]);
+    if (itemsRes.error) throw itemsRes.error;
+    if (ordersRes.error) throw ordersRes.error;
+    const items = (itemsRes.data || []).map(itemFromDb);
+    const orders = (ordersRes.data || []).map(ordenSlimFromDb);
+    state.ordenItems = mergeById(state.ordenItems || [], items);
+    state.ordenes = mergeById(state.ordenes || [], orders);
+    await loadClientsByIds(orders.map(o => o.clienteId));
+    meta.agendaLoaded = true;
+    return { ok: true };
+  } catch (e) {
+    console.error('No se pudo cargar Agenda:', e);
+    return { error: e };
+  }
+}
+
+export async function loadInitialDataForRole() {
+  if (!online() || !tenantId()) return false;
+  try {
+    const role = state.session && state.session.role;
+    const meta = egressMeta();
+    state.clientes = [];
+    state.clientesEliminados = [];
+    state.ordenes = [];
+    state.ordenesEliminadas = [];
+    state.ordenItems = [];
+    state.registroPares = [];
+    state.gastos = [];
+    state.facturas = [];
+    state.activityLog = [];
+    state.notificaciones = [];
+    meta.orderPageIds = [];
+    meta.orderCursor = null;
+    meta.orderHasMore = true;
+    meta.orderTotal = null;
+    meta.clientsFull = false;
+    meta.dashboardLoaded = false;
+    meta.libraryLoaded = false;
+    meta.agendaLoaded = false;
+    meta.fullOperationalLoaded = false;
+    meta.productionDates = {};
+
+    const common = [
+      loadOrderPage({ limit: 20, reset: false }),
+      loadProductionDate(todayISO(0)),
+      supabase.from('inventario').select('id,nombre,categoria,proveedor,cantidad,stock_minimo,precio_compra,fecha_compra,fecha_vencimiento').eq('tenant_id', tenantId()),
+      supabase.from('configuracion_tenant').select('*').eq('tenant_id', tenantId()).maybeSingle()
+    ];
+    if (role !== 'Empleado') {
+      common.push(loadDashboardData());
+      common.push(supabase.from('notificaciones')
+        .select('id,tipo,texto,leida,prioridad,orden_id,inventario_id,dedupe_key,created_at')
+        .eq('tenant_id', tenantId()).eq('leida', false).order('created_at', { ascending: false }).limit(100));
+      common.push(supabase.from('facturas')
+        .select('id,numero,orden_id,cliente_id,nombre_cliente,total,created_at')
+        .eq('tenant_id', tenantId()));
+    }
+    if (role === 'Administrador') {
+      common.push(supabase.from('actividad_log')
+        .select('created_at,accion,datos')
+        .eq('tenant_id', tenantId()).order('created_at', { ascending: false }).limit(100));
+    }
+
+    const results = await Promise.all(common);
+    const inv = results[2];
+    const cfg = results[3];
+    if (inv && !inv.error) state.inventario = (inv.data || []).map(invFromDb);
+    if (cfg && !cfg.error && cfg.data) state.config = cfg.data;
+
+    let idx = 4;
+    if (role !== 'Empleado') {
+      idx++; // loadDashboardData()
+      const notif = results[idx++];
+      const fact = results[idx++];
+      if (notif && !notif.error) state.notificaciones = (notif.data || []).map(n => ({
+        id:n.id, tipo:n.tipo, texto:n.texto, leida:!!n.leida, prioridad:n.prioridad || 'Media',
+        ordenId:n.orden_id || null, inventarioId:n.inventario_id || null,
+        dedupeKey:n.dedupe_key || null, fecha:n.created_at
+      }));
+      if (fact && !fact.error) state.facturas = (fact.data || []).map(f => ({
+        id:f.id, numero:f.numero, ordenId:f.orden_id || null, clienteId:f.cliente_id || null,
+        nombreCliente:f.nombre_cliente, total:Number(f.total || 0), fecha:f.created_at
+      }));
+    }
+    if (role === 'Administrador') {
+      const log = results[idx++];
+      if (log && !log.error) state.activityLog = (log.data || []).map(r => ({
+        fecha:r.created_at, accion:r.accion, usuario:(r.datos && r.datos.usuario) || '—'
+      }));
+    }
+    meta.initialLoaded = true;
+    return true;
+  } catch (e) {
+    console.error('No se pudo realizar la carga inicial optimizada:', e);
+    return false;
+  }
+}
+
+export async function ensureTabData(tab) {
+  const meta = egressMeta();
+  if (!online() || !tenantId()) return false;
+  try {
+    if (tab === 'dashboard') await loadDashboardData();
+    else if (tab === 'clientes') await loadAllClients();
+    else if (tab === 'produccion' && !meta.productionDates[todayISO(0)]) await loadProductionDate(todayISO(0));
+    else if (tab === 'biblioteca') await loadBibliotecaCurrent();
+    else if (tab === 'agenda') await loadAgendaData();
+    else if (['consulta','ia','finanzas','facturas','reportes'].includes(tab) && !meta.fullOperationalLoaded) {
+      // Estas pantallas todavía dependen de colecciones históricas completas.
+      // Se conserva su comportamiento exacto, pero el costo se paga solo si
+      // el usuario realmente abre una de ellas.
+      const ok = await loadAllData();
+      if (ok) {
+        meta.fullOperationalLoaded = true;
+        meta.orderPageIds = (state.ordenes || []).map(o => o.id);
+        meta.orderHasMore = false;
+        meta.clientsFull = true;
+        meta.dashboardLoaded = true;
+      }
+    }
+    return true;
+  } catch (e) {
+    console.error('No se pudo preparar la pestaña ' + tab + ':', e);
+    return false;
+  }
+}
+
+
 export async function refreshOrdenItems(ordenId) {
   if (!online() || !supabase || !tenantId() || !ordenId) return { error: 'NO_CONNECTION' };
   try {
