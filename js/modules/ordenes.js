@@ -1917,10 +1917,15 @@ export function openFormaPagoChooser(id) {
 }
 
 /* ---------------- Cobro con QR ---------------- */
-export function openPagoQRModal(id) {
+export async function openPagoQRModal(id) {
   const o = ordenById(id);
   if (!o) return;
   pagoQrOrdenId = id;
+  // qr_pago_url puede pesar cientos de KB. Se solicita únicamente cuando
+  // el usuario elige cobrar por QR, nunca en el login general.
+  if (navigator.onLine && db.loadFullConfig) {
+    await db.loadFullConfig();
+  }
   renderPagoQRContent(o);
   openModalEl('modal-pago-qr');
 }
