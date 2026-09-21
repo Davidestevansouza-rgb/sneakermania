@@ -20,12 +20,12 @@ let _galeriaEgressObserver = null;
 
 async function cargarMasGaleriaEgress() {
   const meta = db.getEgressMeta ? db.getEgressMeta() : null;
-  if (_galeriaEgressLoading || !meta || !meta.orderHasMore) return;
+  if (_galeriaEgressLoading || !meta || !meta.galleryHasMore) return;
   _galeriaEgressLoading = true;
   const el = document.getElementById('galeria-load-more-egress');
   if (el) el.textContent = 'Cargando 30 carpetas/órdenes más…';
   try {
-    const r = await db.loadNextOrderPage(30);
+    const r = await db.loadNextGalleryPage(30);
     if (r && r.error) throw r.error;
     populateGaleriaSelect();
     await renderGaleria();
@@ -41,7 +41,7 @@ function instalarCargaProgresivaGaleria() {
   const el = document.getElementById('galeria-load-more-egress');
   if (!el || !db.getEgressMeta) return;
   const meta = db.getEgressMeta();
-  if (!meta.orderHasMore || meta.fullOperationalLoaded) {
+  if (!meta.galleryHasMore || meta.fullOperationalLoaded) {
     el.style.display = 'none';
     if (_galeriaEgressObserver) { _galeriaEgressObserver.disconnect(); _galeriaEgressObserver = null; }
     return;
@@ -211,7 +211,7 @@ let galeriaCarpetaActual = null;
 function carpetasGaleria() {
   const grupos = new Map();
   const eg = db.getEgressMeta ? db.getEgressMeta() : null;
-  const idsPaginaGaleria = new Set(eg && Array.isArray(eg.orderPageIds) ? eg.orderPageIds : []);
+  const idsPaginaGaleria = new Set(eg && Array.isArray(eg.galleryPageIds) ? eg.galleryPageIds : []);
   const limitarAPaginaGaleria = !!(eg && eg.optimized && !eg.fullOperationalLoaded);
   const itemPorId = new Map((state.ordenItems || []).map(it => [it.id, it]));
   const itemPorCodigo = new Map((state.ordenItems || []).map(it => [it.codigo, it]));
