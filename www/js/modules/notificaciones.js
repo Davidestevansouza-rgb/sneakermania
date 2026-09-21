@@ -60,8 +60,11 @@ function depurarSilenciadas(computed) {
 
 export function computeNotifications() {
   const today = todayISO(0);
-  const ordenes = Array.isArray(state?.ordenes)
-    ? state.ordenes.filter(o => o && o.eliminada !== true)
+  const fuenteOrdenes = Array.isArray(state?.dashboardOrders) && state.dashboardOrders.length
+    ? state.dashboardOrders
+    : state?.ordenes;
+  const ordenes = Array.isArray(fuenteOrdenes)
+    ? fuenteOrdenes.filter(o => o && o.eliminada !== true)
     : [];
 
   // Regla definitiva: solo se generan alertas automáticas por atraso.
