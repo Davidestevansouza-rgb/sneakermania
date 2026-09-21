@@ -113,7 +113,7 @@ export async function verOrdenDesdeAgenda(ordenId) {
   // hidrata únicamente ESA orden (extra/fotos) y sus artículos antes de
   // mostrar el detalle, para que una orden antigua nunca parezca incompleta.
   let orden = (state.ordenes || []).find(o => o.id === ordenId);
-  const tieneDetalleCompleto = !!(orden && orden.extra && typeof orden.extra === 'object');
+  const tieneDetalleCompleto = !!(orden && orden._egressSlim !== true && orden.extra && typeof orden.extra === 'object');
   if (!tieneDetalleCompleto && navigator.onLine) {
     orden = await db.fetchOrderContextById(ordenId);
   }
