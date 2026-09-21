@@ -20,6 +20,8 @@ import { SERVICIO_A_GALERIA_CAT, vincularFotoGaleria } from './galeria.js';
 const META_DIARIA = 50;
 const MAX_FOTOS_POR_REGISTRO = 100;
 let _produccionRenderGen = 0;
+let _prodLookupSeq = 0;
+let _prodRegistroLookupSeq = 0;
 
 /** ¿Este registro de pares pertenece al usuario en sesión?
  *  Se compara por id de usuario y, como respaldo (registros antiguos
@@ -173,7 +175,7 @@ function formatearNotaObservacion(texto, empleado) {
  *  cualquier observación que se escriba ahora se va a INTEGRAR a ese mismo
  *  registro (no se crea uno nuevo). Si no existe, deja el campo libre para
  *  una observación nueva del registro que se está por crear. */
-export function revisarRegistroExistente() {
+export async function revisarRegistroExistente() {
   const codigoInput = document.getElementById('prod-codigo');
   const servicioSel = document.getElementById('prod-servicio');
   const obsInput = document.getElementById('prod-observacion');
@@ -181,25 +183,28 @@ export function revisarRegistroExistente() {
   if (!codigoInput || !obsInput) return;
   const codigoNorm = codigoInput.value.trim().replace(/[#\s]/g, '');
   const servicio = servicioSel ? servicioSel.value : '';
+  const seq = ++_prodRegistroLookupSeq;
 
   if (!codigoNorm) {
-    if (obsInput.dataset.registroId) { obsInput.value = ''; }
+    if (obsInput.dataset.registroId) obsInput.value = '';
     delete obsInput.dataset.registroId;
     delete obsInput.dataset.original;
     if (hintEl) hintEl.textContent = '';
     return;
   }
 
-  const existente = (state.registroPares || []).find(r => (r.codigo || '') === codigoNorm && (r.servicio || '') === servicio);
+  let existente = (state.registroPares || []).find(r => (r.codigo || '') === codigoNorm && (r.servicio || '') === servicio);
+  if (!existente && /^\d+-\d+$/.test(codigoNorm) && servicio && navigator.onLine) {
+    existente = await db.findProductionExisting(codigoNorm, servicio);
+    if (seq !== _prodRegistroLookupSeq) return;
+  }
+
   if (existente) {
     obsInput.value = existente.observacion || '';
     obsInput.dataset.registroId = existente.id;
     obsInput.dataset.original = existente.observacion || '';
     if (hintEl) hintEl.textContent = 'El artículo ' + codigoNorm + ' ya fue registrado para "' + servicio + '"' + (existente.empleado ? ' por ' + existente.empleado : '') + '. Podés volver a poner el artículo y agregar fotos nuevas (ej. el "después"): se suman al registro que ya existe. Si escribís una observación, también se integra (no se crea uno nuevo).';
   } else {
-    // No borres lo que la persona ya venía escribiendo si todavía no había
-    // un registro previo cargado; solo limpia si veníamos de mostrar la
-    // observación de OTRO registro existente.
     if (obsInput.dataset.registroId) obsInput.value = '';
     delete obsInput.dataset.registroId;
     delete obsInput.dataset.original;
@@ -257,24 +262,37 @@ async function integrarObservacionEnRegistro(registroExistente, notaNueva, btn) 
  *  la única pantalla que ve el Empleado (ya no tiene acceso a Órdenes), es
  *  la forma en la que puede confirmar que agarró el artículo correcto antes
  *  de registrar el servicio. */
-export function mostrarInfoArticuloProduccion() {
+export async function mostrarInfoArticuloProduccion() {
   const wrap = document.getElementById('prod-info-articulo-wrap');
   const cont = document.getElementById('prod-info-articulo');
   if (!wrap || !cont) return;
   const codigoInput = document.getElementById('prod-codigo');
   const codigo = codigoInput ? codigoInput.value.trim().replace(/[#\s]/g, '') : '';
+  const seq = ++_prodLookupSeq;
   if (!codigo) { wrap.style.display = 'none'; cont.innerHTML = ''; return; }
-  const item = (state.ordenItems || []).find(it => (it.codigo || '') === codigo);
+
   wrap.style.display = '';
+  let item = (state.ordenItems || []).find(it => (it.codigo || '') === codigo);
+  if (!item && /^\d+-\d+$/.test(codigo) && navigator.onLine) {
+    cont.innerHTML = '<div class="hint">Buscando artículo ' + escHtml(codigo) + '…</div>';
+    item = await db.fetchItemContextByCode(codigo);
+    if (seq !== _prodLookupSeq) return;
+  }
+
   if (!item) {
-    cont.innerHTML = '<div class="hint" style="color:var(--red);">No existe el artículo ' + escHtml(codigo) + '. Revisa el número (formato orden-artículo, ej. 12-1).</div>';
+    // Mientras todavía se está escribiendo "12-1", no declarar inexistente
+    // hasta que el código tenga el formato completo.
+    if (!/^\d+-\d+$/.test(codigo)) {
+      cont.innerHTML = '<div class="hint">Escribe el código completo, por ejemplo 12-1.</div>';
+    } else {
+      cont.innerHTML = '<div class="hint" style="color:var(--red);">No existe el artículo ' + escHtml(codigo) + '. Revisa el número.</div>';
+    }
     return;
   }
+
   cont.innerHTML = renderItemCardHTML(item);
   // En Producción esta tarjeta es solo informativa: se mantiene visible la
   // foto existente, pero no se permite agregar/cambiar fotos desde aquí.
-  // La carga de fotos del servicio sigue disponible en el formulario normal
-  // de Producción y el resto de pantallas no se modifica.
   cont.querySelectorAll('label[title="Agregar foto de este artículo"]').forEach(el => {
     el.style.setProperty('display', 'none', 'important');
   });
@@ -313,12 +331,14 @@ export async function registrarPares(btn) {
 
   // Normaliza posibles variantes (# o espacios) → "12-1".
   const codigoNorm = codigo.replace(/[#\s]/g, '');
-  const item = (state.ordenItems || []).find(it => (it.codigo || '') === codigoNorm);
+  let item = (state.ordenItems || []).find(it => (it.codigo || '') === codigoNorm);
+  if (!item && navigator.onLine) item = await db.fetchItemContextByCode(codigoNorm);
   if (!item) { showToast('No existe el artículo ' + codigoNorm + '. Revisa el número (formato orden-artículo, ej. 12-1).'); return; }
   if (!servicio) { showToast('Elige el servicio que le hiciste al artículo'); return; }
   // Anti-repetición POR SERVICIO: ¿ya hay un registro de este par para
   // este mismo servicio? (de cualquier empleado)
-  const yaRegistrado = (state.registroPares || []).find(r => (r.codigo || '') === codigoNorm && (r.servicio || '') === servicio);
+  let yaRegistrado = (state.registroPares || []).find(r => (r.codigo || '') === codigoNorm && (r.servicio || '') === servicio);
+  if (!yaRegistrado && navigator.onLine) yaRegistrado = await db.findProductionExisting(codigoNorm, servicio);
   if (yaRegistrado) {
     // Un servicio ya registrado pertenece exclusivamente al trabajador que lo
     // creó. Nunca permitimos que otro usuario lo re-guarde: antes eso podía
@@ -587,6 +607,11 @@ export async function renderHistorialProduccion(miGen = null) {
   const fecha = fechaEl ? fechaEl.value : todayISO(0);
   const empleado = empEl ? empEl.value : '';
   if (!fecha) { cont.innerHTML = '<div class="hint">Elige una fecha para ver el historial.</div>'; return; }
+  const eg = db.getEgressMeta ? db.getEgressMeta() : null;
+  if (navigator.onLine && (!eg || !eg.productionDates || !eg.productionDates[fecha])) {
+    await db.loadProductionDate(fecha);
+    if (gen !== _produccionRenderGen) return;
+  }
   let registros = (state.registroPares || []).filter(r => r.fecha === fecha);
   if (empleado) registros = registros.filter(r => r.empleado === empleado);
   // CAMBIO 1: el historial debe mostrar primero lo último registrado (más
@@ -613,6 +638,10 @@ export async function verSemanaProduccion() {
   const dias = [];
   for (let i = 6; i >= 0; i--) dias.push(todayISO(-i));
   const set = new Set(dias);
+  if (navigator.onLine && dias.length) {
+    await db.loadProductionRange(dias[0], dias[dias.length - 1]);
+    if (miGen !== _produccionRenderGen) return;
+  }
   const empEl = document.getElementById('prod-historial-empleado');
   const empleado = empEl ? empEl.value : '';
   let registros = (state.registroPares || []).filter(r => set.has(r.fecha));
@@ -633,6 +662,10 @@ export async function verMesProduccion() {
   const dias = [];
   for (let i = 30; i >= 0; i--) dias.push(todayISO(-i));
   const set = new Set(dias);
+  if (navigator.onLine && dias.length) {
+    await db.loadProductionRange(dias[0], dias[dias.length - 1]);
+    if (miGen !== _produccionRenderGen) return;
+  }
   const empEl = document.getElementById('prod-historial-empleado');
   const empleado = empEl ? empEl.value : '';
   let registros = (state.registroPares || []).filter(r => set.has(r.fecha));
