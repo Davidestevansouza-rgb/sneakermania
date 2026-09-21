@@ -132,6 +132,7 @@ function ordenEliminadaDesdeFila(row) {
   return false;
 }
 
+/** Convierte la fila snake_case de Postgres al formato camelCase del state. */
 function mapOrdenRealtime(row) {
   if (!row) return null;
   return {
@@ -146,6 +147,14 @@ function mapOrdenRealtime(row) {
   };
 }
 
+/**
+ * Aplica solamente la fila de orden recibida por Realtime al estado local.
+ * IMPORTANTE: borrar una orden en la app es un soft-delete (eliminada=true),
+ * por lo que Supabase emite UPDATE, no DELETE. Si ese UPDATE se trata como
+ * una orden normal, Realtime vuelve a insertarla en state.ordenes justo
+ * después de enviarla a la papelera. Aquí se separan correctamente las
+ * órdenes activas de las eliminadas/restauradas.
+ */
 function applyOrdenRealtime(payload) {
   if (!Array.isArray(state.ordenes)) state.ordenes = [];
   if (!Array.isArray(state.ordenesEliminadas)) state.ordenesEliminadas = [];
@@ -178,6 +187,7 @@ function applyOrdenRealtime(payload) {
   else state.ordenes.push(mapped);
 }
 
+/** Inicia una única suscripción a cambios de órdenes del tenant actual. */
 export function startRealtimeAgenda() {
   if (realtimeChannel) return;
 
@@ -221,6 +231,7 @@ export function startRealtimeAgenda() {
   }
 }
 
+/** Detiene la suscripción actual exactamente una vez. */
 export function stopRealtimeAgenda() {
   const channel = realtimeChannel;
   if (!channel) return;
