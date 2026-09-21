@@ -495,6 +495,32 @@ function ordenSlimFromDb(r) {
   };
 }
 
+function mergeSlimOrdersIntoState(incoming) {
+  const map = new Map((state.ordenes || []).filter(Boolean).map(o => [o.id, o]));
+  (incoming || []).forEach(o => {
+    const prev = map.get(o.id);
+    // Nunca degradar una orden completa (con extra/fotos reales) a una fila
+    // liviana de Dashboard/Agenda/Biblioteca.
+    if (prev && prev._egressSlim !== true) return;
+    map.set(o.id, prev ? { ...prev, ...o } : o);
+  });
+  state.ordenes = Array.from(map.values());
+}
+
+async function loadSlimOrderContextsByIds(ids) {
+  const unique = [...new Set((ids || []).filter(Boolean))].slice(0, 500);
+  if (!unique.length) return [];
+  const { data, error } = await supabase.from('ordenes')
+    .select(EG_ORDER_SLIM_COLS)
+    .eq('tenant_id', tenantId())
+    .in('id', unique);
+  if (error) throw error;
+  const rows = (data || []).map(ordenSlimFromDb);
+  mergeSlimOrdersIntoState(rows);
+  await loadClientsByIds(rows.map(o => o.clienteId));
+  return rows;
+}
+
 async function loadClientsByIds(ids) {
   const unique = [...new Set((ids || []).filter(Boolean))];
   if (!unique.length) return [];
@@ -990,15 +1016,38 @@ export async function loadBibliotecaCurrent() {
       .select(EG_ITEM_COLS)
       .eq('tenant_id', tenantId())
       .eq('entregado', false)
-      .or('estado.eq.Biblioteca,timeline_index.gte.5,biblioteca->>ubicacion.not.is.null');
+      .gte('timeline_index', 5);
     if (error) throw error;
     const items = (data || []).map(itemFromDb);
     state.ordenItems = mergeById(state.ordenItems || [], items);
-    await loadOrderContextsByIds(items.map(it => it.ordenId), { includeProduction: false });
+    // Biblioteca operativa necesita orden/cliente para identificar el par,
+    // pero no necesita descargar fotos de 200+ órdenes al abrir la pantalla.
+    await loadSlimOrderContextsByIds(items.map(it => it.ordenId));
     meta.libraryLoaded = true;
     return { ok: true, rows: items };
   } catch (e) {
     console.error('No se pudo cargar Biblioteca actual:', e);
+    return { error: e };
+  }
+}
+
+export async function loadBibliotecaDate(fecha) {
+  if (!online() || !tenantId() || !fecha) return { error: 'NO_CONNECTION' };
+  try {
+    const { data, error } = await supabase.from('orden_items')
+      .select(EG_ITEM_COLS)
+      .eq('tenant_id', tenantId())
+      .eq('biblioteca->>fecha', fecha)
+      .order('codigo', { ascending: true });
+    if (error) throw error;
+    const items = (data || []).map(itemFromDb);
+    state.ordenItems = mergeById(state.ordenItems || [], items);
+    // El histórico con fecha es una acción explícita: ahí sí se hidratan solo
+    // las órdenes de ese día para conservar sus portadas/fotos.
+    await loadOrderContextsByIds(items.map(it => it.ordenId), { includeProduction: false });
+    return { ok: true, rows: items };
+  } catch (e) {
+    console.error('No se pudo cargar el histórico de Biblioteca:', e);
     return { error: e };
   }
 }
@@ -1023,7 +1072,7 @@ export async function loadAgendaData() {
     const items = (itemsRes.data || []).map(itemFromDb);
     const orders = (ordersRes.data || []).map(ordenSlimFromDb);
     state.ordenItems = mergeById(state.ordenItems || [], items);
-    state.ordenes = mergeById(state.ordenes || [], orders);
+    mergeSlimOrdersIntoState(orders);
     await loadClientsByIds(orders.map(o => o.clienteId));
     meta.agendaLoaded = true;
     return { ok: true };
