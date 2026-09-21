@@ -282,7 +282,24 @@ async function pushDelete(table, id) {
    ============================================================ */
 export const saveCliente = (c) => pushUpsert('clientes', clienteToDb(c));
 export const deleteCliente = (id) => pushDelete('clientes', id);
-export const saveOrden = (o) => pushUpsert('ordenes', ordenToDb(o));
+export async function saveOrden(o) {
+  const row = ordenToDb(o);
+  const res = await pushUpsert('ordenes', row);
+  // El resumen liviano alimenta Dashboard/Notificaciones. Mantenerlo al día
+  // con las escrituras locales evita que una nueva orden, pago o entrega
+  // aparezca recién después de volver a iniciar sesión.
+  if (Array.isArray(state.dashboardOrders) && (res?.ok || res?.queued)) {
+    if (o && o.eliminada === true) {
+      state.dashboardOrders = state.dashboardOrders.filter(x => x.id !== o.id);
+    } else {
+      const slim = ordenSlimFromDb(row);
+      const idx = state.dashboardOrders.findIndex(x => x.id === slim.id);
+      if (idx >= 0) state.dashboardOrders[idx] = { ...state.dashboardOrders[idx], ...slim };
+      else state.dashboardOrders.push(slim);
+    }
+  }
+  return res;
+}
 
 /** Obtiene el próximo número de orden exclusivamente de la BD.
  *  Crear una orden nueva requiere conexión: nunca se usa un número local provisional. */
