@@ -957,13 +957,20 @@ export async function loadDashboardData() {
     const countPromise = supabase.from('clientes')
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', tenantId());
+    const clientNamesPromise = supabase.from('clientes')
+      .select('id,nombre')
+      .eq('tenant_id', tenantId());
     const gastosPromise = role === 'Administrador'
       ? supabase.from('gastos').select('id,categoria,monto,fecha,descripcion').eq('tenant_id', tenantId())
       : Promise.resolve({ data: [], error: null });
-    const [ord, cliCount, gas] = await Promise.all([orderPromise, countPromise, gastosPromise]);
+    const [ord, cliCount, clientNames, gas] = await Promise.all([orderPromise, countPromise, clientNamesPromise, gastosPromise]);
     if (ord.error) throw ord.error;
     state.dashboardOrders = (ord.data || []).map(ordenSlimFromDb);
     state.dashboardClientCount = Number.isFinite(cliCount.count) ? cliCount.count : (state.clientes || []).length;
+    if (!clientNames.error) {
+      const slimClients = (clientNames.data || []).map(x => ({ id:x.id, nombre:x.nombre || '', telefono:'', whatsapp:'', email:'', direccion:'', rfc:'', observaciones:'', eliminada:false, creadoEn:null }));
+      state.clientes = mergeById(state.clientes || [], slimClients);
+    }
     if (!gas.error && role === 'Administrador') state.gastos = (gas.data || []).map(gastoFromDb);
     meta.dashboardLoaded = true;
     return { ok: true };
