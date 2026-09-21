@@ -324,7 +324,7 @@ export async function onAuthenticated(authUser) {
   };
 
   // La carga completa se conserva únicamente al iniciar/restaurar sesión.
-  const ok = await db.loadAllData();
+  const ok = await db.loadInitialDataForRole();
   if (!ok) {
     const cached = loadCache();
     if (cached) {
@@ -352,7 +352,7 @@ export async function onAuthenticated(authUser) {
 
   const { tabInicial } = await import('./state.js');
   const inicial = tabInicial();
-  if (typeof app.switchTab === 'function') app.switchTab(inicial);
+  if (typeof app.switchTab === 'function') await app.switchTab(inicial);
 
   if (state.session.role === 'Supervisor') {
     try {
