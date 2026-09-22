@@ -15,8 +15,7 @@ function initSafety() {
   protegerFechaEntregaGeneral();
   envolverProduccion();
   envolverNavegacion();
-  enlazarHistorialProduccion();
-  asegurarHistorialEmpleadoVisible();
+  // El historial de Producción lo controla produccion.js bajo demanda.
   corregirEtiquetasBlanqueamiento();
 }
 
@@ -27,21 +26,7 @@ function asegurarFechaProduccionActual() {
 }
 
 function asegurarHistorialEmpleadoVisible() {
-  if (!esEmpleado()) return;
-  const panel = document.getElementById('prod-historial-panel');
-  if (!panel) return;
-  panel.dataset.smEmployeeOwnHistory = '1';
-  if (!document.getElementById('sm-employee-own-history-style')) {
-    const style = document.createElement('style');
-    style.id = 'sm-employee-own-history-style';
-    style.textContent = '#prod-historial-panel[data-sm-employee-own-history="1"]{display:block!important}';
-    document.head.appendChild(style);
-  }
-  const selectorLegacy = document.getElementById('prod-historial-empleado');
-  const selectorLegacyWrap = selectorLegacy?.closest('.field') || selectorLegacy?.parentElement;
-  if (selectorLegacyWrap) selectorLegacyWrap.style.display = 'none';
-  const selectorRangoWrap = document.getElementById('sm-pempwrap');
-  if (selectorRangoWrap) selectorRangoWrap.style.display = 'none';
+  // Respetar permisos y visibilidad definidos por produccion.js.
 }
 
 /* 1) Al editar una orden vieja, el campo general NO pisa las fechas
@@ -186,12 +171,8 @@ async function cargarHistorialProduccionSeguro() {
 }
 
 function enlazarHistorialProduccion() {
-  asegurarHistorialEmpleadoVisible();
-  window.renderHistorialProduccion = cargarHistorialProduccionSeguro;
-  const buscar = document.getElementById('sm-pgo');
-  if (buscar) buscar.onclick = cargarHistorialProduccionSeguro;
-  const selector = document.getElementById('sm-pemp');
-  if (selector) selector.onchange = cargarHistorialProduccionSeguro;
+  // No sobreescribir window.renderHistorialProduccion: el módulo principal
+  // consulta una fecha/rango solamente cuando el usuario lo solicita.
 }
 
 function envolverProduccion() {
