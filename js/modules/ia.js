@@ -99,7 +99,7 @@ export function filtrarIaOrdenes(texto) {
   }
   const seq = ++_iaSearchSeq;
   _iaSearchTimer = setTimeout(async () => {
-    await db.searchOrdersGlobal(q, 20);
+    await db.searchOrdersGlobal(q, 20, { slim:true });
     if (seq !== _iaSearchSeq) return;
     const actual = String(document.getElementById('ia-orden-search')?.value || '').trim();
     if (actual !== q) return;
@@ -108,8 +108,13 @@ export function filtrarIaOrdenes(texto) {
 }
 
 /** Selecciona un par (o, si la orden todavía no tiene pares, la orden entera). */
-export function seleccionarIaOrden(ordenId, itemId) {
-  const o = ordenById(ordenId);
+export async function seleccionarIaOrden(ordenId, itemId) {
+  let o = ordenById(ordenId);
+  // Antes de permitir guardar IA, hidratar solo la orden elegida para no
+  // escribir nunca sobre un snapshot parcial.
+  if (navigator.onLine && (!o || o._egressSlim === true)) {
+    o = await db.fetchOrderContextById(ordenId);
+  }
   if (!o) return;
   const c = clienteById(o.clienteId);
   document.getElementById('ia-orden-target').value = ordenId;
