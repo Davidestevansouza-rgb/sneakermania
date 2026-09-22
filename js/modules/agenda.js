@@ -228,8 +228,22 @@ export function startRealtimeAgenda() {
 
           const agendaTab = document.getElementById('tab-agenda');
           if (agendaTab && agendaTab.classList.contains('active')) {
-            const dias = Number(document.getElementById('agenda-programados-dias')?.value || 7);
-            void db.loadAgendaData(dias, { reset:true }).then(() => renderAgenda(true));
+            // No volver a consultar las tres listas por cada UPDATE Realtime.
+            // La fecha operativa vive en orden_items; para cambios de la orden
+            // alcanza con actualizar estado en las filas ya cargadas.
+            const agenda = db.getAgendaData ? db.getAgendaData() : null;
+            const mapped = mapOrdenRealtime(payload.new);
+            if (agenda && mapped && agenda.rows) {
+              ['hoy','atrasados','programados'].forEach(kind => {
+                const arr = agenda.rows[kind] || [];
+                if (mapped.estado === 'Entregado' || mapped.entregado === true || mapped.eliminada === true) {
+                  agenda.rows[kind] = arr.filter(x => x.ordenId !== mapped.id);
+                } else {
+                  arr.forEach(x => { if (x.ordenId === mapped.id) x.estado = mapped.estado || x.estado; });
+                }
+              });
+            }
+            renderAgenda(true);
           }
           const ordenesTab = document.getElementById('tab-ordenes');
           if (ordenesTab && ordenesTab.classList.contains('active') && window.renderOrdenes) window.renderOrdenes();
