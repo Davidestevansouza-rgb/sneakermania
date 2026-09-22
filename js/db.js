@@ -765,7 +765,10 @@ export async function fetchItemContextByCode(codigo) {
 }
 
 function normalizeSearch(v) {
-  return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return String(v || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/\s+/g, ' ').trim()
+    .replace(/^#(?=\d)/, '');
 }
 
 function safeProbe(v) {
