@@ -204,18 +204,27 @@ function renderRangoProduccion() {
   registros.sort((a,b) => claveRegistro(b).localeCompare(claveRegistro(a)));
   out.innerHTML = '<div class="hint" style="margin-bottom:8px">' + registros.length + ' registro(s) · ' + fmtDate(desde) + ' → ' + fmtDate(hasta) + '</div>' + (registros.length ? '<div class="prod-grid">' + registros.map(tarjetaProduccion).join('') + '</div>' : '<div class="hint">Sin registros en el rango.</div>');
 }
+
 function mejorarProduccionUI() {
+  // Phase 2 Egress: la vista/historial de Producción queda a cargo del módulo
+  // principal produccion.js. Este legacy conserva solo mejoras del formulario
+  // y menú de selección de fotos; no rellena fechas ni carga historial.
   const tab = document.getElementById('tab-produccion'); if (!tab) return;
   const u = document.getElementById('prod-empleado'), d = document.getElementById('prod-fecha'), c = document.getElementById('prod-codigo'), s = document.getElementById('prod-servicio'), w = document.getElementById('prod-blanqueamiento');
   u?.closest('.field')?.classList.add('sm-u'); d?.closest('.field')?.classList.add('sm-d'); c?.closest('.field')?.classList.add('sm-c'); s?.closest('.field')?.classList.add('sm-s'); w?.closest('.field')?.classList.add('sm-w');
   const cam = document.getElementById('prod-foto-camera'), gal = document.getElementById('prod-foto-galeria');
-  if (cam && gal && !tab.querySelector('.sm-prodfoto')) { const box = cam.previousElementSibling; if (box) { box.querySelectorAll('button').forEach(x => { x.style.display = 'none'; }); const abrirGaleria = () => { gal.accept = 'image/*'; gal.click(); }, abrirArchivo = () => { gal.removeAttribute('accept'); gal.click(); }; gal.addEventListener('change', () => { setTimeout(() => { gal.accept = 'image/*'; }, 0); }); box.appendChild(crearMenuFoto(() => cam.click(), abrirGaleria, abrirArchivo, 'sm-prodfoto')); } }
-  const panel = document.getElementById('prod-historial-panel');
-  if (panel) { panel.style.display = ''; const controlesViejos = panel.querySelector('.panel-head > div:last-child'); if (controlesViejos) controlesViejos.style.display = 'none'; if (!document.getElementById('sm-prange')) { const tools = document.createElement('div'); tools.id = 'sm-prange'; tools.className = 'sm-tools'; tools.innerHTML = '<div class="field"><label>Desde</label><input type="date" id="sm-pdesde"></div><div class="field"><label>Hasta</label><input type="date" id="sm-phasta"></div><div class="field" id="sm-pempwrap"><label>Usuario</label><select id="sm-pemp"></select></div><button class="btn btn-primary btn-sm" id="sm-pgo">Buscar</button>'; panel.querySelector('.panel-head')?.insertAdjacentElement('afterend', tools); document.getElementById('sm-pdesde').value = todayISO(0); document.getElementById('sm-phasta').value = todayISO(0); document.getElementById('sm-pgo').onclick = renderRangoProduccion; document.getElementById('sm-pemp').onchange = renderRangoProduccion; }
-    const selector = document.getElementById('sm-pemp'), wrap = document.getElementById('sm-pempwrap'); if (esEmpleado()) { if (wrap) wrap.style.display = 'none'; } else if (selector) { if (wrap) wrap.style.display = ''; const actual = selector.value; const nombres = [...new Set((state.registroPares || []).map(r => r.empleado).filter(Boolean))].sort(); selector.innerHTML = '<option value="">Todos los usuarios</option>' + nombres.map(n => '<option value="' + escAttr(n) + '">' + escHtml(n) + '</option>').join(''); if (nombres.includes(actual)) selector.value = actual; }
+  if (cam && gal && !tab.querySelector('.sm-prodfoto')) {
+    const box = cam.previousElementSibling;
+    if (box) {
+      box.querySelectorAll('button').forEach(x => { x.style.display = 'none'; });
+      const abrirGaleria = () => { gal.accept = 'image/*'; gal.click(); };
+      const abrirArchivo = () => { gal.removeAttribute('accept'); gal.click(); };
+      gal.addEventListener('change', () => { setTimeout(() => { gal.accept = 'image/*'; }, 0); });
+      box.appendChild(crearMenuFoto(() => cam.click(), abrirGaleria, abrirArchivo, 'sm-prodfoto'));
+    }
   }
-  if (tab.classList.contains('active')) { let hoy = (state.registroPares || []).filter(r => r.fecha === todayISO(0)); if (esEmpleado()) hoy = hoy.filter(propio); hoy.sort((a,b) => claveRegistro(b).localeCompare(claveRegistro(a))); const lista = document.getElementById('prod-lista'); if (lista) lista.innerHTML = hoy.length ? '<div class="prod-grid">' + hoy.map(tarjetaProduccion).join('') + '</div>' : '<div class="hint">Todavía no hay artículos registrados hoy.</div>'; renderRangoProduccion(); }
 }
+
 async function persistirBlanqueamientoSiCorresponde(codigo, servicio, marcado) { if (!marcado || !codigo || !servicio) return; const existeRegistro = (state.registroPares || []).some(r => r.codigo === codigo && r.servicio === servicio); if (!existeRegistro) return; const item = (state.ordenItems || []).find(x => x.codigo === codigo); if (!item) return; item.registroServicios = item.registroServicios || {}; item.registroServicios[servicio] = item.registroServicios[servicio] || {}; if (item.registroServicios[servicio].blanqueamiento === true) return; item.registroServicios[servicio].blanqueamiento = true; await persist(); await db.saveOrdenItem(item); }
 
 function fechaCobro(o) { return o.fechaPago || o.fechaIngreso || ''; }
@@ -254,11 +263,11 @@ function init() {
   envolver('openNuevoClienteOrdenModal', mejorarNuevoClienteOrdenUI); envolver('agregarFilaParCO', mejorarNuevoClienteOrdenUI);
   if (typeof window.guardarClienteOrden === 'function' && !window.guardarClienteOrden.__smOpsSave) { const original = window.guardarClienteOrden; const wrapper = async function(...args) { const antes = new Set((state.ordenes || []).map(o => o.id)); const r = await original.apply(this, args); await recategorizarFotosNuevaOrden(antes); refrescarMejoras(); return r; }; wrapper.__smOpsSave = true; window.guardarClienteOrden = wrapper; }
   if (typeof window.registrarPares === 'function' && !window.registrarPares.__smOpsProd) { const original = window.registrarPares; const wrapper = async function(...args) { const codigo = document.getElementById('prod-codigo')?.value.trim() || '', servicio = document.getElementById('prod-servicio')?.value || '', blanqueamiento = !!document.getElementById('prod-blanqueamiento')?.checked; const r = await original.apply(this, args); await persistirBlanqueamientoSiCorresponde(codigo, servicio, blanqueamiento); mejorarProduccionUI(); return r; }; wrapper.__smOpsProd = true; window.registrarPares = wrapper; }
-  window.renderHistorialProduccion = renderRangoProduccion;
-  envolver('renderFinanzas', mejorarFinanzasUI); envolver('renderReportes', actualizarResumenMetodosPago); envolver('setRepRange', actualizarResumenMetodosPago);
+  // Historial de Producción, Finanzas y Reportes ya tienen carga bajo demanda
+  // en sus módulos principales; no se sobreescriben con los helpers legacy.
   ['renderGaleria','seleccionarGaleriaOrden','seleccionarGaleriaItem','limpiarFiltroGaleriaItem'].forEach(nombre => { const original = window[nombre]; if (typeof original !== 'function' || original.__smOpsGallery) return; const wrapper = function(...args) { return sinFotosIndividualesEnGaleria(() => original.apply(this,args)); }; wrapper.__smOpsGallery = true; window[nombre] = wrapper; });
   if (typeof window.switchTab === 'function' && !window.switchTab.__smOpsTab) { const original = window.switchTab; const wrapper = function(tab, ...args) { const r = tab === 'galeria' ? sinFotosIndividualesEnGaleria(() => original.call(this, tab, ...args)) : original.call(this, tab, ...args); refrescarMejoras(tab); return r; }; wrapper.__smOpsTab = true; window.switchTab = wrapper; }
   document.addEventListener('click', e => { if (!e.target.closest('.sm-menu')) document.querySelectorAll('.sm-pop.open').forEach(x => x.classList.remove('open')); });
   refrescarMejoras();
 }
-function refrescarMejoras(tabActual='') { mejorarOrdenUI(); mejorarNuevoClienteOrdenUI(); if (tabActual === 'produccion' || document.getElementById('tab-produccion')?.classList.contains('active')) mejorarProduccionUI(); if (tabActual === 'finanzas' || document.getElementById('tab-finanzas')?.classList.contains('active')) mejorarFinanzasUI(); if (tabActual === 'galeria' || document.getElementById('tab-galeria')?.classList.contains('active')) mejorarGaleriaUI(); if (tabActual === 'reportes' || document.getElementById('tab-reportes')?.classList.contains('active')) actualizarResumenMetodosPago(); }
+function refrescarMejoras(tabActual='') { mejorarOrdenUI(); mejorarNuevoClienteOrdenUI(); if (tabActual === 'produccion' || document.getElementById('tab-produccion')?.classList.contains('active')) mejorarProduccionUI(); if (tabActual === 'galeria' || document.getElementById('tab-galeria')?.classList.contains('active')) mejorarGaleriaUI(); }
