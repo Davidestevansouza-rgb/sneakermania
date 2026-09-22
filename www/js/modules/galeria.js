@@ -13,6 +13,50 @@ import { limpiarCombo } from '../combo-search.js';
 const GALERIA_CATS_FULL = [['detalle', 'Lavado'], ['suela', 'Detallado'], ['laterales', 'Pintado y personalizado'], ['todos_pares', 'Fotos generales']];
 const PIXEL_TRANSPARENTE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 let _galeriaRenderGen = 0;
+let _galeriaEgressSearchTimer = null;
+let _galeriaEgressSearchSeq = 0;
+let _galeriaEgressLoading = false;
+let _galeriaEgressObserver = null;
+
+async function cargarMasGaleriaEgress() {
+  const meta = db.getEgressMeta ? db.getEgressMeta() : null;
+  if (_galeriaEgressLoading || !meta || !meta.galleryHasMore) return;
+  _galeriaEgressLoading = true;
+  const el = document.getElementById('galeria-load-more-egress');
+  if (el) el.textContent = 'Cargando 30 carpetas/órdenes más…';
+  try {
+    const r = await db.loadNextGalleryPage(30);
+    if (r && r.error) throw r.error;
+    populateGaleriaSelect();
+    await renderGaleria();
+  } catch (e) {
+    console.error('No se pudo cargar más Galería:', e);
+    if (el) el.textContent = 'No se pudo cargar más. Toca para reintentar.';
+  } finally {
+    _galeriaEgressLoading = false;
+  }
+}
+
+function instalarCargaProgresivaGaleria() {
+  const el = document.getElementById('galeria-load-more-egress');
+  if (!el || !db.getEgressMeta) return;
+  const meta = db.getEgressMeta();
+  if (!meta.galleryHasMore || meta.fullOperationalLoaded) {
+    el.style.display = 'none';
+    if (_galeriaEgressObserver) { _galeriaEgressObserver.disconnect(); _galeriaEgressObserver = null; }
+    return;
+  }
+  el.style.display = '';
+  el.textContent = 'Desplázate hacia abajo para cargar 30 más';
+  el.onclick = () => void cargarMasGaleriaEgress();
+  if (_galeriaEgressObserver) _galeriaEgressObserver.disconnect();
+  if ('IntersectionObserver' in window) {
+    _galeriaEgressObserver = new IntersectionObserver(entries => {
+      if (entries.some(x => x.isIntersecting)) void cargarMasGaleriaEgress();
+    }, { rootMargin: '180px 0px' });
+    _galeriaEgressObserver.observe(el);
+  }
+}
 
 function fotoUrlNavegable(foto) {
   if (!foto) return PIXEL_TRANSPARENTE;
@@ -73,7 +117,20 @@ export function filtrarGaleriaOrdenes(texto) {
   const tokens = q.split(' ').filter(t => t && !palabrasIgnorables.has(t));
   const hayBusqueda = !!q && tokens.length > 0;
 
-  const itemMatches = hayBusqueda
+  const pintar = (matches) => {
+    const opcionTodos = !q ? '<div class="combo-item" onmousedown="seleccionarGaleriaOrden(\'__ALL__\')">👟 <strong>Ver fotos de todas las órdenes cargadas</strong></div>' : '';
+    const listaItems = (matches || []).map(it => {
+      const o = ordenById(it.ordenId);
+      if (!o) return '';
+      return '<div class="combo-item" onmousedown="seleccionarGaleriaItem(\'' + escAttr(it.id) + '\')"><strong>#' + escHtml(it.codigo) + '</strong> · ' + escHtml(clienteNombre(o.clienteId)) + '</div>';
+    }).join('');
+    const sinResultados = (q && !(matches || []).length)
+      ? '<div class="combo-empty">Sin resultados — buscá por par, cliente, marca, modelo o talla</div>'
+      : '';
+    results.innerHTML = opcionTodos + listaItems + sinResultados;
+  };
+
+  const local = hayBusqueda
     ? (state.ordenItems || []).filter(it => {
         const o = ordenById(it.ordenId);
         if (!o) return false;
@@ -85,15 +142,22 @@ export function filtrarGaleriaOrdenes(texto) {
         return tokens.every(token => searchable.includes(token));
       }).slice(0, 20)
     : [];
+  pintar(local);
 
-  const opcionTodos = !q ? '<div class="combo-item" onmousedown="seleccionarGaleriaOrden(\'__ALL__\')">👟 <strong>Ver fotos de todas las órdenes</strong></div>' : '';
-  const listaItems = itemMatches.map(it => {
-    const o = ordenById(it.ordenId);
-    if (!o) return '';
-    return '<div class="combo-item" onmousedown="seleccionarGaleriaItem(\'' + escAttr(it.id) + '\')"><strong>#' + escHtml(it.codigo) + '</strong> · ' + escHtml(clienteNombre(o.clienteId)) + '</div>';
-  }).join('');
-  const sinResultados = (q && !itemMatches.length) ? '<div class="combo-empty">Sin resultados — buscá por par, cliente, marca, modelo o talla</div>' : '';
-  results.innerHTML = opcionTodos + listaItems + sinResultados;
+  clearTimeout(_galeriaEgressSearchTimer);
+  if (!hayBusqueda) {
+    _galeriaEgressSearchSeq++;
+    return;
+  }
+
+  const seq = ++_galeriaEgressSearchSeq;
+  _galeriaEgressSearchTimer = setTimeout(async () => {
+    const remotos = await db.searchGalleryItems(q, 20);
+    if (seq !== _galeriaEgressSearchSeq) return;
+    const actual = normalizarBusquedaGaleria(document.getElementById('galeria-orden-search')?.value || '');
+    if (actual !== q) return;
+    pintar(remotos);
+  }, 320);
 }
 
 export function seleccionarGaleriaItem(itemId) {
@@ -146,6 +210,9 @@ let galeriaCarpetaActual = null;
 
 function carpetasGaleria() {
   const grupos = new Map();
+  const eg = db.getEgressMeta ? db.getEgressMeta() : null;
+  const idsPaginaGaleria = new Set(eg && Array.isArray(eg.galleryPageIds) ? eg.galleryPageIds : []);
+  const limitarAPaginaGaleria = !!(eg && eg.optimized && !eg.fullOperationalLoaded);
   const itemPorId = new Map((state.ordenItems || []).map(it => [it.id, it]));
   const itemPorCodigo = new Map((state.ordenItems || []).map(it => [it.codigo, it]));
 
@@ -171,6 +238,7 @@ function carpetasGaleria() {
   (state.registroPares || []).forEach(r => {
     const it = itemPorCodigo.get(r.codigo);
     if (!it) return;
+    if (limitarAPaginaGaleria && !idsPaginaGaleria.has(it.ordenId)) return;
     const g = asegurar(it.ordenId);
     const urls = Array.isArray(r.fotoUrls) ? r.fotoUrls : (r.fotoUrl ? [r.fotoUrl] : []);
     urls.forEach(url => agregar(g, {
@@ -183,10 +251,23 @@ function carpetasGaleria() {
 
   // Fotos históricas/manuales de la orden se suman a la misma carpeta general.
   (state.ordenes || []).forEach(o => {
+    if (limitarAPaginaGaleria && !idsPaginaGaleria.has(o.id)) return;
     migrateLegacyFotos(o);
     const fotos = (o.extra && Array.isArray(o.extra.fotos)) ? o.extra.fotos : [];
     fotos.forEach(f => {
-      const it = f.itemId ? itemPorId.get(f.itemId) : null;
+      if (!f) return;
+      let it = null;
+      if (f.itemId) {
+        // Si existe itemId, el UUID es autoritativo. Una referencia a un
+        // artículo viejo no puede reaparecer como "foto general".
+        it = itemPorId.get(f.itemId) || null;
+        if (!it) return;
+      } else if (f.item) {
+        // Compatibilidad legacy: solo las referencias SIN itemId pueden
+        // resolverse por código.
+        it = itemPorCodigo.get(f.item) || null;
+        if (!it) return;
+      }
       agregar(asegurar(o.id, o), f, it ? it.codigo : null);
     });
   });
@@ -269,7 +350,9 @@ async function renderGaleriaTodos(miGen) {
       '" loading="lazy" decoding="async">' + contador + '</div></div>';
   }).join('');
 
-  content.innerHTML = '<div class="gallery-cats">' + bloques + '</div>';
+  content.innerHTML = '<div class="gallery-cats">' + bloques + '</div>' +
+    '<div id="galeria-load-more-egress" class="hint" style="text-align:center;padding:18px 8px;cursor:pointer;"></div>';
+  instalarCargaProgresivaGaleria();
 
   // Resolver portadas en segundo plano. Si una URL falla, la carpeta sigue
   // visible y utilizable; no desaparece la orden completa.
@@ -287,6 +370,11 @@ async function renderGaleriaTodos(miGen) {
 export async function renderGaleria() {
   const miGen = ++_galeriaRenderGen;
   const sel = document.getElementById('galeria-orden-select');
+  const eg = db.getEgressMeta ? db.getEgressMeta() : null;
+  // En el modo paginado, la entrada normal a Galería abre el listado de
+  // carpetas (20 reales con fotos) en vez de elegir silenciosamente la
+  // primera orden cargada.
+  if (sel && !sel.value && eg && eg.optimized) sel.value = '__ALL__';
   if (!state.ordenes.length) {
     document.getElementById('galeria-content').innerHTML = '<div class="empty-state"><div class="big">📷</div>No hay órdenes registradas</div>';
     return;

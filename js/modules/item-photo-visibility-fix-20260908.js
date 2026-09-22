@@ -50,7 +50,9 @@ function todasFotosOrden(orden) {
 
 function fotosDelItem(orden, item) {
   return todasFotosOrden(orden).filter(f => {
-    if (!f || !(f.itemId === item.id || f.item === item.codigo)) return false;
+    if (!f) return false;
+    const vinculada = f.itemId ? f.itemId === item.id : f.item === item.codigo;
+    if (!vinculada) return false;
     if (f.categoria === 'item_inicial') return true;
     // Compatibilidad histórica comprobada: algunas versiones guardaron la
     // foto individual como `todos_pares`, pero conservaron explícitamente

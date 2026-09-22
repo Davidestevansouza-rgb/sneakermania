@@ -419,6 +419,58 @@ function soloFechaISO(v) {
 let _refreshItemsOrdenesEnCurso = false;
 const _refreshItemsUltimoIntento = new Map();
 const REFRESH_ITEMS_RETRY_MS = 60 * 1000;
+
+let _ordenesEgressObserver = null;
+let _ordenesEgressLoading = false;
+
+async function cargarMasOrdenesEgress() {
+  const meta = db.getEgressMeta ? db.getEgressMeta() : null;
+  if (_ordenesEgressLoading || !meta || !meta.orderHasMore) return;
+  _ordenesEgressLoading = true;
+  const el = document.getElementById('ordenes-load-more-egress');
+  if (el) el.textContent = 'Cargando más órdenes…';
+  try {
+    const r = await db.loadNextOrderPage(30);
+    if (r && r.error) throw r.error;
+    renderOrdenes();
+    if (window.populateGaleriaSelect) window.populateGaleriaSelect();
+  } catch (e) {
+    console.error('No se pudieron cargar más órdenes:', e);
+    if (el) el.textContent = 'No se pudieron cargar más. Toca para reintentar.';
+  } finally {
+    _ordenesEgressLoading = false;
+  }
+}
+
+function instalarCargaProgresivaOrdenes() {
+  const grid = document.getElementById('ordenes-grid');
+  if (!grid || !db.getEgressMeta) return;
+  const meta = db.getEgressMeta();
+  let sentinel = document.getElementById('ordenes-load-more-egress');
+  if (!sentinel) {
+    sentinel = document.createElement('div');
+    sentinel.id = 'ordenes-load-more-egress';
+    sentinel.className = 'hint';
+    sentinel.style.cssText = 'text-align:center;padding:18px 8px;cursor:pointer;';
+    grid.insertAdjacentElement('afterend', sentinel);
+  }
+  if (!meta.orderHasMore || meta.fullOperationalLoaded) {
+    sentinel.textContent = meta.orderTotal != null ? 'Se cargaron todas las órdenes disponibles.' : '';
+    sentinel.style.display = 'none';
+    if (_ordenesEgressObserver) { _ordenesEgressObserver.disconnect(); _ordenesEgressObserver = null; }
+    return;
+  }
+  sentinel.style.display = '';
+  sentinel.textContent = 'Desplázate hacia abajo para cargar 30 órdenes más';
+  sentinel.onclick = () => void cargarMasOrdenesEgress();
+  if (_ordenesEgressObserver) _ordenesEgressObserver.disconnect();
+  if ('IntersectionObserver' in window) {
+    _ordenesEgressObserver = new IntersectionObserver(entries => {
+      if (entries.some(x => x.isIntersecting)) void cargarMasOrdenesEgress();
+    }, { rootMargin: '180px 0px' });
+    _ordenesEgressObserver.observe(sentinel);
+  }
+}
 export function renderOrdenes() {
   // Una caché local puede quedar parcial si otro dispositivo actualizó los
   // artículos. Al entrar a Órdenes, refrescamos en segundo plano las órdenes
@@ -448,8 +500,15 @@ export function renderOrdenes() {
   const estado = document.getElementById('filtro-estado').value;
   const prioridad = document.getElementById('filtro-prioridad').value;
   const pago = document.getElementById('filtro-pago').value;
-  const texto = (document.getElementById('filtro-orden-texto').value || '').toLowerCase();
-  document.getElementById('ordenes-sub').textContent = state.ordenes.length + ' órdenes registradas';
+  const textoRaw = (document.getElementById('filtro-orden-texto').value || '').toLowerCase().trim();
+  const texto = textoRaw.replace(/^#(?=\d)/, '');
+  const tokensTexto = texto.split(/\s+/).filter(Boolean);
+  const egress = db.getEgressMeta ? db.getEgressMeta() : null;
+  const cargadasPagina = egress && Array.isArray(egress.orderPageIds) ? egress.orderPageIds.length : state.ordenes.length;
+  const totalServidor = egress && Number.isFinite(egress.orderTotal) ? egress.orderTotal : null;
+  document.getElementById('ordenes-sub').textContent = totalServidor != null
+    ? cargadasPagina + ' mostradas · ' + totalServidor + ' órdenes en total'
+    : state.ordenes.length + ' órdenes registradas';
 
   // Buscador de fechas (junto a "+ Nueva orden"): filtra por fecha de
   // ingreso de la orden usando el rango Desde/Hasta del panel.
@@ -459,7 +518,12 @@ export function renderOrdenes() {
   const fechaHasta = fHasta ? fHasta.value : '';
   if (typeof actualizarBotonFiltroFechaOrden === 'function') actualizarBotonFiltroFechaOrden(!!(fechaDesde || fechaHasta));
 
-  let list = state.ordenes.slice().sort((a, b) => b.numero - a.numero);
+  const idsPagina = new Set(egress && Array.isArray(egress.orderPageIds) ? egress.orderPageIds : []);
+  const usarSoloPagina = !!(egress && egress.optimized && !egress.fullOperationalLoaded && !texto);
+  let list = (usarSoloPagina
+    ? (state.ordenes || []).filter(o => idsPagina.has(o.id))
+    : (state.ordenes || []).slice()
+  ).sort((a, b) => b.numero - a.numero);
   if (fechaDesde || fechaHasta) {
     // Comparar SOLO la parte de fecha (YYYY-MM-DD), sin la hora. La fecha de
     // ingreso puede venir como fecha simple ("2026-09-01"), como timestamp
@@ -485,12 +549,19 @@ export function renderOrdenes() {
   if (estado) list = list.filter(o => o.estado === estado || itemsDeOrden(o.id).some(it => estadoMostradoPar(it) === estado));
   if (prioridad) list = list.filter(o => o.prioridad === prioridad);
   if (pago) list = list.filter(o => pago === 'pendiente' ? (o.estadoPago || 'Pendiente') !== 'Pagado' : (o.estadoPago || 'Pendiente') === pago);
-  if (texto) {
+  if (tokensTexto.length) {
     list = list.filter(o => {
-      const cliente = (clienteNombre(o.clienteId) || '').toLowerCase();
-      const marca = (o.marca || '').toLowerCase();
-      const modelo = (o.modelo || '').toLowerCase();
-      return cliente.includes(texto) || marca.includes(texto) || modelo.includes(texto) || String(o.numero).includes(texto);
+      const items = itemsDeOrden(o.id);
+      const haystack = [
+        String(o.numero || ''),
+        clienteNombre(o.clienteId) || '',
+        o.marca || '', o.modelo || '', o.talla || '', o.color || '',
+        ...items.flatMap(it => [
+          it.codigo || '', it.descripcion || '', it.marca || '', it.modelo || '',
+          it.talla || '', it.color || '', it.tipoCalzado || '', it.material || ''
+        ])
+      ].join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      return tokensTexto.every(t => haystack.includes(t.normalize('NFD').replace(/[\u0300-\u036f]/g, '')));
     });
   }
 
@@ -508,7 +579,9 @@ export function renderOrdenes() {
         : [soloFechaISO(fechaDesde) || '…', soloFechaISO(fechaHasta) || '…'].join(' → ');
       subEl.textContent = list.length + ' órdenes · ' + totalArticulos + ' artículos registrados (' + rango + ')';
     } else {
-      subEl.textContent = state.ordenes.length + ' órdenes · ' + totalArticulos + ' artículos registrados';
+      subEl.textContent = totalServidor != null && egress && !egress.fullOperationalLoaded
+        ? cargadasPagina + ' mostradas de ' + totalServidor + ' órdenes · ' + totalArticulos + ' artículos cargados'
+        : state.ordenes.length + ' órdenes · ' + totalArticulos + ' artículos registrados';
     }
   }
 
@@ -583,6 +656,7 @@ export function renderOrdenes() {
         '</div>' +
       '</div></div>';
   }).join('') : '<div class="empty-state"><div class="big">▤</div>No hay órdenes que coincidan con el filtro</div>';
+  instalarCargaProgresivaOrdenes();
 }
 
 /** El campo "Estado" ya no se muestra ni se edita a mano en el formulario
@@ -1852,10 +1926,15 @@ export function openFormaPagoChooser(id) {
 }
 
 /* ---------------- Cobro con QR ---------------- */
-export function openPagoQRModal(id) {
+export async function openPagoQRModal(id) {
   const o = ordenById(id);
   if (!o) return;
   pagoQrOrdenId = id;
+  // qr_pago_url puede pesar cientos de KB. Se solicita únicamente cuando
+  // el usuario elige cobrar por QR, nunca en el login general.
+  if (navigator.onLine && db.loadFullConfig) {
+    await db.loadFullConfig();
+  }
   renderPagoQRContent(o);
   openModalEl('modal-pago-qr');
 }

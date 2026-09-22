@@ -6,6 +6,7 @@ import { state, todayISO, tenantId } from '../state.js';
 import { fmtDate, clienteNombre, showToast } from '../ui.js';
 import { escHtml } from '../sanitize.js';
 import { supabase } from '../config.js';
+import * as db from '../db.js';
 
 let realtimeChannel = null;
 
@@ -107,8 +108,17 @@ function pipBeep() {
   } catch (e) { /* sin audio, no rompe nada */ }
 }
 
-export function verOrdenDesdeAgenda(ordenId) {
-  if (window.viewOrdenDetalle) window.viewOrdenDetalle(ordenId);
+export async function verOrdenDesdeAgenda(ordenId) {
+  // Agenda usa filas livianas para ahorrar Egress. Al abrir una orden se
+  // hidrata únicamente ESA orden (extra/fotos) y sus artículos antes de
+  // mostrar el detalle, para que una orden antigua nunca parezca incompleta.
+  let orden = (state.ordenes || []).find(o => o.id === ordenId);
+  const tieneDetalleCompleto = !!(orden && orden._egressSlim !== true && orden.extra && typeof orden.extra === 'object');
+  if (!tieneDetalleCompleto && navigator.onLine) {
+    orden = await db.fetchOrderContextById(ordenId);
+  }
+  if (window.viewOrdenDetalle && orden) window.viewOrdenDetalle(ordenId);
+  else showToast('No se pudo cargar el detalle de esta orden');
 }
 
 function ordenEliminadaDesdeFila(row) {
@@ -122,6 +132,7 @@ function ordenEliminadaDesdeFila(row) {
   return false;
 }
 
+/** Convierte la fila snake_case de Postgres al formato camelCase del state. */
 function mapOrdenRealtime(row) {
   if (!row) return null;
   return {
@@ -132,10 +143,19 @@ function mapOrdenRealtime(row) {
     estadoPago: row.estado_pago ?? row.estadoPago,
     totalPares: row.total_pares ?? row.totalPares,
     tenantId: row.tenant_id ?? row.tenantId,
-    eliminada: ordenEliminadaDesdeFila(row)
+    eliminada: ordenEliminadaDesdeFila(row),
+    _egressSlim: false
   };
 }
 
+/**
+ * Aplica solamente la fila de orden recibida por Realtime al estado local.
+ * IMPORTANTE: borrar una orden en la app es un soft-delete (eliminada=true),
+ * por lo que Supabase emite UPDATE, no DELETE. Si ese UPDATE se trata como
+ * una orden normal, Realtime vuelve a insertarla en state.ordenes justo
+ * después de enviarla a la papelera. Aquí se separan correctamente las
+ * órdenes activas de las eliminadas/restauradas.
+ */
 function applyOrdenRealtime(payload) {
   if (!Array.isArray(state.ordenes)) state.ordenes = [];
   if (!Array.isArray(state.ordenesEliminadas)) state.ordenesEliminadas = [];
@@ -168,6 +188,7 @@ function applyOrdenRealtime(payload) {
   else state.ordenes.push(mapped);
 }
 
+/** Inicia una única suscripción a cambios de órdenes del tenant actual. */
 export function startRealtimeAgenda() {
   if (realtimeChannel) return;
 
@@ -211,6 +232,7 @@ export function startRealtimeAgenda() {
   }
 }
 
+/** Detiene la suscripción actual exactamente una vez. */
 export function stopRealtimeAgenda() {
   const channel = realtimeChannel;
   if (!channel) return;

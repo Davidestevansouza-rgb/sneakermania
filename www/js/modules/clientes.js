@@ -29,7 +29,8 @@ export function renderClientes(filter = '') {
   actualizarBotonFiltroFechaCliente(!!(desde || hasta));
   const html = '<thead><tr><th>Nombre</th><th>Teléfono</th><th>WhatsApp</th><th>Dirección</th><th>Servicios</th><th></th></tr></thead><tbody>' +
     rows.map(c => {
-      const historial = state.ordenes.filter(o => o.clienteId === c.id).length;
+      const ordenesReferencia = Array.isArray(state.dashboardOrders) ? state.dashboardOrders : state.ordenes;
+      const historial = (ordenesReferencia || []).filter(o => o.clienteId === c.id).length;
       return '<tr><td data-label=""><strong>' + escHtml(c.nombre) + '</strong>' + (c.observaciones ? '<div class="hint">' + escHtml(c.observaciones) + '</div>' : '') + '</td>' +
         '<td data-label="Teléfono">' + escHtml(c.telefono) + '</td><td data-label="WhatsApp">' + escHtml(c.whatsapp) + '</td><td data-label="Dirección">' + escHtml(c.direccion) + '</td>' +
         '<td data-label="Servicios">' + historial + ' órdenes</td>' +
@@ -111,7 +112,8 @@ export async function deleteCliente(id) {
   const c = clienteById(id);
   if (!c) return;
   // No se puede eliminar un cliente con órdenes asociadas (restricción de la base de datos).
-  const nOrd = state.ordenes.filter(o => o.clienteId === id).length;
+  const ordenesReferencia = Array.isArray(state.dashboardOrders) ? state.dashboardOrders : state.ordenes;
+  const nOrd = (ordenesReferencia || []).filter(o => o.clienteId === id).length;
   if (nOrd > 0) {
     alert('No se puede eliminar a "' + c.nombre + '" porque tiene ' + nOrd + ' orden(es) asociada(s).\n\nPrimero elimina sus órdenes en la pestaña Órdenes y vuelve a intentarlo.');
     return;
@@ -175,8 +177,16 @@ export async function eliminarClientePermanente(id) {
 }
 
 export function viewClienteHistorial(id) {
-  window.switchTab('ordenes');
   const nombre = clienteNombre(id);
+  // El historial del cliente debe buscar en TODO PostgreSQL, no únicamente
+  // en las 20 órdenes que estén cargadas en pantalla.
+  if (typeof window.handleGlobalSearch === 'function') {
+    const globalSearch = document.getElementById('global-search');
+    if (globalSearch) globalSearch.value = nombre;
+    window.handleGlobalSearch(nombre);
+    return;
+  }
+  window.switchTab('ordenes');
   // El campo real de búsqueda de órdenes está oculto; el visible es
   // "global-search". Antes solo se llenaba el oculto, así que al volver del
   // historial la caja visible quedaba vacía pero el filtro seguía activo y el

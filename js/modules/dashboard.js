@@ -7,7 +7,7 @@ import { escHtml } from '../sanitize.js';
 import { FLUJO_ESTADOS } from './ordenes.js';
 
 export function renderDashboard() {
-  const ordenes = state.ordenes;
+  const ordenes = Array.isArray(state.dashboardOrders) ? state.dashboardOrders : state.ordenes;
   const esAdminSub = state.session && state.session.role === 'Administrador';
   const dashSub = document.querySelector('#tab-dashboard .page-sub');
   if (dashSub) dashSub.textContent = esAdminSub ? 'Resumen operativo y financiero en tiempo real' : 'Resumen operativo en tiempo real';
@@ -45,7 +45,7 @@ export function renderDashboard() {
   const esAdmin = state.session && state.session.role === 'Administrador';
 
   const kpisOperativos = [
-    { label: 'Clientes registrados', value: state.clientes.length },
+    { label: 'Clientes registrados', value: Number.isFinite(state.dashboardClientCount) ? state.dashboardClientCount : state.clientes.length },
     { label: 'Servicios en proceso', value: enProceso },
     { label: 'Finalizados', value: finalizados },
     { label: 'Entregados', value: entregados },

@@ -42,6 +42,11 @@ function construirRespaldo() {
 export function autoDailyBackup() {
   try {
     if (!(state && state.session && state.session.loggedIn)) return;
+    // Con carga paginada el state puede contener solo una parte del negocio.
+    // Nunca crear una "copia completa" silenciosamente a partir de un state
+    // parcial: es más seguro omitir esta copia local que guardar un respaldo
+    // incompleto que parezca íntegro.
+    if (state._egress && state._egress.optimized && !state._egress.fullOperationalLoaded) return;
     const hoy = new Date().toISOString().slice(0, 10);
     const clave = PREFIJO + hoy;
     if (localStorage.getItem(clave)) return; // ya hay copia de hoy
@@ -57,8 +62,16 @@ export function autoDailyBackup() {
 }
 
 /** Descarga un archivo .json con toda la información (copia manual). */
-export function exportBackup() {
+export async function exportBackup() {
   try {
+    // La exportación manual sí debe ser completa. Solo cuando el Administrador
+    // la solicita explícitamente se hidrata todo el histórico antes de generar
+    // el archivo.
+    if (state._egress && state._egress.optimized && !state._egress.fullOperationalLoaded) {
+      const ok = await db.loadAllData();
+      if (!ok) { showToast('No se pudo cargar la información completa para el respaldo'); return; }
+      state._egress.fullOperationalLoaded = true;
+    }
     const blob = new Blob([JSON.stringify(construirRespaldo(), null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

@@ -6,6 +6,7 @@ import { state, todayISO, tenantId } from '../state.js';
 import { fmtDate, clienteNombre, showToast } from '../ui.js';
 import { escHtml } from '../sanitize.js';
 import { supabase } from '../config.js';
+import * as db from '../db.js';
 
 let realtimeChannel = null;
 
@@ -107,8 +108,17 @@ function pipBeep() {
   } catch (e) { /* sin audio, no rompe nada */ }
 }
 
-export function verOrdenDesdeAgenda(ordenId) {
-  if (window.viewOrdenDetalle) window.viewOrdenDetalle(ordenId);
+export async function verOrdenDesdeAgenda(ordenId) {
+  // Agenda usa filas livianas para ahorrar Egress. Al abrir una orden se
+  // hidrata únicamente ESA orden (extra/fotos) y sus artículos antes de
+  // mostrar el detalle, para que una orden antigua nunca parezca incompleta.
+  let orden = (state.ordenes || []).find(o => o.id === ordenId);
+  const tieneDetalleCompleto = !!(orden && orden._egressSlim !== true && orden.extra && typeof orden.extra === 'object');
+  if (!tieneDetalleCompleto && navigator.onLine) {
+    orden = await db.fetchOrderContextById(ordenId);
+  }
+  if (window.viewOrdenDetalle && orden) window.viewOrdenDetalle(ordenId);
+  else showToast('No se pudo cargar el detalle de esta orden');
 }
 
 function ordenEliminadaDesdeFila(row) {
@@ -133,7 +143,8 @@ function mapOrdenRealtime(row) {
     estadoPago: row.estado_pago ?? row.estadoPago,
     totalPares: row.total_pares ?? row.totalPares,
     tenantId: row.tenant_id ?? row.tenantId,
-    eliminada: ordenEliminadaDesdeFila(row)
+    eliminada: ordenEliminadaDesdeFila(row),
+    _egressSlim: false
   };
 }
 
