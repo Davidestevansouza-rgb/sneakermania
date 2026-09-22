@@ -868,14 +868,14 @@ export async function loadRecentOrderContexts(limit = 20) {
   try {
     const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 50));
     const { data, error } = await supabase.from('ordenes')
-      .select(EG_ORDER_COLS)
+      .select(EG_ORDER_SLIM_COLS)
       .eq('tenant_id', tenantId())
       .or('extra->>eliminada.is.null,extra->>eliminada.eq.false')
       .order('numero', { ascending: false })
       .limit(safeLimit);
     if (error) throw error;
-    const orders = (data || []).map(ordenFromDb).filter(o => !o.eliminada);
-    state.ordenes = mergeById(state.ordenes || [], orders);
+    const orders = (data || []).map(ordenSlimFromDb);
+    mergeSlimOrdersIntoState(orders);
     await hydrateOrders(orders, { includeProduction: false });
     egressMeta().iaRecentLoaded = true;
     return { ok: true, orders };
@@ -891,12 +891,17 @@ export async function fetchOrderContextById(id) {
   return rows[0] || (state.ordenes || []).find(o => o.id === id) || null;
 }
 
-export async function searchOrdersGlobal(text, limit = 30) {
+export async function searchOrdersGlobal(text, limit = 30, opts = {}) {
   const norm = normalizeSearch(text);
   if (!norm) return [];
   try {
     const ids = await remoteSearchCandidateOrderIds(norm);
-    await loadOrderContextsByIds(ids, { includeProduction: true });
+    if (opts.slim === true) {
+      const slimOrders = await loadSlimOrderContextsByIds(ids);
+      await hydrateOrders(slimOrders, { includeProduction: false });
+    } else {
+      await loadOrderContextsByIds(ids, { includeProduction: opts.includeProduction !== false });
+    }
     const tokens = norm.split(' ').filter(Boolean);
     const itemsByOrder = new Map();
     (state.ordenItems || []).forEach(it => {
