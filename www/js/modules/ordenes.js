@@ -500,7 +500,9 @@ export function renderOrdenes() {
   const estado = document.getElementById('filtro-estado').value;
   const prioridad = document.getElementById('filtro-prioridad').value;
   const pago = document.getElementById('filtro-pago').value;
-  const texto = (document.getElementById('filtro-orden-texto').value || '').toLowerCase();
+  const textoRaw = (document.getElementById('filtro-orden-texto').value || '').toLowerCase().trim();
+  const texto = textoRaw.replace(/^#(?=\d)/, '');
+  const tokensTexto = texto.split(/\s+/).filter(Boolean);
   const egress = db.getEgressMeta ? db.getEgressMeta() : null;
   const cargadasPagina = egress && Array.isArray(egress.orderPageIds) ? egress.orderPageIds.length : state.ordenes.length;
   const totalServidor = egress && Number.isFinite(egress.orderTotal) ? egress.orderTotal : null;
@@ -547,12 +549,19 @@ export function renderOrdenes() {
   if (estado) list = list.filter(o => o.estado === estado || itemsDeOrden(o.id).some(it => estadoMostradoPar(it) === estado));
   if (prioridad) list = list.filter(o => o.prioridad === prioridad);
   if (pago) list = list.filter(o => pago === 'pendiente' ? (o.estadoPago || 'Pendiente') !== 'Pagado' : (o.estadoPago || 'Pendiente') === pago);
-  if (texto) {
+  if (tokensTexto.length) {
     list = list.filter(o => {
-      const cliente = (clienteNombre(o.clienteId) || '').toLowerCase();
-      const marca = (o.marca || '').toLowerCase();
-      const modelo = (o.modelo || '').toLowerCase();
-      return cliente.includes(texto) || marca.includes(texto) || modelo.includes(texto) || String(o.numero).includes(texto);
+      const items = itemsDeOrden(o.id);
+      const haystack = [
+        String(o.numero || ''),
+        clienteNombre(o.clienteId) || '',
+        o.marca || '', o.modelo || '', o.talla || '', o.color || '',
+        ...items.flatMap(it => [
+          it.codigo || '', it.descripcion || '', it.marca || '', it.modelo || '',
+          it.talla || '', it.color || '', it.tipoCalzado || '', it.material || ''
+        ])
+      ].join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      return tokensTexto.every(t => haystack.includes(t.normalize('NFD').replace(/[\u0300-\u036f]/g, '')));
     });
   }
 
