@@ -37,7 +37,8 @@ export async function renderProduccion() {
   const fechaEl = document.getElementById('prod-fecha');
   if (fechaEl && !fechaEl.value) fechaEl.value = todayISO(0);
   const histEl = document.getElementById('prod-historial-fecha');
-  if (histEl && !histEl.value) histEl.value = todayISO(0);
+  // El historial permanece vacío hasta que el usuario elige una fecha o un
+  // rango. La sección superior "Registros de hoy" sigue funcionando normal.
   const empEl = document.getElementById('prod-empleado');
   if (empEl) {
     empEl.value = (state.session && state.session.user) || '';
@@ -604,13 +605,17 @@ export async function renderHistorialProduccion(miGen = null) {
   const empEl = document.getElementById('prod-historial-empleado');
   const cont = document.getElementById('prod-historial');
   if (!cont) return;
-  const fecha = fechaEl ? fechaEl.value : todayISO(0);
+  const fecha = fechaEl ? fechaEl.value : '';
   const empleado = empEl ? empEl.value : '';
-  if (!fecha) { cont.innerHTML = '<div class="hint">Elige una fecha para ver el historial.</div>'; return; }
+  if (!fecha) {
+    cont.innerHTML = '<div class="hint">Elige una fecha, “últimos 7 días” o “últimos 31 días” para cargar el historial.</div>';
+    return;
+  }
   const eg = db.getEgressMeta ? db.getEgressMeta() : null;
   if (navigator.onLine && (!eg || !eg.productionDates || !eg.productionDates[fecha])) {
     await db.loadProductionDate(fecha);
     if (gen !== _produccionRenderGen) return;
+    poblarFiltroEmpleadoProduccion();
   }
   let registros = (state.registroPares || []).filter(r => r.fecha === fecha);
   if (empleado) registros = registros.filter(r => r.empleado === empleado);
