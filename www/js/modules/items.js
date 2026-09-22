@@ -201,9 +201,17 @@ export function renderItemCardHTML(it) {
       // guardada en orden.extra.fotos con f.item === it.codigo (ver
       // agregarFilaParCO en cliente-orden.js). Se muestra además de la foto
       // de producción (si existe), y se puede agregar/cambiar con el botón.
-      const fotoItem = orden && orden.extra && Array.isArray(orden.extra.fotos)
-        ? orden.extra.fotos.find(f => f.item === it.codigo)
-        : null;
+      const fotosItemDisponibles = orden && orden.extra && Array.isArray(orden.extra.fotos)
+        ? orden.extra.fotos
+        : [];
+      // Integridad de vínculo foto↔artículo:
+      // 1) si la referencia tiene itemId, SOLO puede pertenecer a ese UUID;
+      // 2) el código es fallback únicamente para referencias legacy sin itemId.
+      // Esto evita que una referencia vieja de un artículo recreado gane por
+      // compartir el mismo código (caso comprobado #476).
+      const fotoItem = fotosItemDisponibles.find(f => f && f.itemId && f.itemId === it.id)
+        || fotosItemDisponibles.find(f => f && !f.itemId && f.item === it.codigo)
+        || null;
       const urlFotoItem = fotoItem ? fotoItem.url : null;
       const fotoItemHTML = urlFotoItem
         ? '<div style="margin-top:4px;"><img src="' + escAttr(urlFotoItem) + '" loading="lazy" style="max-width:90px;max-height:90px;border-radius:6px;cursor:pointer;object-fit:cover;border:1px solid var(--line);" onclick="ampliarImagen(\'' + urlFotoItem.replace(/'/g, "\\'") + '\')" title="Foto del artículo"></div>'
@@ -281,10 +289,15 @@ export async function agregarFotoItem(itemId, file) {
   try {
     const fotoData = await storageManager.uploadFoto(file, orden.id, 'todos_pares');
     fotoData.item = item.codigo;
+    fotoData.itemId = item.id;
     if (!orden.extra) orden.extra = {};
     if (!Array.isArray(orden.extra.fotos)) orden.extra.fotos = [];
     // Reemplazar foto anterior de este artículo si ya había una
-    orden.extra.fotos = orden.extra.fotos.filter(f => f.item !== item.codigo);
+    orden.extra.fotos = orden.extra.fotos.filter(f => {
+      if (!f) return false;
+      if (f.itemId) return f.itemId !== item.id;
+      return f.item !== item.codigo;
+    });
     orden.extra.fotos.push(fotoData);
     await persist();
     await db.saveOrden(orden);
