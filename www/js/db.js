@@ -460,7 +460,6 @@ function egressMeta() {
       clientsFull: false,
       dashboardLoaded: false,
       libraryLoaded: false,
-      agendaLoaded: false,
       fullOperationalLoaded: false,
       configFull: false,
       productionDates: {},
@@ -475,6 +474,7 @@ function egressMeta() {
       agendaHasMore: { hoy: true, atrasados: true, programados: true },
       agendaOverdueFrom: null,
       agendaOverdueTo: null,
+      agendaOldestOverdue: null,
       iaRecentLoaded: false
     };
   }
@@ -1204,10 +1204,17 @@ export async function loadAgendaData(days = 7, { reset = false } = {}) {
       m.agendaDays = n;
     }
 
-    const [todayRes, overdueRes, upcomingRes] = await Promise.all([
+    const [todayRes, overdueRes, upcomingRes, oldestRes] = await Promise.all([
       fetchAgendaItemsRange({ desde: hoy, hasta: hoy, limit: 20, offset: 0, ascending: true }),
       fetchAgendaItemsRange({ desde: m.agendaOverdueFrom, hasta: m.agendaOverdueTo, limit: 20, offset: 0, ascending: false }),
-      fetchAgendaItemsRange({ desde: dateShiftISO(hoy, 1), hasta: dateShiftISO(hoy, n), limit: 20, offset: 0, ascending: true })
+      fetchAgendaItemsRange({ desde: dateShiftISO(hoy, 1), hasta: dateShiftISO(hoy, n), limit: 20, offset: 0, ascending: true }),
+      supabase.from('orden_items')
+        .select('fecha_entrega_estimada')
+        .eq('tenant_id', tenantId())
+        .eq('entregado', false)
+        .lt('fecha_entrega_estimada', hoy)
+        .order('fecha_entrega_estimada', { ascending:true })
+        .limit(1)
     ]);
     m.agendaRows.hoy = todayRes.rows;
     m.agendaRows.atrasados = overdueRes.rows;
@@ -1215,8 +1222,12 @@ export async function loadAgendaData(days = 7, { reset = false } = {}) {
     m.agendaOffsets.hoy = todayRes.fetched;
     m.agendaOffsets.atrasados = overdueRes.fetched;
     m.agendaOffsets.programados = upcomingRes.fetched;
+    m.agendaOldestOverdue = (!oldestRes.error && oldestRes.data && oldestRes.data[0])
+      ? oldestRes.data[0].fecha_entrega_estimada
+      : null;
     m.agendaHasMore.hoy = todayRes.fetched >= 20;
-    m.agendaHasMore.atrasados = overdueRes.fetched >= 20 || true;
+    m.agendaHasMore.atrasados = overdueRes.fetched >= 20
+      || !!(m.agendaOldestOverdue && m.agendaOldestOverdue < m.agendaOverdueFrom);
     m.agendaHasMore.programados = upcomingRes.fetched >= 20;
     m.agendaLoaded = true;
     return { ok: true, ...getAgendaData() };
@@ -1277,7 +1288,8 @@ export async function loadMoreAgenda(kind, limit = 20) {
         m.agendaOverdueTo = oldTo;
         m.agendaOffsets.atrasados = older.fetched;
         m.agendaRows.atrasados = mergeAgendaRows(m.agendaRows.atrasados, older.rows);
-        m.agendaHasMore.atrasados = older.fetched > 0 || oldFrom > '2000-01-01';
+        m.agendaHasMore.atrasados = older.fetched >= safe
+          || !!(m.agendaOldestOverdue && m.agendaOldestOverdue < oldFrom);
       } else {
         m.agendaHasMore.atrasados = true;
       }
@@ -1289,17 +1301,27 @@ export async function loadMoreAgenda(kind, limit = 20) {
   }
 }
 
-export async function loadFinancialRange(desde, hasta) {
+export async function loadFinancialRange(desde, hasta, opts = {}) {
   if (!online() || !tenantId() || !desde || !hasta) return { error: 'RANGE_REQUIRED', orders: [], gastos: [] };
   try {
+    let orderQuery = supabase.from('ordenes')
+      .select(EG_ORDER_REPORT_COLS)
+      .eq('tenant_id', tenantId())
+      .or('extra->>eliminada.is.null,extra->>eliminada.eq.false');
+    if (opts.mode === 'finance') {
+      // Finanzas conserva la semántica anterior: fecha de pago si existe;
+      // para órdenes sin pago registrado se usa fecha de ingreso.
+      orderQuery = orderQuery.or(
+        'and(fecha_pago.gte.' + desde + ',fecha_pago.lte.' + hasta + '),' +
+        'and(fecha_pago.is.null,fecha_ingreso.gte.' + desde + ',fecha_ingreso.lte.' + hasta + ')'
+      );
+    } else {
+      orderQuery = orderQuery.gte('fecha_ingreso', desde).lte('fecha_ingreso', hasta);
+    }
+    orderQuery = orderQuery.order('numero', { ascending:false });
+
     const [ordRes, gasRes] = await Promise.all([
-      supabase.from('ordenes')
-        .select(EG_ORDER_REPORT_COLS)
-        .eq('tenant_id', tenantId())
-        .or('extra->>eliminada.is.null,extra->>eliminada.eq.false')
-        .gte('fecha_ingreso', desde)
-        .lte('fecha_ingreso', hasta)
-        .order('numero', { ascending: false }),
+      orderQuery,
       supabase.from('gastos')
         .select('id,categoria,monto,fecha,descripcion')
         .eq('tenant_id', tenantId())
@@ -1375,6 +1397,7 @@ export async function loadInitialDataForRole() {
     meta.agendaRows = { hoy: [], atrasados: [], programados: [] };
     meta.agendaOffsets = { hoy: 0, atrasados: 0, programados: 0 };
     meta.agendaHasMore = { hoy: true, atrasados: true, programados: true };
+    meta.agendaOldestOverdue = null;
     meta.iaRecentLoaded = false;
 
     const common = [
