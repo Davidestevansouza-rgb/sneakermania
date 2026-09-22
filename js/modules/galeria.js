@@ -255,7 +255,19 @@ function carpetasGaleria() {
     migrateLegacyFotos(o);
     const fotos = (o.extra && Array.isArray(o.extra.fotos)) ? o.extra.fotos : [];
     fotos.forEach(f => {
-      const it = f.itemId ? itemPorId.get(f.itemId) : null;
+      if (!f) return;
+      let it = null;
+      if (f.itemId) {
+        // Si existe itemId, el UUID es autoritativo. Una referencia a un
+        // artículo viejo no puede reaparecer como "foto general".
+        it = itemPorId.get(f.itemId) || null;
+        if (!it) return;
+      } else if (f.item) {
+        // Compatibilidad legacy: solo las referencias SIN itemId pueden
+        // resolverse por código.
+        it = itemPorCodigo.get(f.item) || null;
+        if (!it) return;
+      }
       agregar(asegurar(o.id, o), f, it ? it.codigo : null);
     });
   });
