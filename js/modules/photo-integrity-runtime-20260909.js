@@ -127,8 +127,14 @@ async function renderFotosInicialesEnGaleria() {
   }
 
   const item = itemFiltradoPorUI(orden.id);
+  const itemsActuales = (state.ordenItems || []).filter(it => it.ordenId === orden.id);
   let fotos = Array.isArray(orden.extra?.fotos)
-    ? orden.extra.fotos.filter(f => f && f.categoria === 'item_inicial')
+    ? orden.extra.fotos.filter(f => {
+        if (!f || f.categoria !== 'item_inicial') return false;
+        if (f.itemId) return itemsActuales.some(it => it.id === f.itemId);
+        if (f.item) return itemsActuales.some(it => it.codigo === f.item);
+        return true;
+      })
     : [];
   if (item) fotos = fotos.filter(f => f && (f.itemId ? f.itemId === item.id : f.item === item.codigo));
 
