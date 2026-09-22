@@ -70,7 +70,7 @@ export async function renderFinanzas() {
   const status = document.getElementById('fin-range-status');
   if (_finRangeKey !== key && navigator.onLine) {
     if (status) status.textContent = 'Cargando movimientos del rango…';
-    const res = await db.loadFinancialRange(r.desde, r.hasta);
+    const res = await db.loadFinancialRange(r.desde, r.hasta, { mode:'finance' });
     if (seq !== _finRenderSeq) return;
     if (!res || res.error) {
       if (status) status.textContent = 'No se pudo cargar el rango. Revisa la conexión.';
