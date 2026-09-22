@@ -130,7 +130,7 @@ async function renderFotosInicialesEnGaleria() {
   let fotos = Array.isArray(orden.extra?.fotos)
     ? orden.extra.fotos.filter(f => f && f.categoria === 'item_inicial')
     : [];
-  if (item) fotos = fotos.filter(f => f.itemId === item.id || f.item === item.codigo);
+  if (item) fotos = fotos.filter(f => f && (f.itemId ? f.itemId === item.id : f.item === item.codigo));
 
   const signature = [orden.id, item?.id || 'ALL', ...fotos.map(fotoKeyLocal)].join('|');
   if (existente?.dataset.signature === signature) return;
