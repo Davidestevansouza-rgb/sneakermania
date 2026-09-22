@@ -444,6 +444,7 @@ export const deleteOrdenItem = (id) => pushDelete('orden_items', id);
 const EG_CLIENT_COLS = 'id,nombre,telefono,whatsapp,email,direccion,rfc,observaciones,eliminada,created_at';
 const EG_ORDER_COLS = 'id,numero,cliente_id,marca,modelo,tipo_calzado,color,material,talla,cantidad_pares,estado_calzado,tratamiento_sugerido,tipos_servicio,prioridad,estado,observaciones,responsable,fecha_ingreso,fecha_estimada,fecha_entrega,precio,descuento,pagado,pagado_qr,pagado_efectivo,metodo_pago,fecha_pago,estado_pago,ia_resultado,ia_confianza,timeline_index,timeline_dates,control_calidad,firma_ingreso,firma_retiro,firma_recepcionista,entregado,extra';
 const EG_ORDER_SLIM_COLS = 'id,numero,cliente_id,prioridad,estado,responsable,fecha_ingreso,fecha_estimada,fecha_entrega,precio,descuento,pagado,pagado_qr,pagado_efectivo,metodo_pago,fecha_pago,estado_pago,cantidad_pares,entregado';
+const EG_ORDER_REPORT_COLS = 'id,numero,cliente_id,marca,modelo,tipo_calzado,color,material,talla,cantidad_pares,tipos_servicio,prioridad,estado,responsable,fecha_ingreso,fecha_estimada,fecha_entrega,precio,descuento,pagado,pagado_qr,pagado_efectivo,metodo_pago,fecha_pago,estado_pago,entregado';
 const EG_ITEM_COLS = 'id,orden_id,numero_item,codigo,descripcion,estado,tipo_servicio,responsable,fecha_ingreso,fecha_entrega_estimada,precio,entregado,fecha_entrega,marca,modelo,tipo_calzado,color,material,estado_calzado,tratamiento_sugerido,timeline_index,timeline_dates,control_calidad,biblioteca,registro_servicios';
 const EG_PARES_COLS = 'id,empleado,fecha,pares,foto_url,foto_urls,usuario_id,codigo,servicio,hora,observacion,created_at';
 const EG_CONFIG_MIN_COLS = 'tenant_id,nombre_negocio,whatsapp_negocio,email_negocio,prefijo_factura,mensaje_whatsapp_template,color_primario,moneda,simbolo_moneda,siguiente_orden,siguiente_factura,logo_url,updated_at';
@@ -523,6 +524,18 @@ function ordenSlimFromDb(r) {
     extra: { fotos: [] },
     _egressSlim: true
   };
+}
+
+function ordenReportFromDb(r) {
+  const o = ordenSlimFromDb(r);
+  o.marca = r.marca || '';
+  o.modelo = r.modelo || '';
+  o.tipoCalzado = r.tipo_calzado || '';
+  o.color = r.color || '';
+  o.material = r.material || '';
+  o.talla = r.talla || '';
+  o.tipoServicio = Array.isArray(r.tipos_servicio) ? r.tipos_servicio : (r.tipos_servicio || []);
+  return o;
 }
 
 function mergeSlimOrdersIntoState(incoming) {
@@ -1281,7 +1294,7 @@ export async function loadFinancialRange(desde, hasta) {
   try {
     const [ordRes, gasRes] = await Promise.all([
       supabase.from('ordenes')
-        .select(EG_ORDER_SLIM_COLS)
+        .select(EG_ORDER_REPORT_COLS)
         .eq('tenant_id', tenantId())
         .or('extra->>eliminada.is.null,extra->>eliminada.eq.false')
         .gte('fecha_ingreso', desde)
@@ -1296,7 +1309,7 @@ export async function loadFinancialRange(desde, hasta) {
     ]);
     if (ordRes.error) throw ordRes.error;
     if (gasRes.error) throw gasRes.error;
-    const orders = (ordRes.data || []).map(ordenSlimFromDb);
+    const orders = (ordRes.data || []).map(ordenReportFromDb);
     const gastos = (gasRes.data || []).map(gastoFromDb);
     mergeSlimOrdersIntoState(orders);
     state.gastos = mergeById(state.gastos || [], gastos);
