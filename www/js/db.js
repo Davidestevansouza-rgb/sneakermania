@@ -444,6 +444,7 @@ export const deleteOrdenItem = (id) => pushDelete('orden_items', id);
 const EG_CLIENT_COLS = 'id,nombre,telefono,whatsapp,email,direccion,rfc,observaciones,eliminada,created_at';
 const EG_ORDER_COLS = 'id,numero,cliente_id,marca,modelo,tipo_calzado,color,material,talla,cantidad_pares,estado_calzado,tratamiento_sugerido,tipos_servicio,prioridad,estado,observaciones,responsable,fecha_ingreso,fecha_estimada,fecha_entrega,precio,descuento,pagado,pagado_qr,pagado_efectivo,metodo_pago,fecha_pago,estado_pago,ia_resultado,ia_confianza,timeline_index,timeline_dates,control_calidad,firma_ingreso,firma_retiro,firma_recepcionista,entregado,extra';
 const EG_ORDER_SLIM_COLS = 'id,numero,cliente_id,prioridad,estado,responsable,fecha_ingreso,fecha_estimada,fecha_entrega,precio,descuento,pagado,pagado_qr,pagado_efectivo,metodo_pago,fecha_pago,estado_pago,cantidad_pares,entregado';
+const EG_ORDER_REPORT_COLS = 'id,numero,cliente_id,marca,modelo,tipo_calzado,color,material,talla,cantidad_pares,tipos_servicio,prioridad,estado,responsable,fecha_ingreso,fecha_estimada,fecha_entrega,precio,descuento,pagado,pagado_qr,pagado_efectivo,metodo_pago,fecha_pago,estado_pago,entregado';
 const EG_ITEM_COLS = 'id,orden_id,numero_item,codigo,descripcion,estado,tipo_servicio,responsable,fecha_ingreso,fecha_entrega_estimada,precio,entregado,fecha_entrega,marca,modelo,tipo_calzado,color,material,estado_calzado,tratamiento_sugerido,timeline_index,timeline_dates,control_calidad,biblioteca,registro_servicios';
 const EG_PARES_COLS = 'id,empleado,fecha,pares,foto_url,foto_urls,usuario_id,codigo,servicio,hora,observacion,created_at';
 const EG_CONFIG_MIN_COLS = 'tenant_id,nombre_negocio,whatsapp_negocio,email_negocio,prefijo_factura,mensaje_whatsapp_template,color_primario,moneda,simbolo_moneda,siguiente_orden,siguiente_factura,logo_url,updated_at';
@@ -459,19 +460,30 @@ function egressMeta() {
       clientsFull: false,
       dashboardLoaded: false,
       libraryLoaded: false,
-      agendaLoaded: false,
       fullOperationalLoaded: false,
       configFull: false,
       productionDates: {},
       galleryPageIds: [],
       galleryCursor: null,
       galleryHasMore: true,
-      galleryInitialized: false
+      galleryInitialized: false,
+      agendaLoaded: false,
+      agendaDays: 7,
+      agendaRows: { hoy: [], atrasados: [], programados: [] },
+      agendaOffsets: { hoy: 0, atrasados: 0, programados: 0 },
+      agendaHasMore: { hoy: true, atrasados: true, programados: true },
+      agendaOverdueFrom: null,
+      agendaOverdueTo: null,
+      agendaOldestOverdue: null,
+      iaRecentLoaded: false
     };
   }
   if (!Array.isArray(state._egress.orderPageIds)) state._egress.orderPageIds = [];
   if (!state._egress.productionDates || typeof state._egress.productionDates !== 'object') state._egress.productionDates = {};
   if (!Array.isArray(state._egress.galleryPageIds)) state._egress.galleryPageIds = [];
+  if (!state._egress.agendaRows || typeof state._egress.agendaRows !== 'object') state._egress.agendaRows = { hoy: [], atrasados: [], programados: [] };
+  if (!state._egress.agendaOffsets || typeof state._egress.agendaOffsets !== 'object') state._egress.agendaOffsets = { hoy: 0, atrasados: 0, programados: 0 };
+  if (!state._egress.agendaHasMore || typeof state._egress.agendaHasMore !== 'object') state._egress.agendaHasMore = { hoy: true, atrasados: true, programados: true };
   return state._egress;
 }
 
@@ -512,6 +524,18 @@ function ordenSlimFromDb(r) {
     extra: { fotos: [] },
     _egressSlim: true
   };
+}
+
+function ordenReportFromDb(r) {
+  const o = ordenSlimFromDb(r);
+  o.marca = r.marca || '';
+  o.modelo = r.modelo || '';
+  o.tipoCalzado = r.tipo_calzado || '';
+  o.color = r.color || '';
+  o.material = r.material || '';
+  o.talla = r.talla || '';
+  o.tipoServicio = Array.isArray(r.tipos_servicio) ? r.tipos_servicio : (r.tipos_servicio || []);
+  return o;
 }
 
 function mergeSlimOrdersIntoState(incoming) {
@@ -839,18 +863,45 @@ async function remoteSearchCandidateOrderIds(text) {
   return [...ids].slice(0, 120);
 }
 
+export async function loadRecentOrderContexts(limit = 20) {
+  if (!online() || !tenantId()) return { error: 'NO_CONNECTION' };
+  try {
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 50));
+    const { data, error } = await supabase.from('ordenes')
+      .select(EG_ORDER_SLIM_COLS)
+      .eq('tenant_id', tenantId())
+      .or('extra->>eliminada.is.null,extra->>eliminada.eq.false')
+      .order('numero', { ascending: false })
+      .limit(safeLimit);
+    if (error) throw error;
+    const orders = (data || []).map(ordenSlimFromDb);
+    mergeSlimOrdersIntoState(orders);
+    await hydrateOrders(orders, { includeProduction: false });
+    egressMeta().iaRecentLoaded = true;
+    return { ok: true, orders };
+  } catch (e) {
+    console.error('No se pudieron cargar órdenes recientes:', e);
+    return { error: e };
+  }
+}
+
 export async function fetchOrderContextById(id) {
   if (!id) return null;
   const rows = await loadOrderContextsByIds([id], { includeProduction: true });
   return rows[0] || (state.ordenes || []).find(o => o.id === id) || null;
 }
 
-export async function searchOrdersGlobal(text, limit = 30) {
+export async function searchOrdersGlobal(text, limit = 30, opts = {}) {
   const norm = normalizeSearch(text);
   if (!norm) return [];
   try {
     const ids = await remoteSearchCandidateOrderIds(norm);
-    await loadOrderContextsByIds(ids, { includeProduction: true });
+    if (opts.slim === true) {
+      const slimOrders = await loadSlimOrderContextsByIds(ids);
+      await hydrateOrders(slimOrders, { includeProduction: false });
+    } else {
+      await loadOrderContextsByIds(ids, { includeProduction: opts.includeProduction !== false });
+    }
     const tokens = norm.split(' ').filter(Boolean);
     const itemsByOrder = new Map();
     (state.ordenItems || []).forEach(it => {
@@ -1084,34 +1135,216 @@ export async function loadBibliotecaDate(fecha) {
   }
 }
 
-export async function loadAgendaData() {
-  const meta = egressMeta();
-  if (meta.agendaLoaded) return { ok: true };
+
+function dateShiftISO(iso, delta) {
+  const d = new Date(String(iso) + 'T12:00:00');
+  if (isNaN(d.getTime())) return iso;
+  d.setDate(d.getDate() + Number(delta || 0));
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+
+async function fetchAgendaItemsRange({ desde, hasta, limit = 20, offset = 0, ascending = true }) {
+  let q = supabase.from('orden_items')
+    .select(EG_ITEM_COLS)
+    .eq('tenant_id', tenantId())
+    .eq('entregado', false)
+    .gte('fecha_entrega_estimada', desde)
+    .lte('fecha_entrega_estimada', hasta)
+    .order('fecha_entrega_estimada', { ascending })
+    .order('codigo', { ascending: true })
+    .range(offset, offset + limit - 1);
+  const { data, error } = await q;
+  if (error) throw error;
+  const items = (data || []).map(itemFromDb);
+  state.ordenItems = mergeById(state.ordenItems || [], items);
+  await loadSlimOrderContextsByIds(items.map(it => it.ordenId));
+  const rows = items.map(it => {
+    const o = (state.ordenes || []).find(x => x.id === it.ordenId);
+    if (!o || o.estado === 'Entregado' || it.entregado) return null;
+    const c = (state.clientes || []).find(x => x.id === o.clienteId);
+    return {
+      key: it.id,
+      ordenNum: o.numero,
+      ordenId: o.id,
+      cliente: c ? c.nombre : 'Cliente',
+      codigo: it.codigo,
+      tipoServicio: it.tipoServicio || '',
+      fecha: it.fechaEntregaEstimada || o.fechaEstimada || '',
+      estado: it.estado || o.estado
+    };
+  }).filter(Boolean);
+  return { rows, fetched: (data || []).length };
+}
+
+function mergeAgendaRows(base, incoming) {
+  const map = new Map((base || []).map(r => [r.key || (r.ordenId + ':' + r.codigo), r]));
+  (incoming || []).forEach(r => map.set(r.key || (r.ordenId + ':' + r.codigo), r));
+  return Array.from(map.values());
+}
+
+export function getAgendaData() {
+  const m = egressMeta();
+  return {
+    rows: m.agendaRows || { hoy: [], atrasados: [], programados: [] },
+    hasMore: m.agendaHasMore || { hoy: false, atrasados: false, programados: false },
+    days: m.agendaDays || 7
+  };
+}
+
+export async function loadAgendaData(days = 7, { reset = false } = {}) {
+  if (!online() || !tenantId()) return { error: 'NO_CONNECTION' };
+  const m = egressMeta();
+  const hoy = todayISO(0);
+  const n = Math.max(1, Math.min(Number(days) || 7, 7));
   try {
-    const [itemsRes, ordersRes] = await Promise.all([
+    if (reset || !m.agendaLoaded) {
+      m.agendaRows = { hoy: [], atrasados: [], programados: [] };
+      m.agendaOffsets = { hoy: 0, atrasados: 0, programados: 0 };
+      m.agendaHasMore = { hoy: true, atrasados: true, programados: true };
+      m.agendaOverdueTo = dateShiftISO(hoy, -1);
+      m.agendaOverdueFrom = dateShiftISO(hoy, -10);
+      m.agendaDays = n;
+    }
+
+    const [todayRes, overdueRes, upcomingRes, oldestRes] = await Promise.all([
+      fetchAgendaItemsRange({ desde: hoy, hasta: hoy, limit: 20, offset: 0, ascending: true }),
+      fetchAgendaItemsRange({ desde: m.agendaOverdueFrom, hasta: m.agendaOverdueTo, limit: 20, offset: 0, ascending: false }),
+      fetchAgendaItemsRange({ desde: dateShiftISO(hoy, 1), hasta: dateShiftISO(hoy, n), limit: 20, offset: 0, ascending: true }),
       supabase.from('orden_items')
-        .select(EG_ITEM_COLS)
+        .select('fecha_entrega_estimada')
         .eq('tenant_id', tenantId())
         .eq('entregado', false)
-        .not('fecha_entrega_estimada', 'is', null),
-      supabase.from('ordenes')
-        .select(EG_ORDER_SLIM_COLS)
-        .eq('tenant_id', tenantId())
-        .or('extra->>eliminada.is.null,extra->>eliminada.eq.false')
-        .neq('estado', 'Entregado')
+        .lt('fecha_entrega_estimada', hoy)
+        .order('fecha_entrega_estimada', { ascending:true })
+        .limit(1)
     ]);
-    if (itemsRes.error) throw itemsRes.error;
-    if (ordersRes.error) throw ordersRes.error;
-    const items = (itemsRes.data || []).map(itemFromDb);
-    const orders = (ordersRes.data || []).map(ordenSlimFromDb);
-    state.ordenItems = mergeById(state.ordenItems || [], items);
-    mergeSlimOrdersIntoState(orders);
-    await loadClientsByIds(orders.map(o => o.clienteId));
-    meta.agendaLoaded = true;
-    return { ok: true };
+    m.agendaRows.hoy = todayRes.rows;
+    m.agendaRows.atrasados = overdueRes.rows;
+    m.agendaRows.programados = upcomingRes.rows;
+    m.agendaOffsets.hoy = todayRes.fetched;
+    m.agendaOffsets.atrasados = overdueRes.fetched;
+    m.agendaOffsets.programados = upcomingRes.fetched;
+    m.agendaOldestOverdue = (!oldestRes.error && oldestRes.data && oldestRes.data[0])
+      ? oldestRes.data[0].fecha_entrega_estimada
+      : null;
+    m.agendaHasMore.hoy = todayRes.fetched >= 20;
+    m.agendaHasMore.atrasados = overdueRes.fetched >= 20
+      || !!(m.agendaOldestOverdue && m.agendaOldestOverdue < m.agendaOverdueFrom);
+    m.agendaHasMore.programados = upcomingRes.fetched >= 20;
+    m.agendaLoaded = true;
+    return { ok: true, ...getAgendaData() };
   } catch (e) {
     console.error('No se pudo cargar Agenda:', e);
     return { error: e };
+  }
+}
+
+export async function reloadAgendaProgramados(days = 7) {
+  if (!online() || !tenantId()) return { error: 'NO_CONNECTION' };
+  const m = egressMeta();
+  const hoy = todayISO(0);
+  const n = Math.max(1, Math.min(Number(days) || 7, 7));
+  try {
+    const r = await fetchAgendaItemsRange({ desde: dateShiftISO(hoy, 1), hasta: dateShiftISO(hoy, n), limit: 20, offset: 0, ascending: true });
+    m.agendaDays = n;
+    m.agendaRows.programados = r.rows;
+    m.agendaOffsets.programados = r.fetched;
+    m.agendaHasMore.programados = r.fetched >= 20;
+    return { ok: true, ...getAgendaData() };
+  } catch (e) {
+    console.error('No se pudieron cargar programados:', e);
+    return { error: e };
+  }
+}
+
+export async function loadMoreAgenda(kind, limit = 20) {
+  if (!online() || !tenantId()) return { error: 'NO_CONNECTION' };
+  const m = egressMeta();
+  const hoy = todayISO(0);
+  const safe = Math.max(1, Math.min(Number(limit) || 20, 30));
+  try {
+    let r;
+    if (kind === 'hoy') {
+      r = await fetchAgendaItemsRange({ desde: hoy, hasta: hoy, limit: safe, offset: m.agendaOffsets.hoy || 0, ascending: true });
+      m.agendaOffsets.hoy += r.fetched;
+      m.agendaRows.hoy = mergeAgendaRows(m.agendaRows.hoy, r.rows);
+      m.agendaHasMore.hoy = r.fetched >= safe;
+    } else if (kind === 'programados') {
+      r = await fetchAgendaItemsRange({ desde: dateShiftISO(hoy, 1), hasta: dateShiftISO(hoy, m.agendaDays || 7), limit: safe, offset: m.agendaOffsets.programados || 0, ascending: true });
+      m.agendaOffsets.programados += r.fetched;
+      m.agendaRows.programados = mergeAgendaRows(m.agendaRows.programados, r.rows);
+      m.agendaHasMore.programados = r.fetched >= safe;
+    } else if (kind === 'atrasados') {
+      r = await fetchAgendaItemsRange({ desde: m.agendaOverdueFrom, hasta: m.agendaOverdueTo, limit: safe, offset: m.agendaOffsets.atrasados || 0, ascending: false });
+      if (r.fetched > 0) {
+        m.agendaOffsets.atrasados += r.fetched;
+        m.agendaRows.atrasados = mergeAgendaRows(m.agendaRows.atrasados, r.rows);
+      }
+      if (r.fetched < safe) {
+        // Al agotar los últimos 10 días, un nuevo scroll abre otros 10 días
+        // hacia atrás. No se pierde ningún atraso antiguo.
+        const oldTo = dateShiftISO(m.agendaOverdueFrom, -1);
+        const oldFrom = dateShiftISO(m.agendaOverdueFrom, -10);
+        const older = await fetchAgendaItemsRange({ desde: oldFrom, hasta: oldTo, limit: safe, offset: 0, ascending: false });
+        m.agendaOverdueFrom = oldFrom;
+        m.agendaOverdueTo = oldTo;
+        m.agendaOffsets.atrasados = older.fetched;
+        m.agendaRows.atrasados = mergeAgendaRows(m.agendaRows.atrasados, older.rows);
+        m.agendaHasMore.atrasados = older.fetched >= safe
+          || !!(m.agendaOldestOverdue && m.agendaOldestOverdue < oldFrom);
+      } else {
+        m.agendaHasMore.atrasados = true;
+      }
+    }
+    return { ok: true, ...getAgendaData() };
+  } catch (e) {
+    console.error('No se pudo ampliar Agenda:', e);
+    return { error: e };
+  }
+}
+
+export async function loadFinancialRange(desde, hasta, opts = {}) {
+  if (!online() || !tenantId() || !desde || !hasta) return { error: 'RANGE_REQUIRED', orders: [], gastos: [] };
+  try {
+    let orderQuery = supabase.from('ordenes')
+      .select(EG_ORDER_REPORT_COLS)
+      .eq('tenant_id', tenantId())
+      .or('extra->>eliminada.is.null,extra->>eliminada.eq.false');
+    if (opts.mode === 'finance') {
+      // Finanzas conserva la semántica anterior: fecha de pago si existe;
+      // para órdenes sin pago registrado se usa fecha de ingreso.
+      orderQuery = orderQuery.or(
+        'and(fecha_pago.gte.' + desde + ',fecha_pago.lte.' + hasta + '),' +
+        'and(fecha_pago.is.null,fecha_ingreso.gte.' + desde + ',fecha_ingreso.lte.' + hasta + ')'
+      );
+    } else {
+      orderQuery = orderQuery.gte('fecha_ingreso', desde).lte('fecha_ingreso', hasta);
+    }
+    orderQuery = orderQuery.order('numero', { ascending:false });
+
+    const [ordRes, gasRes] = await Promise.all([
+      orderQuery,
+      supabase.from('gastos')
+        .select('id,categoria,monto,fecha,descripcion')
+        .eq('tenant_id', tenantId())
+        .gte('fecha', desde)
+        .lte('fecha', hasta)
+        .order('fecha', { ascending: false })
+    ]);
+    if (ordRes.error) throw ordRes.error;
+    if (gasRes.error) throw gasRes.error;
+    const orders = (ordRes.data || []).map(ordenReportFromDb);
+    const gastos = (gasRes.data || []).map(gastoFromDb);
+    mergeSlimOrdersIntoState(orders);
+    state.gastos = mergeById(state.gastos || [], gastos);
+    await loadClientsByIds(orders.map(o => o.clienteId));
+    return { ok: true, orders, gastos };
+  } catch (e) {
+    console.error('No se pudo cargar el rango financiero:', e);
+    return { error: e, orders: [], gastos: [] };
   }
 }
 
@@ -1164,6 +1397,13 @@ export async function loadInitialDataForRole() {
     meta.galleryCursor = null;
     meta.galleryHasMore = true;
     meta.galleryInitialized = false;
+    meta.agendaLoaded = false;
+    meta.agendaDays = 7;
+    meta.agendaRows = { hoy: [], atrasados: [], programados: [] };
+    meta.agendaOffsets = { hoy: 0, atrasados: 0, programados: 0 };
+    meta.agendaHasMore = { hoy: true, atrasados: true, programados: true };
+    meta.agendaOldestOverdue = null;
+    meta.iaRecentLoaded = false;
 
     const common = [
       loadProductionDate(todayISO(0), { ownOnly: role === 'Empleado' }),
@@ -1175,9 +1415,6 @@ export async function loadInitialDataForRole() {
       common.push(supabase.from('notificaciones')
         .select('id,tipo,texto,leida,prioridad,orden_id,inventario_id,dedupe_key,created_at')
         .eq('tenant_id', tenantId()).eq('leida', false).order('created_at', { ascending: false }).limit(100));
-      common.push(supabase.from('facturas')
-        .select('id,numero,orden_id,cliente_id,nombre_cliente,total,created_at')
-        .eq('tenant_id', tenantId()));
     }
     if (role === 'Administrador') {
       common.push(supabase.from('actividad_log')
@@ -1195,15 +1432,10 @@ export async function loadInitialDataForRole() {
     if (role !== 'Empleado') {
       idx++; // loadDashboardData()
       const notif = results[idx++];
-      const fact = results[idx++];
       if (notif && !notif.error) state.notificaciones = (notif.data || []).map(n => ({
         id:n.id, tipo:n.tipo, texto:n.texto, leida:!!n.leida, prioridad:n.prioridad || 'Media',
         ordenId:n.orden_id || null, inventarioId:n.inventario_id || null,
         dedupeKey:n.dedupe_key || null, fecha:n.created_at
-      }));
-      if (fact && !fact.error) state.facturas = (fact.data || []).map(f => ({
-        id:f.id, numero:f.numero, ordenId:f.orden_id || null, clienteId:f.cliente_id || null,
-        nombreCliente:f.nombre_cliente, total:Number(f.total || 0), fecha:f.created_at
       }));
     }
     if (role === 'Administrador') {
@@ -1230,21 +1462,12 @@ export async function ensureTabData(tab) {
     else if (tab === 'galeria' && !meta.galleryInitialized) await loadGalleryPage(20, { reset: true });
     else if (tab === 'produccion' && !meta.productionDates[todayISO(0)]) await loadProductionDate(todayISO(0), { ownOnly: state.session?.role === 'Empleado' });
     else if (tab === 'biblioteca') await loadBibliotecaCurrent();
-    else if (tab === 'agenda') await loadAgendaData();
+    else if (tab === 'agenda' && !meta.agendaLoaded) await loadAgendaData(7, { reset: true });
+    else if (tab === 'ia' && !meta.iaRecentLoaded) await loadRecentOrderContexts(20);
     else if (tab === 'configuracion' || tab === 'seguridad') await loadFullConfig();
-    else if (['consulta','ia','finanzas','facturas','reportes'].includes(tab) && !meta.fullOperationalLoaded) {
-      // Estas pantallas todavía dependen de colecciones históricas completas.
-      // Se conserva su comportamiento exacto, pero el costo se paga solo si
-      // el usuario realmente abre una de ellas.
-      const ok = await loadAllData();
-      if (ok) {
-        meta.fullOperationalLoaded = true;
-        meta.orderPageIds = (state.ordenes || []).map(o => o.id);
-        meta.orderHasMore = false;
-        meta.clientsFull = true;
-        meta.dashboardLoaded = true;
-      }
-    }
+    // Consulta, Finanzas y Reportes consultan únicamente cuando el usuario
+    // escribe/busca o elige un rango. Facturas permanece desactivada.
+
     return true;
   } catch (e) {
     console.error('No se pudo preparar la pestaña ' + tab + ':', e);

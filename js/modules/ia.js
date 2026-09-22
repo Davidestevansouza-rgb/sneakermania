@@ -20,6 +20,8 @@ import { itemsDeOrden } from './ordenes.js';
 // Variables con ámbito de módulo (reemplazan las globales).
 let iaPendingFile = null;
 let iaResult = null;
+let _iaSearchTimer = null;
+let _iaSearchSeq = 0;
 
 export function populateIaOrderSelect() {
   const hidden = document.getElementById('ia-orden-target');
@@ -43,18 +45,21 @@ function limpiarIaResultados() {
  * coincidan por separado — para que sea fácil elegir el par exacto
  * cuando una orden tiene varios.
  */
-export function filtrarIaOrdenes(texto) {
+
+function pintarIaOrdenesLocal(texto) {
   const cont = document.getElementById('ia-orden-results');
   if (!cont) return;
   const q = (texto || '').trim().toLowerCase();
 
-  const base = q ? state.ordenes.filter(o => {
-    const c = clienteById(o.clienteId);
-    const cliente = (c ? c.nombre : '').toLowerCase();
-    const whatsapp = (c && c.whatsapp || '').toLowerCase();
-    const numCliente = c ? String(c.telefono || '') : '';
-    return cliente.includes(q) || String(o.numero).includes(q) || whatsapp.includes(q) || numCliente.includes(q);
-  }) : state.ordenes.slice();
+  const base = q ? (state.ordenes || []).filter(o => {
+    const cli = clienteById(o.clienteId);
+    const cliente = (cli ? cli.nombre : '').toLowerCase();
+    const whatsapp = (cli && cli.whatsapp || '').toLowerCase();
+    const numCliente = cli ? String(cli.telefono || '') : '';
+    const items = itemsDeOrden(o.id);
+    const itemText = items.flatMap(it => [it.codigo,it.descripcion,it.marca,it.modelo,it.talla,it.color]).filter(Boolean).join(' ').toLowerCase();
+    return cliente.includes(q) || String(o.numero).includes(q) || whatsapp.includes(q) || numCliente.includes(q) || itemText.includes(q);
+  }) : (state.ordenes || []).slice();
 
   const rank = o => {
     const cliente = clienteNombre(o.clienteId).toLowerCase();
@@ -63,21 +68,19 @@ export function filtrarIaOrdenes(texto) {
     if (String(o.numero).startsWith(q)) return 1;
     return 2;
   };
-  const ordenesOrdenadas = base.sort((a, b) => rank(a) - rank(b) || b.numero - a.numero).slice(0, 12);
+  const ordenesOrdenadas = base.sort((a, b) => rank(a) - rank(b) || b.numero - a.numero).slice(0, 20);
 
-  // Cada orden se expande a sus pares — un resultado por precinto,
-  // no uno por orden, para que el registro vaya directo al par correcto.
   const filas = [];
   ordenesOrdenadas.forEach(o => {
-    const c = clienteById(o.clienteId);
-    const clienteLabel = (c ? c.nombre : 'Cliente') + (c && c.telefono ? ' (Tel. ' + c.telefono + ')' : '');
+    const cli = clienteById(o.clienteId);
+    const clienteLabel = (cli ? cli.nombre : 'Cliente') + (cli && cli.telefono ? ' (Tel. ' + cli.telefono + ')' : '');
     const items = itemsDeOrden(o.id);
     if (items.length) {
       items.forEach(it => {
-        filas.push({ ordenId: o.id, itemId: it.id, label: '<strong>' + escHtml(it.codigo) + '</strong> · ' + escHtml(clienteLabel) + (it.descripcion ? ' · ' + escHtml(it.descripcion) : '') });
+        filas.push({ ordenId:o.id, itemId:it.id, label:'<strong>' + escHtml(it.codigo) + '</strong> · ' + escHtml(clienteLabel) + (it.descripcion ? ' · ' + escHtml(it.descripcion) : '') });
       });
     } else {
-      filas.push({ ordenId: o.id, itemId: '', label: '<strong>#' + escHtml(o.numero) + '</strong> · ' + escHtml(clienteLabel) + ' <span class="hint">(sin artículos registrados todavía)</span>' });
+      filas.push({ ordenId:o.id, itemId:'', label:'<strong>#' + escHtml(o.numero) + '</strong> · ' + escHtml(clienteLabel) + ' <span class="hint">(sin artículos registrados todavía)</span>' });
     }
   });
 
@@ -86,9 +89,32 @@ export function filtrarIaOrdenes(texto) {
   ).join('') : '<div class="combo-empty">Sin resultados</div>';
 }
 
+export function filtrarIaOrdenes(texto) {
+  const q = String(texto || '').trim();
+  pintarIaOrdenesLocal(q);
+  clearTimeout(_iaSearchTimer);
+  if (!q) {
+    _iaSearchSeq++;
+    return;
+  }
+  const seq = ++_iaSearchSeq;
+  _iaSearchTimer = setTimeout(async () => {
+    await db.searchOrdersGlobal(q, 20, { slim:true });
+    if (seq !== _iaSearchSeq) return;
+    const actual = String(document.getElementById('ia-orden-search')?.value || '').trim();
+    if (actual !== q) return;
+    pintarIaOrdenesLocal(q);
+  }, 320);
+}
+
 /** Selecciona un par (o, si la orden todavía no tiene pares, la orden entera). */
-export function seleccionarIaOrden(ordenId, itemId) {
-  const o = ordenById(ordenId);
+export async function seleccionarIaOrden(ordenId, itemId) {
+  let o = ordenById(ordenId);
+  // Antes de permitir guardar IA, hidratar solo la orden elegida para no
+  // escribir nunca sobre un snapshot parcial.
+  if (navigator.onLine && (!o || o._egressSlim === true)) {
+    o = await db.fetchOrderContextById(ordenId);
+  }
   if (!o) return;
   const c = clienteById(o.clienteId);
   document.getElementById('ia-orden-target').value = ordenId;

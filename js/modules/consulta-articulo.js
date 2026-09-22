@@ -4,6 +4,7 @@
    ============================================================ */
 import { state, tenantId } from '../state.js';
 import { supabase } from '../config.js';
+import * as db from '../db.js';
 import { escHtml, escAttr } from '../sanitize.js';
 import { resolveImageUrl } from '../storage-manager.js';
 
@@ -34,7 +35,11 @@ function fotosDe(o,it,regs){
  const out=[]; const add=u=>{if(u&&!out.includes(u))out.push(u);};
  // Solo fotos del artículo individual. No mezclar fotos generales ni de otros pares.
  const fs=o?.extra?.fotos;
- if(Array.isArray(fs))for(const f of fs){if(String(f?.item||f?.codigo||'')===String(it?.codigo||''))add(f?.url||f?.path);}
+ if(Array.isArray(fs))for(const f of fs){
+   if(!f)continue;
+   const vinculada=f.itemId?String(f.itemId)===String(it?.id):String(f.item||f.codigo||'')===String(it?.codigo||'');
+   if(vinculada)add(f.url||f.path);
+ }
  for(const r of regs)for(const u of(Array.isArray(r.fotoUrls)?r.fotoUrls:[r.fotoUrl]))add(u);
  return out;
 }
@@ -116,6 +121,12 @@ export function abrirOrdenConsulta(id){
 export async function buscarFichaArticulo(){
  const input=document.getElementById('consulta-articulo-q'),cont=document.getElementById('consulta-resultados');if(!input||!cont)return;const q=input.value.trim();
  if(!q){cont.innerHTML='<div class="empty-state">Escribe un número de orden, código, cliente o artículo.</div>';return;}
+ cont.innerHTML='<div class="empty-state">Buscando…</div>';
+ const codigoExacto=/^\d+\s*-\s*\d+$/.test(q)?q.replace(/\s+/g,''):null;
+ if(navigator.onLine){
+   if(codigoExacto) await db.fetchItemContextByCode(codigoExacto);
+   else await db.searchOrdersGlobal(q,30);
+ }
  const rs=resultados(q);if(!rs.length){cont.innerHTML='<div class="empty-state"><strong>Sin resultados</strong><br>No se encontró información para “'+escHtml(q)+'”.</div>';return;}
  const grupos=new Map();rs.forEach(x=>{if(!grupos.has(x.o.id))grupos.set(x.o.id,{o:x.o,c:x.c,items:[]});grupos.get(x.o.id).items.push(x);});
  await Promise.all([...grupos.values()].map(async g=>{g.log=await cargarAuditoria(g.o);}));
