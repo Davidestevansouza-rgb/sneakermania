@@ -441,6 +441,19 @@
             <div><h1 class="page-title">Finanzas</h1><div class="page-sub">Cobros por orden y gastos operativos</div></div>
             <button class="btn btn-teal" id="btn-nuevo-gasto" onclick="openGastoModal()">+ Nuevo gasto</button>
           </div>
+          <div class="panel" style="margin-bottom:14px;">
+            <div class="panel-title">Rango de fechas</div>
+            <div class="hint" style="margin-bottom:10px;">Finanzas no descarga el histórico hasta que elijas una fecha o rango.</div>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+              <div><label class="lbl">Desde</label><input type="date" id="fin-desde" class="input" style="max-width:170px;"></div>
+              <div><label class="lbl">Hasta</label><input type="date" id="fin-hasta" class="input" style="max-width:170px;"></div>
+              <button class="btn btn-ghost" onclick="setFinRange('hoy')">Hoy</button>
+              <button class="btn btn-ghost" onclick="setFinRange('mes')">Este mes</button>
+              <button class="btn btn-ghost" onclick="setFinRange('limpiar')">Limpiar</button>
+              <button class="btn btn-primary" onclick="renderFinanzas()">Aplicar</button>
+            </div>
+          </div>
+          <div id="fin-range-status" class="hint" style="margin-bottom:10px;">Elige una fecha o rango para cargar los movimientos.</div>
           <div class="kpi-grid" id="fin-kpi-grid"></div>
           <div class="panel" style="padding:0;overflow-x:auto;">
             <div class="panel-title" style="padding:16px 20px 0 20px;">Cobros por orden</div>
@@ -563,7 +576,7 @@
           <!-- Filtro de fechas -->
           <div class="panel" style="margin-bottom:14px;">
             <div class="panel-title">Rango de fechas</div>
-            <div class="hint" style="margin-bottom:10px;">El rango se aplica a Órdenes, Finanzas y Gastos. Déjalo vacío para incluir todo.</div>
+            <div class="hint" style="margin-bottom:10px;">El rango se aplica a Órdenes, Finanzas y Gastos. Elige una fecha o rango para consultar; vacío no descarga el histórico.</div>
             <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
               <div><label class="lbl">Desde</label><input type="date" id="rep-desde" class="input" style="max-width:170px;"></div>
               <div><label class="lbl">Hasta</label><input type="date" id="rep-hasta" class="input" style="max-width:170px;"></div>
@@ -574,6 +587,8 @@
               <button class="btn btn-primary" onclick="renderReportes()">Aplicar</button>
             </div>
           </div>
+
+          <div id="rep-range-status" class="hint" style="margin-bottom:10px;">Elige una fecha o rango y presiona Aplicar.</div>
 
           <!-- Resumen financiero del rango -->
           <div class="panel" style="margin-bottom:14px;">
