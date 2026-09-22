@@ -10,78 +10,95 @@ import * as db from '../db.js';
 
 let realtimeChannel = null;
 
-export function renderAgenda() {
-  const today = todayISO(0);
-  const items = state.ordenItems || [];
-  const pares = [];
 
-  items.forEach(it => {
-    const o = state.ordenes.find(x => x.id === it.ordenId);
-    if (!o || o.estado === 'Entregado' || it.entregado) return;
-    const fechaPar = it.fechaEntregaEstimada || o.fechaEstimada;
-    if (!fechaPar) return;
-    pares.push({
-      ordenNum: o.numero,
-      ordenId: o.id,
-      cliente: clienteNombre(o.clienteId),
-      codigo: it.codigo,
-      tipoServicio: it.tipoServicio || '',
-      fecha: fechaPar,
-      estado: it.estado || o.estado
-    });
-  });
+let _agendaObservers = [];
+let _agendaLoadingMore = { hoy:false, atrasados:false, programados:false };
+let _agendaRenderSeq = 0;
 
-  state.ordenes.forEach(o => {
-    if (o.estado === 'Entregado') return;
-    const tieneItems = items.some(it => it.ordenId === o.id);
-    if (!tieneItems && o.fechaEstimada) {
-      pares.push({
-        ordenNum: o.numero,
-        ordenId: o.id,
-        cliente: clienteNombre(o.clienteId),
-        codigo: '#' + o.numero,
-        tipoServicio: '',
-        fecha: o.fechaEstimada,
-        estado: o.estado
-      });
-    }
-  });
+function limpiarAgendaObservers() {
+  _agendaObservers.forEach(o => { try { o.disconnect(); } catch (_) {} });
+  _agendaObservers = [];
+}
 
-  const hoy = pares.filter(p => p.fecha === today);
-  const atrasados = pares.filter(p => p.fecha < today);
+async function cargarMasAgenda(kind) {
+  if (_agendaLoadingMore[kind]) return;
+  _agendaLoadingMore[kind] = true;
+  try {
+    await db.loadMoreAgenda(kind, 20);
+    await renderAgenda(true);
+  } catch (e) {
+    console.error('No se pudo cargar más Agenda:', e);
+  } finally {
+    _agendaLoadingMore[kind] = false;
+  }
+}
+
+function instalarObserverAgenda(id, kind) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.onclick = () => void cargarMasAgenda(kind);
+  if (!('IntersectionObserver' in window)) return;
+  const obs = new IntersectionObserver(entries => {
+    if (entries.some(e => e.isIntersecting)) void cargarMasAgenda(kind);
+  }, { rootMargin:'160px 0px' });
+  obs.observe(el);
+  _agendaObservers.push(obs);
+}
+
+export async function renderAgenda(skipReload = false) {
+  const seq = ++_agendaRenderSeq;
   const diasSel = document.getElementById('agenda-programados-dias');
-  const diasProgramados = diasSel ? Number(diasSel.value) || 7 : 7;
-  const programados = pares.filter(p => {
-    if (!(p.fecha > today)) return false;
-    return (new Date(p.fecha) - new Date(today)) / (1000 * 3600 * 24) <= diasProgramados;
-  }).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const diasProgramados = diasSel ? Math.max(1, Math.min(Number(diasSel.value) || 7, 7)) : 7;
 
-  const renderList = (list, kind) => list.length ? list.map(p => {
-    const diasLabel = kind === 'atrasados'
-      ? ' · ⚠ ' + Math.round((new Date(today) - new Date(p.fecha)) / (1000 * 3600 * 24)) + ' día(s) atrasado'
-      : (kind === 'programados'
-        ? ' · en ' + Math.round((new Date(p.fecha) - new Date(today)) / (1000 * 3600 * 24)) + ' día(s)'
-        : ' · para hoy');
-    const estadoChip = p.estado ? '<span class="hint" style="margin-left:4px;">' + escHtml(p.estado) + '</span>' : '';
-    return '<div class="mini-order" onclick="window.verOrdenDesdeAgenda(\'' + p.ordenId + '\')" style="cursor:pointer;">'
-      + '<strong>' + escHtml(p.codigo) + '</strong> · ' + escHtml(p.cliente)
-      + ' <span class="hint">#' + escHtml(p.ordenNum) + (p.tipoServicio ? ' · ' + escHtml(p.tipoServicio) : '') + '</span>'
-      + '<br><span class="hint">Entrega: ' + fmtDate(p.fecha) + diasLabel + '</span>'
-      + estadoChip
-      + '</div>';
-  }).join('') : '<div class="hint">Sin registros</div>';
+  let data = db.getAgendaData ? db.getAgendaData() : null;
+  if (!skipReload && navigator.onLine && data && Number(data.days || 7) !== diasProgramados) {
+    await db.reloadAgendaProgramados(diasProgramados);
+    if (seq !== _agendaRenderSeq) return;
+    data = db.getAgendaData();
+  }
+  if (!data) {
+    data = { rows:{hoy:[],atrasados:[],programados:[]}, hasMore:{hoy:false,atrasados:false,programados:false}, days:diasProgramados };
+  }
 
-  document.getElementById('agenda-hoy').innerHTML = renderList(hoy, 'hoy');
-  document.getElementById('agenda-atrasados').innerHTML = renderList(atrasados, 'atrasados');
-  document.getElementById('agenda-programados').innerHTML = renderList(programados, 'programados');
+  const today = todayISO(0);
+  const renderList = (list, kind, hasMore) => {
+    const cards = (list || []).map(p => {
+      const diasLabel = kind === 'atrasados'
+        ? ' · ⚠ ' + Math.max(1, Math.round((new Date(today) - new Date(p.fecha)) / (1000 * 3600 * 24))) + ' día(s) atrasado'
+        : (kind === 'programados'
+          ? ' · en ' + Math.max(1, Math.round((new Date(p.fecha) - new Date(today)) / (1000 * 3600 * 24))) + ' día(s)'
+          : ' · para hoy');
+      const estadoChip = p.estado ? '<span class="hint" style="margin-left:4px;">' + escHtml(p.estado) + '</span>' : '';
+      return '<div class="mini-order" onclick="window.verOrdenDesdeAgenda(\'' + p.ordenId + '\')" style="cursor:pointer;">'
+        + '<strong>' + escHtml(p.codigo) + '</strong> · ' + escHtml(p.cliente)
+        + ' <span class="hint">#' + escHtml(p.ordenNum) + (p.tipoServicio ? ' · ' + escHtml(p.tipoServicio) : '') + '</span>'
+        + '<br><span class="hint">Entrega: ' + fmtDate(p.fecha) + diasLabel + '</span>'
+        + estadoChip
+        + '</div>';
+    }).join('');
+    const empty = (list || []).length ? '' : '<div class="hint">Sin registros</div>';
+    const sentinel = hasMore
+      ? '<div id="agenda-more-' + kind + '" class="hint" style="text-align:center;padding:12px;cursor:pointer;">Desplázate para cargar 20 más</div>'
+      : '';
+    return cards + empty + sentinel;
+  };
+
+  limpiarAgendaObservers();
+  document.getElementById('agenda-hoy').innerHTML = renderList(data.rows.hoy, 'hoy', data.hasMore.hoy);
+  document.getElementById('agenda-atrasados').innerHTML = renderList(data.rows.atrasados, 'atrasados', data.hasMore.atrasados);
+  document.getElementById('agenda-programados').innerHTML = renderList(data.rows.programados, 'programados', data.hasMore.programados);
+
+  if (data.hasMore.hoy) instalarObserverAgenda('agenda-more-hoy','hoy');
+  if (data.hasMore.atrasados) instalarObserverAgenda('agenda-more-atrasados','atrasados');
+  if (data.hasMore.programados) instalarObserverAgenda('agenda-more-programados','programados');
 
   const indicator = document.getElementById('realtime-indicator');
   if (indicator) indicator.style.display = realtimeChannel ? 'inline-flex' : 'none';
 
-  const cuenta = atrasados.length;
+  const cuenta = (data.rows.atrasados || []).length;
   if (document.getElementById('tab-agenda')
       && document.getElementById('tab-agenda').classList.contains('active')) {
-    if (cuenta > 0 && cuenta !== ultimoAtrasadosAgenda) pipBeep();
+    if (cuenta > 0 && ultimoAtrasadosAgenda !== null && cuenta > ultimoAtrasadosAgenda) pipBeep();
     ultimoAtrasadosAgenda = cuenta;
   } else {
     ultimoAtrasadosAgenda = cuenta;
@@ -210,7 +227,10 @@ export function startRealtimeAgenda() {
           applyOrdenRealtime(payload);
 
           const agendaTab = document.getElementById('tab-agenda');
-          if (agendaTab && agendaTab.classList.contains('active')) renderAgenda();
+          if (agendaTab && agendaTab.classList.contains('active')) {
+            const dias = Number(document.getElementById('agenda-programados-dias')?.value || 7);
+            void db.loadAgendaData(dias, { reset:true }).then(() => renderAgenda(true));
+          }
           const ordenesTab = document.getElementById('tab-ordenes');
           if (ordenesTab && ordenesTab.classList.contains('active') && window.renderOrdenes) window.renderOrdenes();
           if (window.renderPapeleras) window.renderPapeleras();
