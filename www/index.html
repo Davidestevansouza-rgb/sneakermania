@@ -643,8 +643,8 @@
             <div><h1 class="page-title">Agenda</h1><div class="page-sub">Entregas de hoy, servicios atrasados y programados</div></div>
           </div>
           <div class="agenda-grid">
-            <div class="day-col"><h4>📦 Entregas de hoy</h4><div id="agenda-hoy"></div></div>
-            <div class="day-col"><h4>⚠ Atrasados</h4><div id="agenda-atrasados"></div></div>
+            <div class="day-col"><h4>📦 Entregas de hoy</h4><div class="hint" style="margin-bottom:6px;">20 primero · desliza para cargar más</div><div id="agenda-hoy"></div></div>
+            <div class="day-col"><h4>⚠ Atrasados</h4><div class="hint" style="margin-bottom:6px;">Últimos 10 días primero · 20 por carga · al seguir bajando aparecen atrasos más antiguos</div><div id="agenda-atrasados"></div></div>
             <div class="day-col">
               <h4 style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
                 <span>📅 Programados</span>
@@ -658,6 +658,7 @@
                   <option value="7" selected>Próximos 7 días</option>
                 </select>
               </h4>
+              <div class="hint" style="margin-bottom:6px;">Solo el rango elegido · 20 por carga</div>
               <div id="agenda-programados"></div>
             </div>
           </div>
