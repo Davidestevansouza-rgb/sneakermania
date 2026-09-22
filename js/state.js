@@ -144,12 +144,15 @@ export function esEmpleado() { return rolActual() === 'Empleado'; }
 
 export const TABS_POR_ROL = {
   Administrador: null,
-  Supervisor: ['dashboard', 'clientes', 'ordenes', 'consulta', 'ia', 'galeria', 'produccion', 'biblioteca', 'facturas', 'inventario', 'agenda', 'notificaciones'],
+  Supervisor: ['dashboard', 'clientes', 'ordenes', 'consulta', 'ia', 'galeria', 'produccion', 'biblioteca', 'inventario', 'agenda', 'notificaciones'],
   Empleado: ['produccion', 'galeria', 'agenda', 'inventario']
 };
 
 export function puedeVerTab(tab) {
   const rol = rolActual();
+  // Facturas está desactivada para este negocio. Se conserva el módulo y la
+  // tabla por si vuelve a pedirse, pero no se carga ni se puede abrir.
+  if (tab === 'facturas') return false;
   if (rol === 'Administrador') return true;
   const permitidas = TABS_POR_ROL[rol];
   if (!Array.isArray(permitidas)) return false;
