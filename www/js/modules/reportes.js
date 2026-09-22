@@ -5,12 +5,20 @@
    - Exportación a CSV (Excel) y a PDF con membrete
    ============================================================ */
 import { state } from '../state.js';
+import * as db from '../db.js';
 import { showToast, fmtServicios, clienteNombre, fmtMoney, fmtDate, logActivity } from '../ui.js';
 
 /* ---------- Utilidades de fecha ---------- */
+let _repOrders = [];
+let _repGastos = [];
+let _repRangeKey = '';
+let _repRenderSeq = 0;
+
 function getRange() {
-  const d = (document.getElementById('rep-desde') || {}).value || '';
-  const h = (document.getElementById('rep-hasta') || {}).value || '';
+  let d = (document.getElementById('rep-desde') || {}).value || '';
+  let h = (document.getElementById('rep-hasta') || {}).value || '';
+  if (d && !h) h = d;
+  if (h && !d) d = h;
   return { desde: d || null, hasta: h || null };
 }
 
@@ -50,21 +58,30 @@ export function setRepRange(preset) {
   } else if (preset === 'limpiar') {
     desde.value = ''; hasta.value = '';
   }
-  renderReportes();
+  _repRangeKey = '';
+  void renderReportes();
 }
 
 /* ---------- Datos filtrados ---------- */
 function ordenesFiltradas(r) {
-  return state.ordenes.filter(o => {
-    if (!r.desde && !r.hasta) return true;
-    return inRange(o.fechaIngreso, r);
-  });
+  return (_repOrders || []).filter(o => inRange(o.fechaIngreso, r));
 }
 function gastosFiltrados(r) {
-  return state.gastos.filter(g => {
-    if (!r.desde && !r.hasta) return true;
-    return inRange(g.fecha, r);
-  });
+  return (_repGastos || []).filter(g => inRange(g.fecha, r));
+}
+
+async function asegurarRangoReporte() {
+  const r = getRange();
+  if (!r.desde || !r.hasta) return { ok:false, range:r };
+  const key = r.desde + '|' + r.hasta;
+  if (_repRangeKey !== key) {
+    const res = await db.loadFinancialRange(r.desde, r.hasta);
+    if (!res || res.error) return { ok:false, range:r, error:res && res.error };
+    _repOrders = res.orders || [];
+    _repGastos = res.gastos || [];
+    _repRangeKey = key;
+  }
+  return { ok:true, range:r };
 }
 
 /* ---------- Resumen financiero ---------- */
@@ -85,10 +102,35 @@ function calcResumen(r) {
   };
 }
 
-export function renderReportes() {
+
+export async function renderReportes() {
+  const seq = ++_repRenderSeq;
   const r = getRange();
-  const s = calcResumen(r);
+  const status = document.getElementById('rep-range-status');
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+  if (!r.desde || !r.hasta) {
+    _repOrders = [];
+    _repGastos = [];
+    _repRangeKey = '';
+    set('rep-ingresos', '—');
+    set('rep-gastos', '—');
+    set('rep-utilidad', '—');
+    set('rep-nordenes', '—');
+    set('rep-pendiente', '—');
+    if (status) status.textContent = 'Elige una fecha o rango y presiona Aplicar. No se descarga el histórico mientras esté vacío.';
+    return;
+  }
+
+  if (status) status.textContent = 'Cargando reporte del rango…';
+  const ready = await asegurarRangoReporte();
+  if (seq !== _repRenderSeq) return;
+  if (!ready.ok) {
+    if (status) status.textContent = 'No se pudo cargar el rango. Revisa la conexión.';
+    return;
+  }
+
+  const s = calcResumen(r);
   set('rep-ingresos', fmtMoney(s.ingresos));
   set('rep-gastos', fmtMoney(s.gastos));
   set('rep-utilidad', fmtMoney(s.utilidad));
@@ -96,6 +138,7 @@ export function renderReportes() {
   set('rep-pendiente', fmtMoney(s.pendiente));
   const util = document.getElementById('rep-utilidad');
   if (util) util.style.color = s.utilidad >= 0 ? 'var(--ok,#16a34a)' : '#dc2626';
+  if (status) status.textContent = rangeLabel(r) + ' · ' + s.nordenes + ' orden(es) cargadas.';
 }
 
 /* ---------- Construcción de filas por reporte ---------- */
@@ -103,7 +146,7 @@ function buildRows(kind, r) {
   let rows = [];
   if (kind === 'clientes') {
     rows.push(['Nombre', 'Teléfono', 'WhatsApp', 'Dirección', 'Observaciones', 'N° de órdenes']);
-    state.clientes.forEach(c => rows.push([c.nombre, c.telefono, c.whatsapp, c.direccion, c.observaciones, state.ordenes.filter(o => o.clienteId === c.id).length]));
+    state.clientes.forEach(c => rows.push([c.nombre, c.telefono, c.whatsapp, c.direccion, c.observaciones, (_repOrders || []).filter(o => o.clienteId === c.id).length]));
   } else if (kind === 'ordenes') {
     rows.push(['N° Orden', 'Cliente', 'Ingreso', 'Est. entrega', 'Entrega', 'Marca', 'Modelo', 'Color', 'Talla', 'Material', 'Artículos', 'Servicio', 'Prioridad', 'Estado', 'Responsable']);
     ordenesFiltradas(r).forEach(o => rows.push([o.numero, clienteNombre(o.clienteId), o.fechaIngreso, o.fechaEstimada, o.fechaEntrega, o.marca, o.modelo, o.color, o.talla, o.material, o.cantidadPares, fmtServicios(o.tipoServicio), o.prioridad, o.estado, o.responsable]));
@@ -134,8 +177,14 @@ function downloadCSV(filename, csv) {
   URL.revokeObjectURL(url);
 }
 
-export function exportCSV(kind) {
+
+export async function exportCSV(kind) {
   const r = getRange();
+  if (['ordenes','finanzas','gastos','resumen','clientes'].includes(kind)) {
+    const ready = await asegurarRangoReporte();
+    if (!ready.ok) { showToast('Elige una fecha o rango antes de exportar'); return; }
+  }
+  if (kind === 'clientes') await db.loadAllClients();
   downloadCSV('ses_' + kind + '.csv', toCSV(buildRows(kind, r)));
   logActivity('Exportó reporte CSV de ' + kind);
   showToast('Reporte CSV descargado');
@@ -202,10 +251,15 @@ function drawTable(doc, rows, startY) {
 
 const TITULOS = { clientes: 'Reporte de Clientes', ordenes: 'Reporte de Órdenes', finanzas: 'Reporte Financiero', gastos: 'Reporte de Gastos', inventario: 'Reporte de Inventario', resumen: 'Resumen Financiero' };
 
-export function exportPDF(kind) {
+export async function exportPDF(kind) {
   if (!window.jspdf || !window.jspdf.jsPDF) { showToast('No se pudo cargar el generador de PDF'); return; }
   const { jsPDF } = window.jspdf;
   const r = getRange();
+  if (['ordenes','finanzas','gastos','resumen','clientes'].includes(kind)) {
+    const ready = await asegurarRangoReporte();
+    if (!ready.ok) { showToast('Elige una fecha o rango antes de exportar'); return; }
+  }
+  if (kind === 'clientes') await db.loadAllClients();
   const usaRango = (kind === 'ordenes' || kind === 'finanzas' || kind === 'gastos' || kind === 'resumen');
   const sub = usaRango ? rangeLabel(r) : 'Listado completo · ' + fmtDate(new Date().toISOString().slice(0, 10));
 
