@@ -364,6 +364,8 @@ export async function guardarClienteOrden(btn) {
   const clienteExistenteId = (document.getElementById('nco-cliente-existente') || {}).value || '';
 
   const restore = lockBtn(btn);
+  let ordenConfirmadaEnServidor = false;
+  let ordenConfirmada = null;
   try {
     // 1) Cliente — nuevo, o uno ya registrado (visita recurrente): en ese
     //    caso NO se crea de nuevo, solo se usa para la nueva orden.
@@ -380,15 +382,27 @@ export async function guardarClienteOrden(btn) {
         direccion: document.getElementById('nco-direccion').value.trim(),
         observaciones: document.getElementById('nco-observaciones').value.trim()
       };
+
+      // El alta debe quedar confirmada en Supabase antes de permitir una orden.
+      // No se deja un "cliente fantasma" visible ni una escritura pendiente.
+      const clienteSave = await db.saveCliente(cliente, { allowQueue: false });
+      if (!clienteSave?.ok) {
+        throw (clienteSave?.error || new Error('CLIENT_SAVE_NOT_CONFIRMED'));
+      }
       state.clientes.push(cliente);
       logActivity('Registró nuevo cliente ' + cliente.nombre);
       await persist();
-      const clienteSave = await db.saveCliente(cliente);
-      if (!clienteSave?.ok) {
-        if (clienteSave?.queued) throw new Error('CLIENT_SAVE_PENDING_SYNC');
-        throw (clienteSave?.error || new Error('CLIENT_SAVE_NOT_CONFIRMED'));
-      }
+
+      // Si un paso posterior falla y el usuario reintenta, reutilizar este
+      // cliente ya confirmado en vez de crear un duplicado con otro UUID.
+      const hiddenCliente = document.getElementById('nco-cliente-existente');
+      if (hiddenCliente) hiddenCliente.value = cliente.id;
     }
+
+    // Para clientes elegidos desde memoria, confirmar que la fila existe
+    // realmente en este tenant antes de reservar un número de orden.
+    const clienteConfirmado = await db.clienteExisteConfirmado(cliente.id);
+    if (!clienteConfirmado) throw new Error('CLIENT_NOT_CONFIRMED');
 
     // 2) Orden — usar SIEMPRE el contador atómico de Supabase cuando hay conexión.
     // Esto evita que dos dispositivos/usuarios creen el mismo número de orden.
@@ -425,14 +439,17 @@ export async function guardarClienteOrden(btn) {
       orden.fechaPago = todayISO(0);
       orden.estadoPago = orden.pagado >= valorFinal ? 'Pagado' : 'Parcial';
     }
+    // La orden padre debe quedar confirmada antes de crear ítems o subir fotos.
+    // No se encola una orden nueva: si falla, no queda nada "fantasma" local.
+    const ordenSave = await db.saveOrden(orden, { allowQueue: false });
+    if (!ordenSave?.ok) {
+      throw (ordenSave?.error || new Error('ORDER_SAVE_NOT_CONFIRMED'));
+    }
+    ordenConfirmadaEnServidor = true;
+    ordenConfirmada = orden;
     state.ordenes.push(orden);
     logActivity('Creó orden #' + orden.numero + ' para ' + cliente.nombre);
     await persist();
-    const ordenSave = await db.saveOrden(orden);
-    if (!ordenSave?.ok) {
-      if (ordenSave?.queued) throw new Error('ORDER_SAVE_PENDING_SYNC');
-      throw (ordenSave?.error || new Error('ORDER_SAVE_NOT_CONFIRMED'));
-    }
 
     // 3) Pares (ítems), cada uno con su análisis de IA (editado o no) y su foto.
     if (!Array.isArray(state.ordenItems)) state.ordenItems = [];
@@ -454,9 +471,8 @@ export async function guardarClienteOrden(btn) {
         estadoCalzado: ia.estadoCalzado, tratamientoSugerido: ia.tratamientoSugerido
       };
       state.ordenItems.push(item);
-      const itemSave = await db.saveOrdenItem(item);
+      const itemSave = await db.saveOrdenItem(item, { allowQueue: false });
       if (!itemSave?.ok) {
-        if (itemSave?.queued) throw new Error('ORDER_ITEM_SAVE_PENDING_SYNC');
         state.ordenItems = state.ordenItems.filter(x => x.id !== item.id);
         throw (itemSave?.error || new Error('ORDER_ITEM_SAVE_NOT_CONFIRMED'));
       }
@@ -484,9 +500,8 @@ export async function guardarClienteOrden(btn) {
     }
     orden.cantidadPares = itemsDeOrden(orden.id).length || 1;
     await persist();
-    const ordenFinalSave = await db.saveOrden(orden);
+    const ordenFinalSave = await db.saveOrden(orden, { allowQueue: false });
     if (!ordenFinalSave?.ok) {
-      if (ordenFinalSave?.queued) throw new Error('ORDER_FINAL_SAVE_PENDING_SYNC');
       throw (ordenFinalSave?.error || new Error('ORDER_FINAL_SAVE_NOT_CONFIRMED'));
     }
 
@@ -508,10 +523,20 @@ export async function guardarClienteOrden(btn) {
     abrirExitoClienteOrden(orden.id);
   } catch (e) {
     console.error(e);
-    if (String(e?.message || '').includes('PENDING_SYNC')) {
-      showToast('Guardado pendiente de sincronizar. No repitas el registro; revisa la orden al volver la conexión.');
+    if (e?.message === 'CLIENT_NOT_CONFIRMED') {
+      showToast('Ese cliente todavía no está confirmado en el servidor. No se creó ninguna orden.');
+    } else if (e?.message === 'CLIENT_CONFIRM_REQUIRES_ONLINE' || e?.message === 'ORDER_NUMBER_REQUIRES_ONLINE' || e?.message === 'ONLINE_CONFIRMATION_REQUIRED') {
+      showToast('Se necesita conexión para registrar cliente y orden. No se creó ninguna orden.');
+    } else if (ordenConfirmadaEnServidor && ordenConfirmada) {
+      // La fila padre ya existe: cerrar el alta para impedir que un segundo
+      // toque cree otra orden. Los pasos faltantes pueden completarse desde
+      // la orden ya creada.
+      closeModal('modal-cliente-orden');
+      if (window.renderClientes) window.renderClientes();
+      if (window.renderOrdenes) window.renderOrdenes();
+      showToast('La orden #' + ordenConfirmada.numero + ' sí quedó registrada, pero un paso posterior no terminó. Revísala antes de agregar fotos o artículos faltantes; no vuelvas a crearla.');
     } else {
-      showToast('No se completó el registro. Recarga los datos antes de volver a intentarlo.');
+      showToast('No se completó el registro en el servidor. No se creó ninguna orden; revisa la conexión y reintenta.');
     }
   } finally { restore(); }
 }

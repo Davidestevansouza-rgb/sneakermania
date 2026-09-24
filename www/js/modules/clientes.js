@@ -78,8 +78,11 @@ export async function saveCliente(btn) {
       ? { ...existente, ...data }
       : { ...data, id: crypto.randomUUID() };
 
-    const saveResult = await db.saveCliente(registro);
-    if (!saveResult?.ok && !saveResult?.queued) {
+    // Un cliente NUEVO debe existir realmente en Supabase antes de quedar
+    // disponible para crear órdenes. Las ediciones de clientes ya existentes
+    // conservan la cola offline; un alta nueva no se encola silenciosamente.
+    const saveResult = await db.saveCliente(registro, { allowQueue: !!id });
+    if (!saveResult?.ok && !(id && saveResult?.queued)) {
       throw (saveResult?.error || new Error('CLIENT_SAVE_NOT_CONFIRMED'));
     }
 
@@ -99,7 +102,9 @@ export async function saveCliente(btn) {
       : 'Cliente guardado');
   } catch (e) {
     console.error(e);
-    showToast('No se pudo confirmar el guardado del cliente. Reintenta.');
+    showToast(id
+      ? 'No se pudo confirmar el guardado del cliente. Reintenta.'
+      : 'No se pudo registrar el cliente en el servidor. No quedó habilitado para crear órdenes; revisa la conexión y reintenta.');
   } finally { restore(); }
 }
 

@@ -240,8 +240,13 @@ function isPermanentError(e) {
   return false;
 }
 
-async function pushUpsert(table, row) {
-  if (!online()) { enqueue({ op: 'upsert', table, row }); return { queued: true }; }
+async function pushUpsert(table, row, options = {}) {
+  const allowQueue = options.allowQueue !== false;
+  if (!online()) {
+    if (!allowQueue) return { error: new Error('ONLINE_CONFIRMATION_REQUIRED'), offline: true };
+    enqueue({ op: 'upsert', table, row });
+    return { queued: true };
+  }
   try {
     const { data, error } = await supabase.from(table).upsert(row).select();
     if (error) throw error;
@@ -250,8 +255,8 @@ async function pushUpsert(table, row) {
     }
     return { ok: true, data };
   } catch (e) {
-    if (isPermanentError(e)) {
-      console.error('Error permanente al guardar en ' + table + ' (no se reintenta):', e.message || e);
+    if (isPermanentError(e) || !allowQueue) {
+      console.error('Error al guardar en ' + table + ' (sin cola):', e.message || e);
       return { error: e };
     }
     console.error('Error al guardar en ' + table + ', se encola:', e.message || e);
@@ -280,11 +285,11 @@ async function pushDelete(table, id) {
 /* ============================================================
    API por entidad (usada por los módulos de features)
    ============================================================ */
-export const saveCliente = (c) => pushUpsert('clientes', clienteToDb(c));
+export const saveCliente = (c, options = {}) => pushUpsert('clientes', clienteToDb(c), options);
 export const deleteCliente = (id) => pushDelete('clientes', id);
-export async function saveOrden(o) {
+export async function saveOrden(o, options = {}) {
   const row = ordenToDb(o);
-  const res = await pushUpsert('ordenes', row);
+  const res = await pushUpsert('ordenes', row, options);
   // El resumen liviano alimenta Dashboard/Notificaciones. Mantenerlo al día
   // con las escrituras locales evita que una nueva orden, pago o entrega
   // aparezca recién después de volver a iniciar sesión.
@@ -299,6 +304,22 @@ export async function saveOrden(o) {
     }
   }
   return res;
+}
+
+/** Confirma contra Supabase que el cliente existe realmente en el tenant actual.
+ *  Se usa antes de reservar un número/crear una orden para impedir que un
+ *  cliente que solo exista en memoria o en una cola offline genere una orden fantasma. */
+export async function clienteExisteConfirmado(id) {
+  if (!id) return false;
+  if (!online() || !supabase) throw new Error('CLIENT_CONFIRM_REQUIRES_ONLINE');
+  const { data, error } = await supabase
+    .from('clientes')
+    .select('id')
+    .eq('tenant_id', tenantId())
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  return !!(data && data.id);
 }
 
 /** Obtiene el próximo número de orden exclusivamente de la BD.
@@ -421,7 +442,7 @@ function itemFromDb(r) {
     registroServicios: r.registro_servicios && typeof r.registro_servicios === 'object' ? r.registro_servicios : {}
   };
 }
-export const saveOrdenItem = (it) => pushUpsert('orden_items', itemToDb(it));
+export const saveOrdenItem = (it, options = {}) => pushUpsert('orden_items', itemToDb(it), options);
 export const deleteOrdenItem = (id) => pushDelete('orden_items', id);
 
 /** Recarga desde Supabase únicamente los artículos de una orden.
