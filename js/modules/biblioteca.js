@@ -20,7 +20,7 @@ import { state, todayISO, persist, esAdmin, esSupervisor } from '../state.js';
 import * as db from '../db.js';
 import { showToast, fmtDate, ordenById, clienteNombre, clienteById, logActivity, openModalEl, closeModal } from '../ui.js';
 import { escHtml, escAttr } from '../sanitize.js';
-import { itemsDeOrden, estadoMostradoPar } from './ordenes.js';
+import { itemsDeOrden, estadoMostradoPar, timelineIndexDeEstado } from './ordenes.js';
 
 const BIBLIOTECA_LETRAS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i)); // A..Z
 const BIBLIOTECA_NUMEROS_POR_LETRA = 10; // 1..10
@@ -201,7 +201,10 @@ function renderBibliotecaPendientes() {
         '<div class="hint">Orden #' + escHtml(String(info.numeroOrden)) + ' · <strong>' + escHtml(info.cliente) + '</strong></div>' +
         avisoMismatch +
       '</div>' +
-      '<button class="btn btn-primary btn-sm" onclick="abrirUbicarEnBiblioteca(\'' + escAttr(it.id) + '\')">📚 Ubicar en estantería</button>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+        '<button class="btn btn-primary btn-sm" onclick="abrirUbicarEnBiblioteca(\'' + escAttr(it.id) + '\')">📚 Ubicar en estantería</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="enviarBibliotecaAControlCalidad(\'' + escAttr(it.id) + '\')">↩ Enviar a control de calidad</button>' +
+      '</div>' +
     '</div>';
   }).join('');
 }
@@ -539,6 +542,116 @@ export async function guardarUbicacionBiblioteca(btn) {
   }
 }
 
+
+/** Quita únicamente la ubicación física del artículo.
+ *  El seguimiento permanece en "Biblioteca", por lo que vuelve a aparecer
+ *  en "Pendientes de ubicar" y puede reubicarse en otro estante. */
+export async function quitarDeBiblioteca(itemId) {
+  if (!puedeUsarBiblioteca()) { showToast('No tienes permiso para usar la biblioteca'); return; }
+  const it = (state.ordenItems || []).find(x => x.id === itemId);
+  if (!it || it.entregado) return;
+  const ubicacionAnterior = it.biblioteca && it.biblioteca.ubicacion;
+  if (!ubicacionAnterior) { showToast('Este artículo no tiene una ubicación asignada'); return; }
+  if (!confirm('¿Quitar el artículo ' + it.codigo + ' del estante ' + ubicacionAnterior + '?\n\nVolverá a Pendientes de ubicar. No se borra la orden ni el artículo.')) return;
+
+  const bibliotecaAnterior = it.biblioteca && typeof it.biblioteca === 'object' ? { ...it.biblioteca } : {};
+  it.biblioteca = {};
+  try {
+    await persist();
+    const res = await db.saveOrdenItem(it);
+    if (res && res.error && !res.queued) {
+      it.biblioteca = bibliotecaAnterior;
+      await persist();
+      console.error('No se pudo quitar el artículo de Biblioteca:', res.error);
+      showToast('No se pudo quitar de Biblioteca en el servidor. No se aplicó el cambio.');
+      return;
+    }
+    logActivity('Quitó el artículo ' + it.codigo + ' del estante ' + ubicacionAnterior + ' para reubicarlo');
+    closeModal('modal-biblioteca-ubicar');
+    itemBibliotecaActual = null;
+    renderBiblioteca();
+    showToast('Artículo ' + it.codigo + ' quitado de ' + ubicacionAnterior + ' · pendiente de reubicar');
+  } catch (e) {
+    it.biblioteca = bibliotecaAnterior;
+    await persist().catch(() => {});
+    console.error('Error al quitar artículo de Biblioteca:', e);
+    showToast('No se pudo quitar el artículo de Biblioteca');
+  }
+}
+
+/** Devuelve un artículo que está pendiente de reubicar a Control de calidad.
+ *  Solo actúa sobre ESE artículo: no borra la orden, fotos ni Producción.
+ *  El checklist se reinicia para que la revisión de calidad se haga de nuevo. */
+export async function enviarBibliotecaAControlCalidad(itemId) {
+  if (!puedeUsarBiblioteca()) { showToast('No tienes permiso para usar la biblioteca'); return; }
+  const it = (state.ordenItems || []).find(x => x.id === itemId);
+  if (!it || it.entregado) return;
+  if (it.biblioteca && it.biblioteca.ubicacion) {
+    showToast('Primero quita este artículo del estante para dejarlo pendiente de reubicar');
+    return;
+  }
+  if (estadoMostradoPar(it) !== 'Biblioteca') {
+    showToast('Este artículo ya no está en Biblioteca');
+    renderBiblioteca();
+    return;
+  }
+  if (!confirm('¿Enviar el artículo ' + it.codigo + ' nuevamente a Control de calidad?\n\nSe reiniciará su checklist de calidad para revisarlo otra vez.')) return;
+
+  const calidadIndex = timelineIndexDeEstado('Control de calidad');
+  const timelineIndexAnterior = it.timelineIndex;
+  const timelineDatesAnterior = it.timelineDates && typeof it.timelineDates === 'object' ? { ...it.timelineDates } : {};
+  const controlAnterior = it.controlCalidad && typeof it.controlCalidad === 'object' ? { ...it.controlCalidad } : {};
+  const bibliotecaAnterior = it.biblioteca && typeof it.biblioteca === 'object' ? { ...it.biblioteca } : {};
+  const orden = ordenById(it.ordenId);
+  const estadoOrdenAnterior = orden ? orden.estado : null;
+
+  it.timelineIndex = calidadIndex;
+  it.timelineDates = { ...timelineDatesAnterior };
+  Object.keys(it.timelineDates).forEach(k => {
+    const idx = Number(k);
+    if (Number.isFinite(idx) && idx >= calidadIndex) delete it.timelineDates[k];
+  });
+  it.controlCalidad = { ...controlAnterior };
+  Object.keys(it.controlCalidad).forEach(k => {
+    if (typeof it.controlCalidad[k] === 'boolean') it.controlCalidad[k] = false;
+  });
+  it.biblioteca = {};
+  if (orden && orden.estado === 'Biblioteca') orden.estado = 'Control de calidad';
+
+  try {
+    await persist();
+    const itemRes = await db.saveOrdenItem(it);
+    if (itemRes && itemRes.error && !itemRes.queued) {
+      it.timelineIndex = timelineIndexAnterior;
+      it.timelineDates = timelineDatesAnterior;
+      it.controlCalidad = controlAnterior;
+      it.biblioteca = bibliotecaAnterior;
+      if (orden) orden.estado = estadoOrdenAnterior;
+      await persist();
+      console.error('No se pudo devolver el artículo a Control de calidad:', itemRes.error);
+      showToast('No se pudo enviar a Control de calidad en el servidor. No se aplicó el cambio.');
+      return;
+    }
+
+    if (orden && estadoOrdenAnterior === 'Biblioteca') {
+      const ordenRes = await db.saveOrden(orden);
+      if (ordenRes && ordenRes.error && !ordenRes.queued) {
+        orden.estado = estadoOrdenAnterior;
+        await persist();
+        console.warn('El artículo volvió a Control de calidad, pero no se pudo actualizar el estado resumen de la orden:', ordenRes.error);
+      }
+    }
+
+    logActivity('Devolvió el artículo ' + it.codigo + ' de Biblioteca a Control de calidad');
+    renderBiblioteca();
+    if (window.renderOrdenes) window.renderOrdenes();
+    showToast('Artículo ' + it.codigo + ' → Control de calidad');
+  } catch (e) {
+    console.error('Error al devolver artículo a Control de calidad:', e);
+    showToast('No se pudo enviar el artículo a Control de calidad');
+  }
+}
+
 export function verEspacioBiblioteca(espacio) {
   if (!puedeUsarBiblioteca()) { showToast('No tienes permiso para usar la biblioteca'); return; }
   const items = (mapaOcupacion()[espacio] || []).slice().sort((a, b) =>
@@ -570,7 +683,10 @@ export function verEspacioBiblioteca(espacio) {
         '<div><strong class="mono">' + escHtml(it.codigo) + '</strong> · Orden #' + escHtml(String(info.numeroOrden)) + '</div>' +
         '<div><strong>' + escHtml(info.cliente) + '</strong></div>' +
         (it.descripcion ? '<div class="hint" style="margin-top:3px;">' + escHtml(it.descripcion) + '</div>' : '') +
-        '<div style="margin-top:8px;"><button class="btn btn-ghost btn-sm" onclick="abrirUbicarEnBiblioteca(\'' + escAttr(it.id) + '\')">Reubicar este artículo</button></div>' +
+        '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">' +
+          '<button class="btn btn-ghost btn-sm" onclick="abrirUbicarEnBiblioteca(\'' + escAttr(it.id) + '\')">Reubicar este artículo</button>' +
+          '<button class="btn btn-danger btn-sm" onclick="quitarDeBiblioteca(\'' + escAttr(it.id) + '\')">Quitar de biblioteca</button>' +
+        '</div>' +
       '</div>';
     }).join('');
 
@@ -586,6 +702,6 @@ export function verEspacioBiblioteca(espacio) {
 
 Object.assign(window, {
   renderBiblioteca, renderBibliotecaLista, limpiarFiltroFechaBiblioteca,
-  abrirUbicarEnBiblioteca, guardarUbicacionBiblioteca, verEspacioBiblioteca,
+  abrirUbicarEnBiblioteca, guardarUbicacionBiblioteca, quitarDeBiblioteca, enviarBibliotecaAControlCalidad, verEspacioBiblioteca,
   buscarUbicacionPorOrden, enviarRecordatorioBiblioteca, toggleBibliotecaGrupo
 });
