@@ -184,7 +184,9 @@ window.addEventListener('unhandledrejection', function (ev) {
   setLogo('favicon-link', 'href');
 
   const cached = loadCache();
-  setState(cached || seedData());
+  // La caché local es deliberadamente mínima. Siempre partir del estado base
+  // completo evita campos ausentes como nextOrderNum => "#undefined".
+  setState({ ...seedData(), ...(cached || {}) });
   if (!state.session) state.session = { loggedIn: false, role: null, user: null };
 
   wireConnectivity();
