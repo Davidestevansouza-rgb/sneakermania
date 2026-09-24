@@ -805,6 +805,8 @@ export async function saveOrden(btn, opts = {}) {
   let esNuevaOrden = false;   // para enviar el WhatsApp automático de registro
   let fotoGeneralParaWhatsApp = null; // compatibilidad; WhatsApp actual es texto-only
   let fotosGeneralesFallidas = 0;
+  let fotosGeneralesGuardadas = 0;
+  let ordenConfirmadaEnServidor = false;
   try {
     if (id) {
       const o = ordenById(id);
@@ -822,16 +824,32 @@ export async function saveOrden(btn, opts = {}) {
       target = o;
       logActivity('Editó orden #' + o.numero);
     } else {
+      // Antes de reservar un número, confirmar que el cliente existe DE VERDAD
+      // en Supabase para este tenant. Esto bloquea clientes "fantasma" que
+      // hayan quedado solo en memoria/cola local tras un corte de conexión.
+      const clienteConfirmado = await db.clienteExisteConfirmado(data.clienteId);
+      if (!clienteConfirmado) throw new Error('CLIENT_NOT_CONFIRMED');
+
       // Número atómico desde la BD para evitar duplicados entre usuarios simultáneos.
-      // Si hay fallo de red, se usa el contador local como fallback.
       const numOrden = await db.siguienteOrdenNumero(state.nextOrderNum);
       if (numOrden >= state.nextOrderNum) state.nextOrderNum = numOrden + 1;
       const o = { id: crypto.randomUUID(), numero: numOrden, descuento: 0, pagado: 0, metodoPago: '', fechaPago: '', estadoPago: 'Pendiente', fechaEntrega: '', fotos: { antes: [], durante: [], despues: [], detalle: [], suela: [], laterales: [], todos_pares: [] } };
       Object.assign(o, data);
-      state.ordenes.push(o);
       target = o;
       esNuevaOrden = true;
       if (data.descuento > 0) descuentoNuevo = true;
+
+      // Una orden nueva no entra al estado visible ni habilita fotos/ítems
+      // hasta que Supabase confirme la fila padre. Tampoco se encola: si no
+      // hay confirmación, el usuario reintenta la MISMA orden, no una copia.
+      const createResult = await db.saveOrden(target, { allowQueue: false });
+      if (!createResult?.ok) {
+        throw (createResult?.error || new Error('ORDER_SAVE_NOT_CONFIRMED'));
+      }
+      ordenConfirmadaEnServidor = true;
+      state.ordenes.push(target);
+      const ordenIdInput = document.getElementById('orden-id');
+      if (ordenIdInput) ordenIdInput.value = target.id;
       logActivity('Creó orden #' + o.numero);
     }
     // Fotos generales cargadas en el Registro General de los Pares: se
@@ -844,6 +862,7 @@ export async function saveOrden(btn, opts = {}) {
         try {
           const fotoData = await storageManager.uploadFoto(f.file, target.id, 'todos_pares');
           target.extra.fotos.push(fotoData);
+          fotosGeneralesGuardadas++;
         } catch (e) {
           fotosGeneralesFallidas++;
           console.error('No se pudo subir una foto general:', e);
@@ -853,16 +872,18 @@ export async function saveOrden(btn, opts = {}) {
       limpiarFotosGeneralesPendientes();
     }
     await persist();
-    const saveResult = await db.saveOrden(target);
-    // Una orden nueva nunca debe anunciarse como guardada si Supabase no
-    // confirmó la escritura. El número ya puede haber sido reservado por
-    // la BD; por eso un fallo aquí debe quedar visible y reintentable.
-    if (!saveResult?.ok) {
-      if (saveResult?.queued) {
-        throw new Error('ORDER_SAVE_PENDING_SYNC');
+
+    // En órdenes nuevas la fila padre ya fue confirmada arriba. Solo hace falta
+    // una segunda escritura si se agregaron referencias de fotos generales.
+    // En edición se conserva el comportamiento normal.
+    if (!esNuevaOrden || fotosGeneralesGuardadas > 0) {
+      const saveResult = await db.saveOrden(target, { allowQueue: !esNuevaOrden });
+      if (!saveResult?.ok) {
+        if (saveResult?.queued) throw new Error('ORDER_SAVE_PENDING_SYNC');
+        throw (saveResult?.error || new Error('ORDER_SAVE_NOT_CONFIRMED'));
       }
-      throw (saveResult?.error || new Error('ORDER_SAVE_NOT_CONFIRMED'));
     }
+    if (!esNuevaOrden) ordenConfirmadaEnServidor = true;
     // PRECINTO NUMERADO: crea/actualiza/borra los ítems (pares) según lo
     // que el recepcionista cargó en el formulario, cada uno con su código
     // físico único (NRO_ORDEN-NRO_ITEM).
@@ -900,10 +921,16 @@ export async function saveOrden(btn, opts = {}) {
     return target.id;
   } catch (e) {
     console.error(e);
-    if (e?.message === 'ORDER_SAVE_PENDING_SYNC') {
+    if (e?.message === 'CLIENT_NOT_CONFIRMED') {
+      showToast('⚠️ Ese cliente todavía no está confirmado en el servidor. No se creó ninguna orden. Revisa la conexión o vuelve a guardar el cliente.');
+    } else if (e?.message === 'CLIENT_CONFIRM_REQUIRES_ONLINE' || e?.message === 'ORDER_NUMBER_REQUIRES_ONLINE') {
+      showToast('⚠️ Se necesita conexión para crear una orden nueva. No se creó ninguna orden.');
+    } else if (e?.message === 'ORDER_SAVE_PENDING_SYNC') {
       showToast('⚠️ Orden pendiente de sincronizar. No se confirmó el guardado en el servidor.');
+    } else if (ordenConfirmadaEnServidor) {
+      showToast('⚠️ La orden sí quedó registrada, pero no se completó un paso posterior. Reintenta sin crear otra orden.');
     } else {
-      showToast('❌ No se pudo confirmar el guardado de la orden. Reintenta.');
+      showToast('❌ No se pudo confirmar el guardado de la orden. No se creó ninguna orden; reintenta.');
     }
   } finally { restore(); }
 }
