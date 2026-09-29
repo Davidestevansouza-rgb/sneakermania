@@ -146,9 +146,9 @@ export async function syncNotifications(options = {}) {
 
   notifSyncRunning = true;
   try {
-    // Productor de alertas: se conserva, pero ya NO corre cada 5 minutos.
-    // Se ejecuta al iniciar sesión, reconectar, abrir Notificaciones y al
-    // cambiar de día. Realtime se encarga de propagar las filas creadas.
+    // Se conserva el productor de alertas, pero ya no corre por polling.
+    // Realtime propaga las filas; este cálculo ocurre solo en eventos
+    // controlados (inicio, reconexión, apertura y cambio de día).
     const computed = computeNotifications();
     const keysExistentes = await existingDedupeKeys(computed.map(n => n.dedupeKey));
     const nuevas = computed.filter(n => !keysExistentes.has(n.dedupeKey));
@@ -179,7 +179,18 @@ function renderNotificacionesDesdeEstado() {
   const list = document.getElementById('notif-list');
   if (!list) return;
   list.innerHTML = notifs.length ? notifs.map(n => {
-    const icon = ({ d:'📦', a:'⚠', s:'▥', p:'
+    const icon = ({ d:'📦', a:'⚠', s:'▥', p:'$' }[n.tipo] || '🔔');
+    const prioClass = n.prioridad === 'Alta' ? ' alta' : (n.prioridad === 'Baja' ? ' baja' : '');
+    const btn = esAdmin ? '<button class="notif-dismiss" onclick="dismissNotification(\'' + n.id + '\')">×</button>' : '';
+    return '<div class="notif-item' + prioClass + '"><div class="notif-ic ' + n.tipo + '">' + icon + '</div><div class="notif-text">' + escHtml(n.texto) + '</div>' + btn + '</div>';
+  }).join('') : '<div class="hint">No hay notificaciones pendientes.</div>';
+  marcarNotifsVistas();
+}
+
+export async function renderNotificaciones() {
+  if (onlineNow()) await syncNotifications({ reload:true });
+  renderNotificacionesDesdeEstado();
+}
 
 export async function dismissNotification(id) {
   if (!(state.session && state.session.role === 'Administrador')) { if (window.showToast) window.showToast('Solo el Administrador puede eliminar notificaciones'); return; }
@@ -317,73 +328,5 @@ export function stopNotificationSync(){
   notifSyncRunning=false;
   lastNotifSyncAt=0;
   lastNotifSyncDay='';
-}
-Object.assign(window,{computeNotifications,renderNotificaciones,updateBell,marcarNotifsVistas,dismissNotification,startNotificationSync,stopNotificationSync,silenciarNotificacionesActuales});
- }[n.tipo] || '🔔');
-    const prioClass = n.prioridad === 'Alta' ? ' alta' : (n.prioridad === 'Baja' ? ' baja' : '');
-    const btn = esAdmin ? '<button class="notif-dismiss" onclick="dismissNotification(\'' + n.id + '\')">×</button>' : '';
-    return '<div class="notif-item' + prioClass + '"><div class="notif-ic ' + n.tipo + '">' + icon + '</div><div class="notif-text">' + escHtml(n.texto) + '</div>' + btn + '</div>';
-  }).join('') : '<div class="hint">No hay notificaciones pendientes.</div>';
-  marcarNotifsVistas();
-}
-
-export async function renderNotificaciones() {
-  if (onlineNow()) await syncNotifications({ reload:true });
-  renderNotificacionesDesdeEstado();
-}
-
-export async function dismissNotification(id) {
-  if (!(state.session && state.session.role === 'Administrador')) { if (window.showToast) window.showToast('Solo el Administrador puede eliminar notificaciones'); return; }
-  if (!onlineNow()) { if (window.showToast) window.showToast('Sin conexión. Intenta nuevamente cuando vuelva internet.'); return; }
-  try {
-    const actual = (state.notificaciones || []).find(n => n.id === id);
-    if (actual) silenciarNotificacionesActuales([actual]);
-    await db.markNotificationRead(id);
-    await renderNotificaciones();
-  } catch (e) { console.error('Error al descartar notificación:', e); }
-}
-
-const NOTIF_KNOWN_KEY='ses-notif-known';
-const NOTIF_BADGE_KEY='ses-notif-badge';
-const NOTIF_KNOWN_MAX=500;
-function registrarNuevas() {
-  let known; try { known = JSON.parse(localStorage.getItem(NOTIF_KNOWN_KEY) || '[]'); } catch (e) { known = []; }
-  const knownSet = new Set(known);
-  let badge = Number(localStorage.getItem(NOTIF_BADGE_KEY) || '0') || 0;
-  const activas = (state.notificaciones || []).filter(n => !n.leida);
-  let nuevas=0;
-  activas.forEach(n => { if (!knownSet.has(n.id)) { knownSet.add(n.id); nuevas++; } });
-  if (nuevas > 0) { badge += nuevas; localStorage.setItem(NOTIF_BADGE_KEY, String(badge)); reproducirSonidoNotificacion(); }
-  // Evita que años de IDs vistos vuelvan a llenar localStorage.
-  const compactKnown = [...knownSet].slice(-NOTIF_KNOWN_MAX);
-  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify(compactKnown));
-  return badge;
-}
-export function marcarNotifsVistas(){
-  let known; try { known = JSON.parse(localStorage.getItem(NOTIF_KNOWN_KEY) || '[]'); } catch (e) { known = []; }
-  const knownSet = new Set(known);
-  (state.notificaciones || []).filter(n => !n.leida).forEach(n => { if (n.id) knownSet.add(n.id); });
-  const compactKnown = [...knownSet].slice(-NOTIF_KNOWN_MAX);
-  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify(compactKnown));
-  localStorage.setItem(NOTIF_BADGE_KEY,'0');
-  const el=document.getElementById('bell-count');
-  if(el){el.textContent='0';el.style.display='none';}
-}
-export function updateBell(){const count=registrarNuevas();const el=document.getElementById('bell-count');if(!el)return;el.textContent=count;el.style.display=count>0?'flex':'none';}
-
-let notifSyncInterval=null;
-let onlineHandlerInstalled=false;
-function onBackOnline(){if(state.session?.loggedIn)syncNotifications();}
-export function startNotificationSync(){
-  if(!puedeSincronizarNotificaciones()){ stopNotificationSync(); return; }
-  if(!onlineHandlerInstalled&&typeof window!=='undefined'){window.addEventListener('online',onBackOnline);onlineHandlerInstalled=true;}
-  if(notifSyncInterval)return;
-  if(onlineNow())syncNotifications();
-  notifSyncInterval=setInterval(()=>{if(onlineNow()&&document.visibilityState!=='hidden')syncNotifications();},NOTIF_SYNC_MS);
-}
-export function stopNotificationSync(){
-  if(notifSyncInterval){clearInterval(notifSyncInterval);notifSyncInterval=null;}
-  if(onlineHandlerInstalled&&typeof window!=='undefined'){window.removeEventListener('online',onBackOnline);onlineHandlerInstalled=false;}
-  notifSyncRunning=false;
 }
 Object.assign(window,{computeNotifications,renderNotificaciones,updateBell,marcarNotifsVistas,dismissNotification,startNotificationSync,stopNotificationSync,silenciarNotificacionesActuales});
