@@ -8,8 +8,6 @@ import { escHtml } from '../sanitize.js';
 import { supabase } from '../config.js';
 import * as db from '../db.js';
 
-const NOTIF_SYNC_MS = 5 * 60 * 1000;
-
 function puedeSincronizarNotificaciones() {
   const rol = state?.session?.role;
   return rol === 'Administrador' || rol === 'Supervisor';
@@ -81,6 +79,20 @@ export function computeNotifications() {
     }));
 }
 
+function notifFromDb(n) {
+  return {
+    id:n.id,
+    tipo:n.tipo,
+    texto:n.texto,
+    leida:!!n.leida,
+    prioridad:n.prioridad || 'Media',
+    ordenId:n.orden_id || null,
+    inventarioId:n.inventario_id || null,
+    dedupeKey:n.dedupe_key || null,
+    fecha:n.created_at
+  };
+}
+
 async function reloadNotificationsOnly() {
   const tenant = state.session?.tenantId;
   if (!supabase || !tenant || !onlineNow()) return false;
@@ -91,7 +103,7 @@ async function reloadNotificationsOnly() {
     .order('created_at', { ascending:false })
     .limit(500);
   if (error) throw error;
-  state.notificaciones = (data || []).map(n => ({ id:n.id, tipo:n.tipo, texto:n.texto, leida:!!n.leida, prioridad:n.prioridad || 'Media', ordenId:n.orden_id || null, inventarioId:n.inventario_id || null, dedupeKey:n.dedupe_key || null, fecha:n.created_at }));
+  state.notificaciones = (data || []).map(notifFromDb);
   return true;
 }
 
@@ -106,6 +118,8 @@ async function idsOrdenesValidas(ids) {
 }
 
 let notifSyncRunning = false;
+let lastNotifSyncAt = 0;
+let lastNotifSyncDay = '';
 
 async function existingDedupeKeys(keys) {
   const unique = [...new Set((keys || []).filter(Boolean))];
@@ -123,14 +137,18 @@ async function existingDedupeKeys(keys) {
   return found;
 }
 
-export async function syncNotifications() {
+export async function syncNotifications(options = {}) {
   if (notifSyncRunning || !state.session?.loggedIn || !puedeSincronizarNotificaciones() || !onlineNow()) return;
+  const now = Date.now();
+  const force = options.force === true;
+  const reload = options.reload !== false;
+  if (!force && now - lastNotifSyncAt < 30000) return;
+
   notifSyncRunning = true;
   try {
-    // Regla simple y definitiva:
-    // 1) un atraso tiene una sola dedupe_key;
-    // 2) si esa clave existió alguna vez, aunque esté leída, NO se recrea;
-    // 3) la UI solo carga filas leida=false del servidor.
+    // Productor de alertas: se conserva, pero ya NO corre cada 5 minutos.
+    // Se ejecuta al iniciar sesión, reconectar, abrir Notificaciones y al
+    // cambiar de día. Realtime se encarga de propagar las filas creadas.
     const computed = computeNotifications();
     const keysExistentes = await existingDedupeKeys(computed.map(n => n.dedupeKey));
     const nuevas = computed.filter(n => !keysExistentes.has(n.dedupeKey));
@@ -144,7 +162,9 @@ export async function syncNotifications() {
         dedupeKey:n.dedupeKey, leida:false
       });
     }
-    await reloadNotificationsOnly();
+    if (reload) await reloadNotificationsOnly();
+    lastNotifSyncAt = Date.now();
+    lastNotifSyncDay = todayISO(0);
     updateBell();
   } catch (e) {
     if (onlineNow()) console.error('Error al sincronizar notificaciones:', e);
@@ -153,19 +173,163 @@ export async function syncNotifications() {
   }
 }
 
-export async function renderNotificaciones() {
-  if (onlineNow()) await syncNotifications();
+function renderNotificacionesDesdeEstado() {
   const notifs = (state.notificaciones || []).filter(n => !n.leida);
   const esAdmin = state.session && state.session.role === 'Administrador';
   const list = document.getElementById('notif-list');
   if (!list) return;
   list.innerHTML = notifs.length ? notifs.map(n => {
-    const icon = ({ d:'📦', a:'⚠', s:'▥', p:'$' }[n.tipo] || '🔔');
+    const icon = ({ d:'📦', a:'⚠', s:'▥', p:'
+
+export async function dismissNotification(id) {
+  if (!(state.session && state.session.role === 'Administrador')) { if (window.showToast) window.showToast('Solo el Administrador puede eliminar notificaciones'); return; }
+  if (!onlineNow()) { if (window.showToast) window.showToast('Sin conexión. Intenta nuevamente cuando vuelva internet.'); return; }
+  try {
+    const actual = (state.notificaciones || []).find(n => n.id === id);
+    if (actual) silenciarNotificacionesActuales([actual]);
+    await db.markNotificationRead(id);
+    renderNotificacionesDesdeEstado();
+  } catch (e) { console.error('Error al descartar notificación:', e); }
+}
+
+const NOTIF_KNOWN_KEY='ses-notif-known';
+const NOTIF_BADGE_KEY='ses-notif-badge';
+const NOTIF_KNOWN_MAX=500;
+function registrarNuevas() {
+  let known; try { known = JSON.parse(localStorage.getItem(NOTIF_KNOWN_KEY) || '[]'); } catch (e) { known = []; }
+  const knownSet = new Set(known);
+  let badge = Number(localStorage.getItem(NOTIF_BADGE_KEY) || '0') || 0;
+  const activas = (state.notificaciones || []).filter(n => !n.leida);
+  let nuevas=0;
+  activas.forEach(n => { if (!knownSet.has(n.id)) { knownSet.add(n.id); nuevas++; } });
+  if (nuevas > 0) { badge += nuevas; localStorage.setItem(NOTIF_BADGE_KEY, String(badge)); reproducirSonidoNotificacion(); }
+  // Evita que años de IDs vistos vuelvan a llenar localStorage.
+  const compactKnown = [...knownSet].slice(-NOTIF_KNOWN_MAX);
+  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify(compactKnown));
+  return badge;
+}
+export function marcarNotifsVistas(){
+  let known; try { known = JSON.parse(localStorage.getItem(NOTIF_KNOWN_KEY) || '[]'); } catch (e) { known = []; }
+  const knownSet = new Set(known);
+  (state.notificaciones || []).filter(n => !n.leida).forEach(n => { if (n.id) knownSet.add(n.id); });
+  const compactKnown = [...knownSet].slice(-NOTIF_KNOWN_MAX);
+  localStorage.setItem(NOTIF_KNOWN_KEY, JSON.stringify(compactKnown));
+  localStorage.setItem(NOTIF_BADGE_KEY,'0');
+  const el=document.getElementById('bell-count');
+  if(el){el.textContent='0';el.style.display='none';}
+}
+export function updateBell(){const count=registrarNuevas();const el=document.getElementById('bell-count');if(!el)return;el.textContent=count;el.style.display=count>0?'flex':'none';}
+
+let notifRealtimeChannel=null;
+let onlineHandlerInstalled=false;
+let visibilityHandlerInstalled=false;
+let midnightTimer=null;
+
+function notificacionesTabActiva(){
+  return !!document.getElementById('tab-notificaciones')?.classList.contains('active');
+}
+
+function aplicarNotificacionRealtime(row){
+  const tenant=state.session?.tenantId;
+  if(!row||!row.id||!tenant||row.tenant_id!==tenant)return;
+  const n=notifFromDb(row);
+  if(n.leida){
+    state.notificaciones=(state.notificaciones||[]).filter(x=>x.id!==n.id);
+  }else{
+    if(!Array.isArray(state.notificaciones))state.notificaciones=[];
+    const idx=state.notificaciones.findIndex(x=>x.id===n.id);
+    if(idx>=0)state.notificaciones[idx]={...state.notificaciones[idx],...n};
+    else state.notificaciones.unshift(n);
+  }
+  if(notificacionesTabActiva())renderNotificacionesDesdeEstado();
+  else updateBell();
+}
+
+function startRealtimeNotifications(){
+  if(notifRealtimeChannel||!supabase||!state.session?.tenantId)return;
+  const tenant=state.session.tenantId;
+  notifRealtimeChannel=supabase
+    .channel('ses-notificaciones-'+tenant)
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'notificaciones',filter:'tenant_id=eq.'+tenant},payload=>aplicarNotificacionRealtime(payload.new))
+    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'notificaciones',filter:'tenant_id=eq.'+tenant},payload=>aplicarNotificacionRealtime(payload.new))
+    .subscribe(status=>{
+      if(status==='CHANNEL_ERROR'||status==='TIMED_OUT')console.warn('Realtime de notificaciones no disponible:',status);
+    });
+}
+
+function stopRealtimeNotifications(){
+  if(notifRealtimeChannel&&supabase){
+    try{supabase.removeChannel(notifRealtimeChannel);}catch(_){}
+  }
+  notifRealtimeChannel=null;
+}
+
+function scheduleMidnightNotificationSync(){
+  if(midnightTimer){clearTimeout(midnightTimer);midnightTimer=null;}
+  if(typeof window==='undefined')return;
+  const now=new Date();
+  const next=new Date(now);
+  next.setHours(24,0,15,0);
+  const delay=Math.max(1000,next.getTime()-now.getTime());
+  midnightTimer=setTimeout(async()=>{
+    if(state.session?.loggedIn&&puedeSincronizarNotificaciones()&&onlineNow()){
+      await syncNotifications({reload:false,force:true});
+    }
+    scheduleMidnightNotificationSync();
+  },delay);
+}
+
+function onBackOnline(){
+  if(state.session?.loggedIn)syncNotifications({reload:true,force:true});
+}
+
+function onVisibilityChange(){
+  if(document.visibilityState!=='visible'||!state.session?.loggedIn)return;
+  if(lastNotifSyncDay!==todayISO(0))syncNotifications({reload:true,force:true});
+}
+
+export function startNotificationSync(){
+  if(!puedeSincronizarNotificaciones()){stopNotificationSync();return;}
+  if(!onlineHandlerInstalled&&typeof window!=='undefined'){
+    window.addEventListener('online',onBackOnline);
+    onlineHandlerInstalled=true;
+  }
+  if(!visibilityHandlerInstalled&&typeof document!=='undefined'){
+    document.addEventListener('visibilitychange',onVisibilityChange);
+    visibilityHandlerInstalled=true;
+  }
+  startRealtimeNotifications();
+  scheduleMidnightNotificationSync();
+  if(onlineNow())syncNotifications({reload:true});
+}
+
+export function stopNotificationSync(){
+  stopRealtimeNotifications();
+  if(midnightTimer){clearTimeout(midnightTimer);midnightTimer=null;}
+  if(onlineHandlerInstalled&&typeof window!=='undefined'){
+    window.removeEventListener('online',onBackOnline);
+    onlineHandlerInstalled=false;
+  }
+  if(visibilityHandlerInstalled&&typeof document!=='undefined'){
+    document.removeEventListener('visibilitychange',onVisibilityChange);
+    visibilityHandlerInstalled=false;
+  }
+  notifSyncRunning=false;
+  lastNotifSyncAt=0;
+  lastNotifSyncDay='';
+}
+Object.assign(window,{computeNotifications,renderNotificaciones,updateBell,marcarNotifsVistas,dismissNotification,startNotificationSync,stopNotificationSync,silenciarNotificacionesActuales});
+ }[n.tipo] || '🔔');
     const prioClass = n.prioridad === 'Alta' ? ' alta' : (n.prioridad === 'Baja' ? ' baja' : '');
     const btn = esAdmin ? '<button class="notif-dismiss" onclick="dismissNotification(\'' + n.id + '\')">×</button>' : '';
     return '<div class="notif-item' + prioClass + '"><div class="notif-ic ' + n.tipo + '">' + icon + '</div><div class="notif-text">' + escHtml(n.texto) + '</div>' + btn + '</div>';
   }).join('') : '<div class="hint">No hay notificaciones pendientes.</div>';
   marcarNotifsVistas();
+}
+
+export async function renderNotificaciones() {
+  if (onlineNow()) await syncNotifications({ reload:true });
+  renderNotificacionesDesdeEstado();
 }
 
 export async function dismissNotification(id) {
